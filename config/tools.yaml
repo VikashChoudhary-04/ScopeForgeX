@@ -1,0 +1,59 @@
+tools:
+  # Stage 1 Web Recon (CLI)
+  sublist3r: "sublist3r"
+  dnsrecon: "dnsrecon"
+  knockpy: "knockpy"
+  httpx: "httpx"
+  subhunt: "subhunt"
+  gau: "gau"
+  katana: "katana"
+
+  # Stage 1 Network Recon (CLI)
+  naabu: "naabu"
+  rustscan: "rustscan"
+  nmap: "nmap"
+
+  # Stage 2 Enumeration (CLI)
+  gobuster: "gobuster"
+  ffuf: "ffuf"
+  feroxbuster: "feroxbuster"
+  whatweb: "whatweb"
+  wafw00f: "wafw00f"
+  lbd: "lbd"
+
+  # SMB Enum (CLI)
+  enum4linuxng: "enum4linux-ng"
+  smbclient: "smbclient"
+  smbmap: "smbmap"
+  nbtstat: "nbtstat"
+
+  # SNMP Enum (CLI)
+  onesixtyone: "onesixtyone"
+  snmpwalk: "snmpwalk"
+  snmpcheck: "snmp-check"
+
+  # DNS Enum (CLI)
+  dnsenum: "dnsenum"
+  dig: "dig"
+
+  # Stage 3 Vulnerability (CLI)
+  nuclei: "nuclei"
+  nikto: "nikto"
+  wpscan: "wpscan"
+
+  # Stage 4 Exploit Prep (CLI)
+  sqlmap: "sqlmap"
+  dalfox: "dalfox"
+  xsstrike: "xsstrike"
+  sstimap: "sstimap"
+  searchsploit: "searchsploit"
+  msfvenom: "msfvenom"
+  netcat: "nc"
+
+  # Stage 5 Post/Creds Prep (CLI)
+  chisel: "chisel"
+  ssh: "ssh"
+  hydra: "hydra"
+  medusa: "medusa"
+  hashcat: "hashcat"
+  john: "john"
