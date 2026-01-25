@@ -1,0 +1,11 @@
+output_base_dir: outputs
+
+modes:
+  safe_auto_run: true
+  confirm_before_aggressive: true
+
+wordlists:
+  ffuf_default_mode: true
+
+profiles:
+  default: full_safe
