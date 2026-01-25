@@ -1,0 +1,14 @@
+[project]
+name = "scopeforgex"
+version = "3.0.0"
+description = "ScopeForgeX - CLI-only Ethical Hacking Workflow Automation"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "PyYAML==6.0.2",
+  "rich==13.9.4",
+  "questionary==2.0.1"
+]
+
+[tool.setuptools]
+packages = ["scopeforgex"]
