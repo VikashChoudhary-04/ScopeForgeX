@@ -6,9 +6,8 @@ def run_cmd(cmd: str, outfile: str | None = None):
     """
     Runs a shell command and captures output.
 
-    - If outfile is provided: writes BOTH stdout + stderr into the file
-      (so even errors are saved and you never get a "blank file with no clue").
-    - If outfile is None: prints output normally to the terminal.
+    - If outfile is provided: writes BOTH stdout + stderr into the file.
+    - If outfile is None: runs normally to terminal.
     """
     info(f"Running: {cmd}")
 
