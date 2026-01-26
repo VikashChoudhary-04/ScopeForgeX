@@ -5,7 +5,7 @@ from scopeforgex.registry.tool_base import ToolBase, ToolResult
 from scopeforgex.runner import run_cmd
 from scopeforgex.toolcheck import is_tool_installed
 from scopeforgex.merger import merge_targets
-from scopeforgex.wordlists import find_default_wordlist, is_valid_wordlist
+from scopeforgex.wordlists import find_default_subdomain_wordlist, is_valid_wordlist
 
 
 class Sublist3rTool(ToolBase):
@@ -22,7 +22,6 @@ class Sublist3rTool(ToolBase):
         if not is_tool_installed("sublist3r"):
             return ToolResult(self.name, False, [], "sublist3r not installed")
 
-        # Capture stdout+stderr into log file
         run_cmd(f"sublist3r -d {ctx['target']} -o {out_txt}", outfile=out_log)
 
         notes = "Completed (check log if results are empty)."
@@ -98,13 +97,13 @@ class SubhuntTool(ToolBase):
         mode = questionary.select(
             "Choose Subhunt wordlist mode:",
             choices=[
-                "Use default wordlist (auto-detect)",
+                "Use default subdomain wordlist (auto-detect)",
                 "Use custom wordlist path",
             ],
         ).ask()
 
-        if mode == "Use default wordlist (auto-detect)":
-            wordlist = find_default_wordlist()
+        if mode == "Use default subdomain wordlist (auto-detect)":
+            wordlist = find_default_subdomain_wordlist()
             if not wordlist:
                 wordlist = questionary.text("No default found. Enter custom wordlist path:").ask()
         else:
@@ -116,7 +115,6 @@ class SubhuntTool(ToolBase):
         with open(wordlist_file, "w", encoding="utf-8") as f:
             f.write(wordlist + "\n")
 
-        # ✅ Correct Subhunt run style
         cmd = f"subhunt -d {ctx['target']} --bruteforce {wordlist} > {out_txt}"
         run_cmd(cmd, outfile=out_log)
 
