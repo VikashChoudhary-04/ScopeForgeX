@@ -8,7 +8,7 @@ from scopeforgex.utils import build_notes_from_log
 class NucleiTool(ToolBase):
     name = "nuclei"
     stage = 3
-    description = "Automated vulnerability hints"
+    description = "Automated vulnerability hints (FAST optimized)"
     risk = "medium"
 
     def run(self, ctx: dict) -> ToolResult:
@@ -21,12 +21,28 @@ class NucleiTool(ToolBase):
         if not is_tool_installed("nuclei"):
             return ToolResult(self.name, False, [], "nuclei not installed")
 
+        profile = ctx.get("profile", "full_safe")
         final_targets = os.path.join(recon_dir, "final_targets.txt")
 
-        if os.path.exists(final_targets) and os.path.getsize(final_targets) > 0:
-            run_cmd(f"nuclei -l {final_targets} -o {out_txt}", outfile=out_log)
+        # ✅ FAST MODE: keep nuclei short and useful
+        if profile == "fast":
+            cmd = (
+                f"nuclei -u https://{ctx['target']} "
+                f"-severity high,critical "
+                f"-rate-limit 30 "
+                f"-timeout 5 "
+                f"-retries 1 "
+                f"-o {out_txt}"
+            )
+            run_cmd(cmd, outfile=out_log, timeout=600)  # max 10 min
         else:
-            run_cmd(f"nuclei -u https://{ctx['target']} -o {out_txt}", outfile=out_log)
+            # FULL_SAFE mode: scan full target list if available
+            if os.path.exists(final_targets) and os.path.getsize(final_targets) > 0:
+                cmd = f"nuclei -l {final_targets} -o {out_txt}"
+            else:
+                cmd = f"nuclei -u https://{ctx['target']} -o {out_txt}"
+
+            run_cmd(cmd, outfile=out_log, timeout=1800)  # max 30 min
 
         notes = build_notes_from_log(out_log, "Nuclei finished.")
         if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
@@ -38,10 +54,14 @@ class NucleiTool(ToolBase):
 class NiktoTool(ToolBase):
     name = "nikto"
     stage = 3
-    description = "Web server scanner"
+    description = "Web server scanner (FULL_SAFE recommended)"
     risk = "medium"
 
     def run(self, ctx: dict) -> ToolResult:
+        profile = ctx.get("profile", "full_safe")
+        if profile == "fast":
+            return ToolResult(self.name, False, [], "Skipped in FAST mode (slow tool)")
+
         vuln_dir = os.path.join(ctx["outdir"], "vuln")
         out_txt = os.path.join(vuln_dir, "nikto.txt")
         out_log = os.path.join(vuln_dir, "nikto.log")
@@ -49,7 +69,7 @@ class NiktoTool(ToolBase):
         if not is_tool_installed("nikto"):
             return ToolResult(self.name, False, [], "nikto not installed")
 
-        run_cmd(f"nikto -h https://{ctx['target']} > {out_txt}", outfile=out_log)
+        run_cmd(f"nikto -h https://{ctx['target']} > {out_txt}", outfile=out_log, timeout=1800)
 
         notes = build_notes_from_log(out_log, "Nikto finished.")
         if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
@@ -61,10 +81,14 @@ class NiktoTool(ToolBase):
 class WpScanTool(ToolBase):
     name = "wpscan"
     stage = 3
-    description = "WordPress scanning"
+    description = "WordPress scanning (FULL_SAFE recommended)"
     risk = "medium"
 
     def run(self, ctx: dict) -> ToolResult:
+        profile = ctx.get("profile", "full_safe")
+        if profile == "fast":
+            return ToolResult(self.name, False, [], "Skipped in FAST mode (slow/blocked often)")
+
         vuln_dir = os.path.join(ctx["outdir"], "vuln")
         out_txt = os.path.join(vuln_dir, "wpscan.txt")
         out_log = os.path.join(vuln_dir, "wpscan.log")
@@ -72,9 +96,8 @@ class WpScanTool(ToolBase):
         if not is_tool_installed("wpscan"):
             return ToolResult(self.name, False, [], "wpscan not installed")
 
-        # ✅ aggressive enumeration can trigger 403 or 429, so logs matter
         cmd = f"wpscan --url https://{ctx['target']} --enumerate vp,vt,u"
-        run_cmd(f"{cmd} > {out_txt}", outfile=out_log)
+        run_cmd(f"{cmd} > {out_txt}", outfile=out_log, timeout=1800)
 
         notes = build_notes_from_log(out_log, "WPScan finished.")
         if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
