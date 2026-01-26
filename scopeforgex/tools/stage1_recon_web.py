@@ -26,9 +26,6 @@ def _append_clean_hosts(input_path: str, output_path: str):
 
 
 def _append_clean_urls(input_path: str, output_path: str):
-    """
-    Keep only http/https URLs, remove junk/banners.
-    """
     if not os.path.exists(input_path):
         return
 
@@ -45,7 +42,7 @@ def _append_clean_urls(input_path: str, output_path: str):
             out.write(c + "\n")
 
 
-def _dedupe_file(path: str):
+def _dedupe_file(path: str) -> int:
     if not os.path.exists(path):
         return 0
 
@@ -68,7 +65,7 @@ def _dedupe_file(path: str):
 class SubhuntTool(ToolBase):
     name = "subhunt"
     stage = 1
-    description = "Subdomain bruteforce discovery (domain + wordlist)"
+    description = "Subhunt finds subdomains (FAST pipeline root)"
     risk = "low"
 
     def run(self, ctx: dict) -> ToolResult:
@@ -108,22 +105,20 @@ class SubhuntTool(ToolBase):
         with open(wordlist_file, "w", encoding="utf-8") as f:
             f.write(wordlist + "\n")
 
-        cmd = f"subhunt -d {ctx['target']} --bruteforce {wordlist} > {out_txt}"
-        run_cmd(cmd, outfile=out_log, timeout=900)
+        # ✅ Subhunt is the FIRST truth source in FAST
+        run_cmd(
+            f"subhunt -d {ctx['target']} --bruteforce {wordlist} > {out_txt}",
+            outfile=out_log,
+            timeout=900
+        )
 
-        return ToolResult(self.name, True, [out_txt, out_log, wordlist_file], "Subhunt executed.")
+        return ToolResult(self.name, True, [out_txt, out_log, wordlist_file], "Subhunt completed.")
 
 
-class PipelineBuilderTool(ToolBase):
-    """
-    ✅ This tool builds the full pipeline:
-    Subhunt -> hosts_raw -> httpx -> hosts_alive -> hosts_final
-    + Endpoints:
-    hosts_final -> gau + katana -> urls_raw -> urls_final
-    """
+class FastPipelineBuilderTool(ToolBase):
     name = "pipeline_builder"
     stage = 1
-    description = "Build hosts + endpoints pipeline"
+    description = "FAST pipeline: subhunt -> alive -> endpoints"
     risk = "low"
 
     def run(self, ctx: dict) -> ToolResult:
@@ -145,9 +140,6 @@ class PipelineBuilderTool(ToolBase):
         subhunt_out = os.path.join(recon_dir, "subhunt.txt")
         httpx_log = os.path.join(recon_dir, "httpx.log")
 
-        gau_out = os.path.join(recon_dir, "gau.txt")
-        gau_log = os.path.join(recon_dir, "gau.log")
-
         katana_out = os.path.join(recon_dir, "katana.txt")
         katana_log = os.path.join(recon_dir, "katana.log")
 
@@ -158,13 +150,12 @@ class PipelineBuilderTool(ToolBase):
         open(urls_raw, "w", encoding="utf-8").close()
         open(urls_final, "w", encoding="utf-8").close()
 
-        # Always include main domain
-        with open(hosts_raw, "a", encoding="utf-8") as f:
-            f.write(ctx["target"].lower() + "\n")
-
-        # Add subhunt results (clean)
+        # ✅ FAST: hosts_raw must come ONLY from Subhunt output
         _append_clean_hosts(subhunt_out, hosts_raw)
         raw_count = _dedupe_file(hosts_raw)
+
+        if raw_count == 0:
+            return ToolResult(self.name, False, [hosts_raw], "No subdomains found by Subhunt (hosts_raw empty)")
 
         # Alive filtering
         if not is_tool_installed("httpx"):
@@ -173,36 +164,31 @@ class PipelineBuilderTool(ToolBase):
         run_cmd(f"cat {hosts_raw} | httpx -silent > {hosts_alive}", outfile=httpx_log, timeout=600)
         alive_count = _dedupe_file(hosts_alive)
 
-        # Final = alive if any, else raw
-        if alive_count > 0:
-            with open(hosts_alive, "r", encoding="utf-8") as f:
-                data = f.read()
-            with open(hosts_final, "w", encoding="utf-8") as f:
-                f.write(data)
-            final_count = alive_count
-        else:
-            with open(hosts_raw, "r", encoding="utf-8") as f:
-                data = f.read()
-            with open(hosts_final, "w", encoding="utf-8") as f:
-                f.write(data)
-            final_count = raw_count
+        if alive_count == 0:
+            return ToolResult(self.name, False, [hosts_raw, hosts_alive], "No alive subdomains found (hosts_alive empty)")
 
-        # -------- ENDPOINTS PIPELINE --------
-        # urls_raw = gau + katana
+        # hosts_final = alive only
+        with open(hosts_alive, "r", encoding="utf-8") as f:
+            data = f.read()
+        with open(hosts_final, "w", encoding="utf-8") as f:
+            f.write(data)
+
+        final_count = _dedupe_file(hosts_final)
+
+        # ✅ Endpoints ONLY from alive subdomains
         notes_parts = [f"hosts_raw={raw_count}", f"hosts_alive={alive_count}", f"hosts_final={final_count}"]
 
-        if is_tool_installed("gau"):
-            run_cmd(f"gau {ctx['target']} > {gau_out}", outfile=gau_log, timeout=600)
-            _append_clean_urls(gau_out, urls_raw)
-
         if is_tool_installed("katana"):
-            # Crawl each final host (FAST safe)
-            run_cmd(f"cat {hosts_final} | katana -silent > {katana_out}", outfile=katana_log, timeout=600)
+            run_cmd(
+                f"cat {hosts_final} | katana -silent > {katana_out}",
+                outfile=katana_log,
+                timeout=600
+            )
             _append_clean_urls(katana_out, urls_raw)
 
         url_count_raw = _dedupe_file(urls_raw)
 
-        # urls_final = urls_raw (already filtered)
+        # urls_final = urls_raw
         with open(urls_raw, "r", encoding="utf-8") as f:
             data = f.read()
         with open(urls_final, "w", encoding="utf-8") as f:
@@ -219,9 +205,6 @@ class PipelineBuilderTool(ToolBase):
             httpx_log
         ]
 
-        # Optional outputs if tools installed
-        if os.path.exists(gau_out):
-            outputs += [gau_out, gau_log]
         if os.path.exists(katana_out):
             outputs += [katana_out, katana_log]
 
@@ -230,5 +213,5 @@ class PipelineBuilderTool(ToolBase):
 
 ALL_STAGE1_WEB_TOOLS = [
     SubhuntTool(),
-    PipelineBuilderTool(),
+    FastPipelineBuilderTool(),
 ]
