@@ -3,9 +3,6 @@ from scopeforgex.ui import stage, ok, warn, err, info
 
 
 def _print_tool_result(result):
-    """
-    Standard output after every tool run.
-    """
     if result.ran:
         ok(f"Tool completed: {result.name}")
     else:
@@ -29,9 +26,16 @@ def stage1_recon(ctx: dict):
         err("No Stage 1 tools registered.")
         return
 
+    profile = ctx.get("profile", "full_safe")
+
+    # ✅ FAST should only run quick tools
+    if profile == "fast":
+        allowed = {"httpx", "subhunt", "final_targets"}
+        warn("FAST mode: running limited recon tools only (httpx + subhunt).")
+        tools = [t for t in tools if t.name in allowed]
+
     for tool in tools:
         result = tool.run(ctx)
         _print_tool_result(result)
 
     ok("Stage 1 recon finished ✅")
-
