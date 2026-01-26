@@ -1,8 +1,9 @@
 import questionary
 from scopeforgex.ui import stage, err, ok
 from scopeforgex.utils import load_yaml
-from scopeforgex.stages.shared import init_output_dirs
+from scopeforgex.stages.shared import init_output_dirs, pipeline_paths
 from scopeforgex.validators import is_valid_domain, is_valid_ip_or_cidr
+
 
 def stage0_scope(ctx: dict):
     stage("STAGE 0 — SCOPE & LEGAL CHECK", "blue")
@@ -29,6 +30,10 @@ def stage0_scope(ctx: dict):
         ctx["target_type"] = "web"
         ctx["target"] = target.strip()
         ctx["outdir"] = init_output_dirs(base_dir, ctx["target"].replace(".", "_"))
+
+        # ✅ Pipeline file locations
+        ctx["pipeline"] = pipeline_paths(ctx["outdir"])
+
         ok(f"Target set: {ctx['target']}")
     else:
         target = questionary.text("Enter IP / range (e.g. 10.10.10.0/24):").ask()
@@ -39,4 +44,8 @@ def stage0_scope(ctx: dict):
         ctx["target_type"] = "network"
         ctx["target"] = target.strip()
         ctx["outdir"] = init_output_dirs(base_dir, "network_target")
+
+        # ✅ Pipeline file locations
+        ctx["pipeline"] = pipeline_paths(ctx["outdir"])
+
         ok(f"Target set: {ctx['target']}")
