@@ -11,9 +11,9 @@ REQUIRED_TOOLS = [
     "sublist3r",
     "dnsrecon",
     "httpx",
-    "subhunt",
     "gau",
     "katana",
+    "subhunt",  # ✅ now installed using your git repo
 
     # Network recon
     "nmap",
@@ -65,14 +65,48 @@ def check_path_for_go_bin():
 
 
 def install_go_tools():
-    # ✅ ProjectDiscovery tools + Subhunt
     run("go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest")
     run("go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest")
     run("go install -v github.com/projectdiscovery/katana/cmd/katana@latest")
     run("go install -v github.com/lc/gau/v2/cmd/gau@latest")
 
-    # ✅ Subhunt (your requested tool)
-    run("go install -v github.com/g0ldencybersec/subhunt/cmd/subhunt@latest")
+
+def install_subhunt_from_git():
+    """
+    ✅ Installs Subhunt using your public GitHub repository:
+    git clone https://github.com/VikashChoudhary-04/subhunt.git
+
+    Then installs it using pip, so 'subhunt' becomes available as a CLI command.
+    """
+    stage("Installing Subhunt (GitHub Repo)", "cyan")
+
+    repo_url = "https://github.com/VikashChoudhary-04/subhunt.git"
+    tools_dir = os.path.join(os.path.expanduser("~"), "ScopeForgeX-tools")
+    repo_dir = os.path.join(tools_dir, "subhunt")
+
+    os.makedirs(tools_dir, exist_ok=True)
+
+    if os.path.exists(repo_dir):
+        warn("Subhunt repo already exists. Pulling latest updates...")
+        run(f"cd {repo_dir} && git pull")
+    else:
+        info("Cloning Subhunt repository...")
+        run(f"cd {tools_dir} && git clone {repo_url}")
+
+    # ✅ Install Subhunt into system/user environment
+    info("Installing Subhunt using pip...")
+    run(f"cd {repo_dir} && pip3 install -U .")
+
+    # ✅ Verify
+    if is_tool_installed("subhunt"):
+        ok("✅ Subhunt installed successfully and is available in PATH.")
+    else:
+        warn("⚠️ Subhunt installation finished but command not found.")
+        warn("Try running:")
+        warn("pip3 show subhunt")
+        warn("python3 -m subhunt --help")
+        warn("Or reinstall with:")
+        warn(f"cd {repo_dir} && pip3 install -U .")
 
 
 def install_tools():
@@ -86,28 +120,24 @@ def install_tools():
         warn("You can still install tools manually and re-run installer to verify.")
         return
 
-    # Core packages
     info("Installing core dependencies...")
     run("sudo apt update -y")
     run("sudo apt install -y python3-pip golang git")
 
-    # CLI tools from apt
     info("Installing CLI tools from apt...")
     run("sudo apt install -y nmap whatweb wafw00f ffuf dnsrecon wpscan nikto sqlmap hydra john netcat-openbsd")
 
-    # Python tools
     info("Installing Python tools via pip...")
     run("pip3 install --upgrade pip")
     run("pip3 install sublist3r knockpy")
 
-    # Go tools
-    info("Installing Go-based tools (ProjectDiscovery + Subhunt)...")
+    info("Installing Go-based tools (ProjectDiscovery)...")
     install_go_tools()
-
-    # PATH sanity
     check_path_for_go_bin()
 
-    # Final verification
+    # ✅ Your Subhunt install method
+    install_subhunt_from_git()
+
     info("Verifying installations...")
     missing = [t for t in REQUIRED_TOOLS if not is_tool_installed(t)]
 
@@ -117,5 +147,6 @@ def install_tools():
         err("❌ Some tools are still missing:")
         for t in missing:
             warn(f"- {t}")
-        warn("Most common fix: ensure Go bin path is in your PATH:")
+
+        warn("If Go tools are missing, ensure PATH includes:")
         warn("export PATH=$PATH:$HOME/go/bin")
