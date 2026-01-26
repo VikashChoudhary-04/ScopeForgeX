@@ -28,13 +28,12 @@ def stage1_recon(ctx: dict):
 
     profile = ctx.get("profile", "full_safe")
 
-    # ✅ FAST mode: run only what is needed to build pipeline targets quickly
     if profile == "fast":
         allowed = {
             "subhunt",
-            "pipeline_hosts_builder",
+            "pipeline_builder",
         }
-        warn("FAST mode: running Subhunt + pipeline host builder only.")
+        warn("FAST mode: running Subhunt + pipeline builder (hosts + endpoints).")
         tools = [t for t in tools if t.name in allowed]
 
     for tool in tools:
