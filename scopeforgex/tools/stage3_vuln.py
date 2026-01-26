@@ -8,42 +8,70 @@ from scopeforgex.utils import build_notes_from_log
 class NucleiTool(ToolBase):
     name = "nuclei"
     stage = 3
-    description = "Nuclei scan using pipeline targets"
+    description = "Nuclei scan on pipeline hosts + endpoints"
     risk = "medium"
 
     def run(self, ctx: dict) -> ToolResult:
         vuln_dir = os.path.join(ctx["outdir"], "vuln")
-        out_txt = os.path.join(vuln_dir, "nuclei.txt")
-        out_log = os.path.join(vuln_dir, "nuclei.log")
+
+        out_hosts = os.path.join(vuln_dir, "nuclei_hosts.txt")
+        out_urls = os.path.join(vuln_dir, "nuclei_urls.txt")
+        out_combined = os.path.join(vuln_dir, "nuclei.txt")
+
+        log_hosts = os.path.join(vuln_dir, "nuclei_hosts.log")
+        log_urls = os.path.join(vuln_dir, "nuclei_urls.log")
 
         if not is_tool_installed("nuclei"):
             return ToolResult(self.name, False, [], "nuclei not installed")
 
         pipe = ctx.get("pipeline", {})
         hosts_final = pipe.get("hosts_final")
+        urls_final = pipe.get("urls_final")
 
         profile = ctx.get("profile", "full_safe")
 
+        # FAST mode = strict limits
         if profile == "fast":
-            cmd = (
-                f"nuclei -u https://{ctx['target']} "
-                f"-severity high,critical "
-                f"-rate-limit 30 "
-                f"-timeout 5 "
-                f"-retries 1 "
-                f"-o {out_txt}"
-            )
-            run_cmd(cmd, outfile=out_log, timeout=600)
+            base = "-severity high,critical -rate-limit 30 -timeout 5 -retries 1"
+            max_timeout = 600
         else:
-            if hosts_final and os.path.exists(hosts_final) and os.path.getsize(hosts_final) > 0:
-                cmd = f"nuclei -l {hosts_final} -o {out_txt}"
-            else:
-                cmd = f"nuclei -u https://{ctx['target']} -o {out_txt}"
+            base = ""
+            max_timeout = 1800
 
-            run_cmd(cmd, outfile=out_log, timeout=1800)
+        # 1) Scan hosts list
+        if hosts_final and os.path.exists(hosts_final) and os.path.getsize(hosts_final) > 0:
+            run_cmd(f"nuclei -l {hosts_final} {base} -o {out_hosts}", outfile=log_hosts, timeout=max_timeout)
+        else:
+            run_cmd(f"nuclei -u https://{ctx['target']} {base} -o {out_hosts}", outfile=log_hosts, timeout=max_timeout)
 
-        notes = build_notes_from_log(out_log, "Nuclei finished.")
-        return ToolResult(self.name, True, [out_txt, out_log], notes)
+        # 2) Scan endpoints list
+        if urls_final and os.path.exists(urls_final) and os.path.getsize(urls_final) > 0:
+            run_cmd(f"nuclei -l {urls_final} {base} -o {out_urls}", outfile=log_urls, timeout=max_timeout)
+        else:
+            # No endpoints -> leave file empty
+            open(out_urls, "w", encoding="utf-8").close()
+
+        # Merge results
+        combined_lines = []
+        for fp in [out_hosts, out_urls]:
+            if os.path.exists(fp):
+                with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                    combined_lines += [x.strip() for x in f.readlines() if x.strip()]
+
+        combined_lines = list(dict.fromkeys(combined_lines))  # dedupe preserve order
+        with open(out_combined, "w", encoding="utf-8") as f:
+            f.write("\n".join(combined_lines) + ("\n" if combined_lines else ""))
+
+        notes = "Nuclei completed (hosts + urls)."
+        notes += " | " + build_notes_from_log(log_hosts, "Hosts scan").replace("Completed.", "")
+        notes += " | " + build_notes_from_log(log_urls, "URL scan").replace("Completed.", "")
+
+        return ToolResult(
+            self.name,
+            True,
+            [out_combined, out_hosts, out_urls, log_hosts, log_urls],
+            notes.strip()
+        )
 
 
 ALL_STAGE3_VULN_TOOLS = [
