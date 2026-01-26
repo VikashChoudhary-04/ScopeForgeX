@@ -1,8 +1,11 @@
 import os
+import questionary
+
 from scopeforgex.registry.tool_base import ToolBase, ToolResult
 from scopeforgex.runner import run_cmd
 from scopeforgex.toolcheck import is_tool_installed
 from scopeforgex.merger import merge_targets
+from scopeforgex.wordlists import find_default_wordlist, is_valid_wordlist
 
 
 class Sublist3rTool(ToolBase):
@@ -19,12 +22,12 @@ class Sublist3rTool(ToolBase):
         if not is_tool_installed("sublist3r"):
             return ToolResult(self.name, False, [], "sublist3r not installed")
 
-        # ✅ Capture stdout+stderr into log file
+        # Capture stdout+stderr into log file
         run_cmd(f"sublist3r -d {ctx['target']} -o {out_txt}", outfile=out_log)
 
         notes = "Completed (check log if results are empty)."
         if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
-            notes = "Sublist3r finished but output is empty (blocked sources / crash). Check sublist3r.log."
+            notes = "Sublist3r output is empty (blocked sources/crash). Check sublist3r.log."
 
         return ToolResult(self.name, True, [out_txt, out_log], notes)
 
@@ -43,7 +46,6 @@ class DnsreconTool(ToolBase):
             return ToolResult(self.name, False, [], "dnsrecon not installed")
 
         run_cmd(f"dnsrecon -d {ctx['target']} -t std", outfile=out_log)
-
         return ToolResult(self.name, True, [out_log], "DNS recon saved to dnsrecon.log")
 
 
@@ -69,7 +71,7 @@ class HttpxAliveTool(ToolBase):
 
         notes = "Alive hosts saved."
         if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
-            notes = "httpx finished but no alive hosts found OR target list was invalid."
+            notes = "httpx produced no alive hosts OR target list was invalid."
 
         return ToolResult(self.name, True, [out_txt, out_log], notes)
 
@@ -77,28 +79,52 @@ class HttpxAliveTool(ToolBase):
 class SubhuntTool(ToolBase):
     name = "subhunt"
     stage = 1
-    description = "Expand recon using Subhunt"
+    description = "Subhunt bruteforce discovery (domain + wordlist)"
     risk = "low"
 
     def run(self, ctx: dict) -> ToolResult:
         recon_dir = os.path.join(ctx["outdir"], "recon")
-        inp = os.path.join(recon_dir, "alive.txt")
         out_txt = os.path.join(recon_dir, "subhunt.txt")
         out_log = os.path.join(recon_dir, "subhunt.log")
+        wordlist_file = os.path.join(recon_dir, "subhunt_wordlist_used.txt")
 
         if not is_tool_installed("subhunt"):
             return ToolResult(self.name, False, [], "subhunt not installed")
 
-        if not os.path.exists(inp) or os.path.getsize(inp) == 0:
-            return ToolResult(self.name, False, [], "alive.txt missing or empty (httpx produced nothing)")
+        run_it = questionary.confirm("Run Subhunt bruteforce?").ask()
+        if not run_it:
+            return ToolResult(self.name, False, [], "Skipped by user")
 
-        run_cmd(f"subhunt -l {inp} -o {out_txt}", outfile=out_log)
+        mode = questionary.select(
+            "Choose Subhunt wordlist mode:",
+            choices=[
+                "Use default wordlist (auto-detect)",
+                "Use custom wordlist path",
+            ],
+        ).ask()
 
-        notes = "Subhunt results saved."
+        if mode == "Use default wordlist (auto-detect)":
+            wordlist = find_default_wordlist()
+            if not wordlist:
+                wordlist = questionary.text("No default found. Enter custom wordlist path:").ask()
+        else:
+            wordlist = questionary.text("Enter custom wordlist path:").ask()
+
+        if not is_valid_wordlist(wordlist):
+            return ToolResult(self.name, False, [], f"Invalid wordlist path: {wordlist}")
+
+        with open(wordlist_file, "w", encoding="utf-8") as f:
+            f.write(wordlist + "\n")
+
+        # ✅ Correct Subhunt run style
+        cmd = f"subhunt -d {ctx['target']} --bruteforce {wordlist} > {out_txt}"
+        run_cmd(cmd, outfile=out_log)
+
+        notes = "Subhunt completed."
         if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
-            notes = "Subhunt ran but produced no results. Check subhunt.log."
+            notes = "Subhunt ran but output is empty. Check subhunt.log."
 
-        return ToolResult(self.name, True, [out_txt, out_log], notes)
+        return ToolResult(self.name, True, [out_txt, out_log, wordlist_file], notes)
 
 
 class GauTool(ToolBase):
@@ -161,6 +187,7 @@ class FinalTargetsTool(ToolBase):
         final_targets = os.path.join(recon_dir, "final_targets.txt")
 
         total = merge_targets(final_targets, sublist, alive, subhunt)
+
         notes = f"{total} unique targets merged into final_targets.txt"
         if total == 0:
             notes = "final_targets.txt is empty (upstream recon produced no valid targets)."
