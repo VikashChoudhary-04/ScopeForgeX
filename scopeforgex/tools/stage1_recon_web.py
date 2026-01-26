@@ -4,17 +4,61 @@ import questionary
 from scopeforgex.registry.tool_base import ToolBase, ToolResult
 from scopeforgex.runner import run_cmd
 from scopeforgex.toolcheck import is_tool_installed
-from scopeforgex.merger import merge_targets
 from scopeforgex.wordlists import find_default_subdomain_wordlist, is_valid_wordlist
+from scopeforgex.validators import looks_like_hostname
+
+
+def _append_clean_hosts(input_path: str, output_path: str):
+    """
+    Reads any file, extracts hostnames only, appends to output_path.
+    """
+    if not os.path.exists(input_path):
+        return
+
+    with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
+        lines = [x.strip() for x in f.readlines()]
+
+    cleaned = []
+    for line in lines:
+        if looks_like_hostname(line):
+            cleaned.append(line.lower())
+
+    # append cleaned
+    with open(output_path, "a", encoding="utf-8") as out:
+        for c in cleaned:
+            out.write(c + "\n")
+
+
+def _dedupe_file(path: str):
+    if not os.path.exists(path):
+        return 0
+
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        lines = [x.strip() for x in f.readlines() if x.strip()]
+
+    seen = set()
+    out_lines = []
+    for l in lines:
+        if l not in seen:
+            seen.add(l)
+            out_lines.append(l)
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(out_lines) + ("\n" if out_lines else ""))
+
+    return len(out_lines)
 
 
 class Sublist3rTool(ToolBase):
     name = "sublist3r"
     stage = 1
-    description = "Enumerate subdomains using Sublist3r (logs saved)"
+    description = "Discover subdomains"
     risk = "low"
 
     def run(self, ctx: dict) -> ToolResult:
+        if ctx.get("target_type") != "web":
+            return ToolResult(self.name, False, [], "Skipped (not web target)")
+
         recon_dir = os.path.join(ctx["outdir"], "recon")
         out_txt = os.path.join(recon_dir, "sublist3r.txt")
         out_log = os.path.join(recon_dir, "sublist3r.log")
@@ -22,74 +66,20 @@ class Sublist3rTool(ToolBase):
         if not is_tool_installed("sublist3r"):
             return ToolResult(self.name, False, [], "sublist3r not installed")
 
-        run_cmd(f"sublist3r -d {ctx['target']} -o {out_txt}", outfile=out_log)
-
-        notes = "Completed (check log if results are empty)."
-        if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
-            notes = "Sublist3r output is empty (blocked sources/crash). Check sublist3r.log."
-
-        return ToolResult(self.name, True, [out_txt, out_log], notes)
-
-
-class DnsreconTool(ToolBase):
-    name = "dnsrecon"
-    stage = 1
-    description = "DNS reconnaissance"
-    risk = "low"
-
-    def run(self, ctx: dict) -> ToolResult:
-        recon_dir = os.path.join(ctx["outdir"], "recon")
-        out_log = os.path.join(recon_dir, "dnsrecon.log")
-
-        if not is_tool_installed("dnsrecon"):
-            return ToolResult(self.name, False, [], "dnsrecon not installed")
-
-        run_cmd(f"dnsrecon -d {ctx['target']} -t std", outfile=out_log)
-        return ToolResult(self.name, True, [out_log], "DNS recon saved to dnsrecon.log")
-
-
-class HttpxAliveTool(ToolBase):
-    name = "httpx"
-    stage = 1
-    description = "Alive web hosts check (FAST supported)"
-    risk = "low"
-
-    def run(self, ctx: dict) -> ToolResult:
-        recon_dir = os.path.join(ctx["outdir"], "recon")
-
-        out_txt = os.path.join(recon_dir, "alive.txt")
-        out_log = os.path.join(recon_dir, "httpx.log")
-
-        if not is_tool_installed("httpx"):
-            return ToolResult(self.name, False, [], "httpx not installed")
-
-        profile = ctx.get("profile", "full_safe")
-
-        # ✅ FAST mode: just check main domain directly
-        if profile == "fast":
-            run_cmd(f"echo {ctx['target']} | httpx -silent > {out_txt}", outfile=out_log)
-        else:
-            # FULL_SAFE mode: use sublist3r results
-            inp = os.path.join(recon_dir, "sublist3r.txt")
-            if not os.path.exists(inp) or os.path.getsize(inp) == 0:
-                return ToolResult(self.name, False, [], "sublist3r.txt missing or empty")
-
-            run_cmd(f"cat {inp} | httpx -silent > {out_txt}", outfile=out_log)
-
-        notes = "Alive hosts saved."
-        if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
-            notes = "httpx produced no alive hosts (target blocked/unreachable)."
-
-        return ToolResult(self.name, True, [out_txt, out_log], notes)
+        run_cmd(f"sublist3r -d {ctx['target']} -o {out_txt}", outfile=out_log, timeout=600)
+        return ToolResult(self.name, True, [out_txt, out_log], "Sublist3r executed.")
 
 
 class SubhuntTool(ToolBase):
     name = "subhunt"
     stage = 1
-    description = "Subhunt bruteforce discovery (domain + wordlist)"
+    description = "Subdomain bruteforce (wordlist)"
     risk = "low"
 
     def run(self, ctx: dict) -> ToolResult:
+        if ctx.get("target_type") != "web":
+            return ToolResult(self.name, False, [], "Skipped (not web target)")
+
         recon_dir = os.path.join(ctx["outdir"], "recon")
         out_txt = os.path.join(recon_dir, "subhunt.txt")
         out_log = os.path.join(recon_dir, "subhunt.log")
@@ -104,13 +94,10 @@ class SubhuntTool(ToolBase):
 
         mode = questionary.select(
             "Choose Subhunt wordlist mode:",
-            choices=[
-                "Use default subdomain wordlist (auto-detect)",
-                "Use custom wordlist path",
-            ],
+            choices=["Use default subdomain wordlist", "Use custom wordlist path"],
         ).ask()
 
-        if mode == "Use default subdomain wordlist (auto-detect)":
+        if mode == "Use default subdomain wordlist":
             wordlist = find_default_subdomain_wordlist()
             if not wordlist:
                 wordlist = questionary.text("No default found. Enter custom wordlist path:").ask()
@@ -123,90 +110,79 @@ class SubhuntTool(ToolBase):
         with open(wordlist_file, "w", encoding="utf-8") as f:
             f.write(wordlist + "\n")
 
-        cmd = f"subhunt -d {ctx['target']} --bruteforce {wordlist} > {out_txt}"
-        run_cmd(cmd, outfile=out_log)
+        run_cmd(
+            f"subhunt -d {ctx['target']} --bruteforce {wordlist} > {out_txt}",
+            outfile=out_log,
+            timeout=900
+        )
 
-        notes = "Subhunt completed."
-        if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
-            notes = "Subhunt ran but output is empty. Check subhunt.log."
-
-        return ToolResult(self.name, True, [out_txt, out_log, wordlist_file], notes)
+        return ToolResult(self.name, True, [out_txt, out_log, wordlist_file], "Subhunt executed.")
 
 
-class GauTool(ToolBase):
-    name = "gau"
+class PipelineHostsBuilderTool(ToolBase):
+    name = "pipeline_hosts_builder"
     stage = 1
-    description = "Fetch historical URLs using gau"
+    description = "Build pipeline host lists (raw/alive/final)"
     risk = "low"
 
     def run(self, ctx: dict) -> ToolResult:
-        recon_dir = os.path.join(ctx["outdir"], "recon")
-        out_txt = os.path.join(recon_dir, "gau.txt")
-        out_log = os.path.join(recon_dir, "gau.log")
+        if ctx.get("target_type") != "web":
+            return ToolResult(self.name, False, [], "Skipped (not web target)")
 
-        if not is_tool_installed("gau"):
-            return ToolResult(self.name, False, [], "gau not installed")
+        pipe = ctx.get("pipeline", {})
+        hosts_raw = pipe.get("hosts_raw")
+        hosts_alive = pipe.get("hosts_alive")
+        hosts_final = pipe.get("hosts_final")
 
-        run_cmd(f"gau {ctx['target']} > {out_txt}", outfile=out_log)
-
-        notes = "gau output saved."
-        if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
-            notes = "gau produced no URLs (normal for some targets)."
-
-        return ToolResult(self.name, True, [out_txt, out_log], notes)
-
-
-class KatanaTool(ToolBase):
-    name = "katana"
-    stage = 1
-    description = "Crawl endpoints using katana"
-    risk = "low"
-
-    def run(self, ctx: dict) -> ToolResult:
-        recon_dir = os.path.join(ctx["outdir"], "recon")
-        out_txt = os.path.join(recon_dir, "katana.txt")
-        out_log = os.path.join(recon_dir, "katana.log")
-
-        if not is_tool_installed("katana"):
-            return ToolResult(self.name, False, [], "katana not installed")
-
-        run_cmd(f"katana -u https://{ctx['target']} -silent > {out_txt}", outfile=out_log)
-
-        notes = "katana output saved."
-        if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
-            notes = "katana produced no endpoints or was blocked. Check katana.log."
-
-        return ToolResult(self.name, True, [out_txt, out_log], notes)
-
-
-class FinalTargetsTool(ToolBase):
-    name = "final_targets"
-    stage = 1
-    description = "Merge recon targets into final_targets.txt"
-    risk = "low"
-
-    def run(self, ctx: dict) -> ToolResult:
         recon_dir = os.path.join(ctx["outdir"], "recon")
         sublist = os.path.join(recon_dir, "sublist3r.txt")
-        alive = os.path.join(recon_dir, "alive.txt")
         subhunt = os.path.join(recon_dir, "subhunt.txt")
-        final_targets = os.path.join(recon_dir, "final_targets.txt")
 
-        total = merge_targets(final_targets, sublist, alive, subhunt)
+        if not hosts_raw or not hosts_alive or not hosts_final:
+            return ToolResult(self.name, False, [], "Pipeline paths missing in ctx")
 
-        notes = f"{total} unique targets merged into final_targets.txt"
-        if total == 0:
-            notes = "final_targets.txt is empty (upstream recon produced no valid targets)."
+        # Reset pipeline files
+        open(hosts_raw, "w", encoding="utf-8").close()
+        open(hosts_alive, "w", encoding="utf-8").close()
+        open(hosts_final, "w", encoding="utf-8").close()
 
-        return ToolResult(self.name, True, [final_targets], notes)
+        # Always include main domain
+        with open(hosts_raw, "a", encoding="utf-8") as f:
+            f.write(ctx["target"].lower() + "\n")
+
+        # Append from tools
+        _append_clean_hosts(sublist, hosts_raw)
+        _append_clean_hosts(subhunt, hosts_raw)
+
+        raw_count = _dedupe_file(hosts_raw)
+
+        # Alive check -> hosts_alive
+        if not is_tool_installed("httpx"):
+            return ToolResult(self.name, False, [hosts_raw], "httpx missing (can't build alive/final lists)")
+
+        run_cmd(f"cat {hosts_raw} | httpx -silent > {hosts_alive}", outfile=os.path.join(ctx["outdir"], "recon", "httpx.log"), timeout=600)
+        alive_count = _dedupe_file(hosts_alive)
+
+        # Final = alive if available else raw
+        if alive_count > 0:
+            with open(hosts_alive, "r", encoding="utf-8") as f:
+                data = f.read()
+            with open(hosts_final, "w", encoding="utf-8") as f:
+                f.write(data)
+            final_count = alive_count
+        else:
+            with open(hosts_raw, "r", encoding="utf-8") as f:
+                data = f.read()
+            with open(hosts_final, "w", encoding="utf-8") as f:
+                f.write(data)
+            final_count = raw_count
+
+        notes = f"hosts_raw={raw_count}, hosts_alive={alive_count}, hosts_final={final_count}"
+        return ToolResult(self.name, True, [hosts_raw, hosts_alive, hosts_final], notes)
 
 
 ALL_STAGE1_WEB_TOOLS = [
     Sublist3rTool(),
-    DnsreconTool(),
-    HttpxAliveTool(),
     SubhuntTool(),
-    GauTool(),
-    KatanaTool(),
-    FinalTargetsTool(),
+    PipelineHostsBuilderTool(),
 ]
