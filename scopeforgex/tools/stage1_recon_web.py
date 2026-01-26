@@ -51,26 +51,34 @@ class DnsreconTool(ToolBase):
 class HttpxAliveTool(ToolBase):
     name = "httpx"
     stage = 1
-    description = "Alive web hosts check"
+    description = "Alive web hosts check (FAST supported)"
     risk = "low"
 
     def run(self, ctx: dict) -> ToolResult:
         recon_dir = os.path.join(ctx["outdir"], "recon")
-        inp = os.path.join(recon_dir, "sublist3r.txt")
+
         out_txt = os.path.join(recon_dir, "alive.txt")
         out_log = os.path.join(recon_dir, "httpx.log")
 
         if not is_tool_installed("httpx"):
             return ToolResult(self.name, False, [], "httpx not installed")
 
-        if not os.path.exists(inp) or os.path.getsize(inp) == 0:
-            return ToolResult(self.name, False, [], "sublist3r.txt missing or empty")
+        profile = ctx.get("profile", "full_safe")
 
-        run_cmd(f"cat {inp} | httpx -silent > {out_txt}", outfile=out_log)
+        # ✅ FAST mode: just check main domain directly
+        if profile == "fast":
+            run_cmd(f"echo {ctx['target']} | httpx -silent > {out_txt}", outfile=out_log)
+        else:
+            # FULL_SAFE mode: use sublist3r results
+            inp = os.path.join(recon_dir, "sublist3r.txt")
+            if not os.path.exists(inp) or os.path.getsize(inp) == 0:
+                return ToolResult(self.name, False, [], "sublist3r.txt missing or empty")
+
+            run_cmd(f"cat {inp} | httpx -silent > {out_txt}", outfile=out_log)
 
         notes = "Alive hosts saved."
         if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
-            notes = "httpx produced no alive hosts OR target list was invalid."
+            notes = "httpx produced no alive hosts (target blocked/unreachable)."
 
         return ToolResult(self.name, True, [out_txt, out_log], notes)
 
