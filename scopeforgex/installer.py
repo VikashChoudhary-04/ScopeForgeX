@@ -13,7 +13,7 @@ REQUIRED_TOOLS = [
     "httpx",
     "gau",
     "katana",
-    "subhunt",  # ✅ now installed using your git repo
+    "subhunt",  # ✅ compiled Go binary from your repo
 
     # Network recon
     "nmap",
@@ -73,12 +73,12 @@ def install_go_tools():
 
 def install_subhunt_from_git():
     """
-    ✅ Installs Subhunt using your public GitHub repository:
-    git clone https://github.com/VikashChoudhary-04/subhunt.git
-
-    Then installs it using pip, so 'subhunt' becomes available as a CLI command.
+    ✅ Installs Subhunt from YOUR GitHub repo by compiling a Go binary.
+    Repo: https://github.com/VikashChoudhary-04/subhunt.git
+    Build path: ./cmd/subhunt
+    Output binary: /usr/local/bin/subhunt
     """
-    stage("Installing Subhunt (GitHub Repo)", "cyan")
+    stage("Installing Subhunt (Go Build from GitHub Repo)", "cyan")
 
     repo_url = "https://github.com/VikashChoudhary-04/subhunt.git"
     tools_dir = os.path.join(os.path.expanduser("~"), "ScopeForgeX-tools")
@@ -93,20 +93,36 @@ def install_subhunt_from_git():
         info("Cloning Subhunt repository...")
         run(f"cd {tools_dir} && git clone {repo_url}")
 
-    # ✅ Install Subhunt into system/user environment
-    info("Installing Subhunt using pip...")
-    run(f"cd {repo_dir} && pip3 install -U .")
+    # ✅ Build path exists?
+    cmd_path = os.path.join(repo_dir, "cmd", "subhunt")
+    if not os.path.exists(cmd_path):
+        err("❌ Subhunt build path not found: ./cmd/subhunt")
+        warn(f"Expected path: {cmd_path}")
+        return
+
+    # ✅ Compile to local binary inside repo
+    info("Building Subhunt binary...")
+    run(f"cd {repo_dir} && go build -o subhunt ./cmd/subhunt")
+
+    local_bin = os.path.join(repo_dir, "subhunt")
+    if not os.path.exists(local_bin):
+        err("❌ Build failed: binary not created.")
+        return
+
+    # ✅ Install globally
+    info("Installing binary to /usr/local/bin/subhunt ...")
+    run(f"sudo cp {local_bin} /usr/local/bin/subhunt")
+    run("sudo chmod +x /usr/local/bin/subhunt")
 
     # ✅ Verify
     if is_tool_installed("subhunt"):
-        ok("✅ Subhunt installed successfully and is available in PATH.")
+        ok("✅ Subhunt installed successfully as a CLI tool.")
+        run("subhunt --help")
     else:
-        warn("⚠️ Subhunt installation finished but command not found.")
+        warn("⚠️ Subhunt binary copied but still not found in PATH.")
         warn("Try running:")
-        warn("pip3 show subhunt")
-        warn("python3 -m subhunt --help")
-        warn("Or reinstall with:")
-        warn(f"cd {repo_dir} && pip3 install -U .")
+        warn("export PATH=$PATH:/usr/local/bin")
+        warn("which subhunt")
 
 
 def install_tools():
@@ -135,7 +151,7 @@ def install_tools():
     install_go_tools()
     check_path_for_go_bin()
 
-    # ✅ Your Subhunt install method
+    # ✅ Install Subhunt using Go build from your repo
     install_subhunt_from_git()
 
     info("Verifying installations...")
