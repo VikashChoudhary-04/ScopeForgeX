@@ -12,6 +12,7 @@ from scopeforgex.stages.stage4_exploit import stage4_exploit
 from scopeforgex.stages.stage5_post import stage5_post
 from scopeforgex.stages.stage6_report_cleanup import stage6_reporting
 
+
 def run_profile(profile_name: str):
     profiles = load_yaml("config/profiles.yaml")["profiles"]
     if profile_name not in profiles:
@@ -19,6 +20,9 @@ def run_profile(profile_name: str):
 
     enabled = profiles[profile_name]["enabled_stages"]
     ctx = {}
+
+    # ✅ Add profile name into context for stage logic
+    ctx["profile"] = profile_name
 
     stage("STAGE 0 — SCOPE", "blue")
     stage0_scope(ctx)
