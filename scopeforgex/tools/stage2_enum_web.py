@@ -3,7 +3,7 @@ import questionary
 from scopeforgex.registry.tool_base import ToolBase, ToolResult
 from scopeforgex.runner import run_cmd
 from scopeforgex.toolcheck import is_tool_installed
-from scopeforgex.wordlists import find_default_wordlist, is_valid_wordlist
+from scopeforgex.wordlists import find_default_web_fuzz_wordlist, is_valid_wordlist
 from scopeforgex.utils import build_notes_from_log
 
 
@@ -72,12 +72,12 @@ class FFUFTool(ToolBase):
             return ToolResult(self.name, False, [], "Skipped by user")
 
         mode = questionary.select(
-            "Choose wordlist mode:",
-            choices=["Use default wordlist (auto-detect)", "Use custom wordlist path"],
+            "Choose FFUF wordlist mode:",
+            choices=["Use default web wordlist (auto-detect)", "Use custom wordlist path"],
         ).ask()
 
-        if mode == "Use default wordlist (auto-detect)":
-            wordlist = find_default_wordlist()
+        if mode == "Use default web wordlist (auto-detect)":
+            wordlist = find_default_web_fuzz_wordlist()
             if not wordlist:
                 wordlist = questionary.text("No default found. Enter custom wordlist path:").ask()
         else:
@@ -89,7 +89,6 @@ class FFUFTool(ToolBase):
         with open(os.path.join(enum_dir, "wordlist_used.txt"), "w", encoding="utf-8") as f:
             f.write(wordlist + "\n")
 
-        # ✅ ffuf can show 403/429 heavily (WAF/rate limit)
         run_cmd(
             f"ffuf -u https://{ctx['target']}/FUZZ -w {wordlist} -mc all -of md -o {out_txt}",
             outfile=out_log
