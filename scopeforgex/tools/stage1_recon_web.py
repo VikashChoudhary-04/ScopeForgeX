@@ -26,6 +26,9 @@ def _append_clean_hosts(input_path: str, output_path: str):
 
 
 def _append_clean_urls(input_path: str, output_path: str):
+    """
+    Keep only http/https URLs, remove junk/banners.
+    """
     if not os.path.exists(input_path):
         return
 
@@ -150,12 +153,16 @@ class FastPipelineBuilderTool(ToolBase):
         open(urls_raw, "w", encoding="utf-8").close()
         open(urls_final, "w", encoding="utf-8").close()
 
-        # ✅ FAST: hosts_raw must come ONLY from Subhunt output
+        # ✅ FAST: hosts_raw should come from Subhunt output
         _append_clean_hosts(subhunt_out, hosts_raw)
         raw_count = _dedupe_file(hosts_raw)
 
+        # ✅ IMPORTANT FIX: if Subhunt finds nothing, fallback to root domain
+        # This ensures FAST always remains useful.
         if raw_count == 0:
-            return ToolResult(self.name, False, [hosts_raw], "No subdomains found by Subhunt (hosts_raw empty)")
+            with open(hosts_raw, "a", encoding="utf-8") as f:
+                f.write(ctx["target"].lower() + "\n")
+            raw_count = _dedupe_file(hosts_raw)
 
         # Alive filtering
         if not is_tool_installed("httpx"):
@@ -165,7 +172,13 @@ class FastPipelineBuilderTool(ToolBase):
         alive_count = _dedupe_file(hosts_alive)
 
         if alive_count == 0:
-            return ToolResult(self.name, False, [hosts_raw, hosts_alive], "No alive subdomains found (hosts_alive empty)")
+            # If nothing is alive, do not proceed with endpoints
+            return ToolResult(
+                self.name,
+                False,
+                [hosts_raw, hosts_alive],
+                "No alive hosts found by httpx (hosts_alive empty)"
+            )
 
         # hosts_final = alive only
         with open(hosts_alive, "r", encoding="utf-8") as f:
@@ -175,7 +188,7 @@ class FastPipelineBuilderTool(ToolBase):
 
         final_count = _dedupe_file(hosts_final)
 
-        # ✅ Endpoints ONLY from alive subdomains
+        # ✅ Endpoints ONLY from alive hosts
         notes_parts = [f"hosts_raw={raw_count}", f"hosts_alive={alive_count}", f"hosts_final={final_count}"]
 
         if is_tool_installed("katana"):
@@ -188,7 +201,7 @@ class FastPipelineBuilderTool(ToolBase):
 
         url_count_raw = _dedupe_file(urls_raw)
 
-        # urls_final = urls_raw
+        # urls_final = urls_raw (deduped)
         with open(urls_raw, "r", encoding="utf-8") as f:
             data = f.read()
         with open(urls_final, "w", encoding="utf-8") as f:
@@ -200,9 +213,12 @@ class FastPipelineBuilderTool(ToolBase):
         notes_parts.append(f"urls_final={url_count_final}")
 
         outputs = [
-            hosts_raw, hosts_alive, hosts_final,
-            urls_raw, urls_final,
-            httpx_log
+            hosts_raw,
+            hosts_alive,
+            hosts_final,
+            urls_raw,
+            urls_final,
+            httpx_log,
         ]
 
         if os.path.exists(katana_out):
