@@ -1,6 +1,6 @@
 profiles:
   fast:
-    description: "Fast recon + nuclei"
+    description: "FAST: httpx + subhunt + nuclei (limited)"
     enabled_stages: [1, 3, 6]
 
   full_safe:
