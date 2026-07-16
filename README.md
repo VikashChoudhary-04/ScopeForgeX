@@ -1,4 +1,9 @@
 # ScopeForgeX
+![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)
+![Python](https://img.shields.io/badge/Python-3.x-yellow?style=flat-square)
+![Hands-on](https://img.shields.io/badge/Hands--on-Yes-success?style=flat-square)
+![Cybersecurity](https://img.shields.io/badge/Cybersecurity-Offensive-red?style=flat-square)
+![Pentesting](https://img.shields.io/badge/Pentesting-Web_App-important?style=flat-square)
 
 ScopeForgeX is a **question-driven ethical hacking workflow automation tool** that provides a **single interface** for running a full penetration testing workflow automatically using CLI tools only.
 
