@@ -174,7 +174,27 @@ ScopeForgeX/
 └── .gitkeep
 ```
 ---
+## 🏗️ How ScopeForgeX Works
 
+- ScopeForgeX does not reimplement the functionality of tools such as Nmap,
+Nuclei, httpx, or ffuf.
+
+- Instead, it acts as an orchestration layer that:
+
+ 1. Accepts and validates the target. 
+ 2. Selects an execution profile.
+ 3. Determines which tools apply to the target and stage.
+ 4. Builds and executes tool commands.
+ 5. Stores each tool's output separately.
+ 6. Merges and normalizes relevant results.
+ 7. Tracks workflow state for resumable execution.
+ 8. Generates structured assessment output and reporting data.
+
+- Higher-risk exploitation and post-exploitation actions are not executed
+automatically; ScopeForgeX prepares commands and requires explicit user
+confirmation.
+
+---
 ## 📦 Installation
 
 ### 1) Install Python requirements
