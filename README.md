@@ -199,23 +199,23 @@ confirmation.
 
 ### 1) Install Python requirements
 
-`bash
+```text
 pip install -r requirements.txt
-`
+```
 
 ### 2) Install tools automatically (Linux apt best support)
 
-`bash
+```text
 python scopeforgex.py --install-tools
-`
+```
 
 ---
 
 ## 🚀 Run ScopeForgeX
 
-`bash
+```text
 python scopeforgex.py
-`
+```
 
 ---
 
