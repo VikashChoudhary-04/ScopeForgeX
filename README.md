@@ -216,6 +216,20 @@ python scopeforgex.py --install-tools
 ```text
 python scopeforgex.py
 ```
+---
+## 📸 Example Workflow
+
+### Dashboard
+
+[screenshot]
+
+### Reconnaissance Execution
+
+[screenshot]
+
+### Generated Results
+
+[sanitized example]
 
 ---
 
@@ -237,3 +251,9 @@ report.md
 ## 📜 License
 
 MIT License
+
+---
+
+## Note
+
+- **ScopeForgeX vs Subhunt**: Subhunt is a focused subdomain-enumeration tool. ScopeForgeX is a broader workflow orchestrator that can integrate Subhunt as one reconnaissance component alongside other security tools and subsequent assessment stages
