@@ -1,6 +1,6 @@
 profiles:
   fast:
-    description: "FAST: httpx + subhunt + nuclei (limited)"
+    description: "FAST: Subhunt discovery -> httpx validation -> optional Katana endpoint discovery -> Nuclei"
     enabled_stages: [1, 3, 6]
 
   full_safe:

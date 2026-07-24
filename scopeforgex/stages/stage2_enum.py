@@ -2,6 +2,18 @@ from scopeforgex.registry.tool_registry import build_registry
 from scopeforgex.ui import stage, ok, warn, err, info
 
 
+WEB_TOOLS = {
+    "whatweb",
+    "wafw00f",
+    "ffuf",
+}
+
+NETWORK_TOOLS = {
+    "enum4linux-ng",
+    "snmpwalk",
+}
+
+
 def _print_tool_result(result):
     """
     Standard output after every tool run.
@@ -25,8 +37,19 @@ def stage2_enum(ctx: dict):
     stage("STAGE 2 — ENUMERATION", "yellow")
 
     tools = [t for t in build_registry() if t.stage == 2]
+
+    target_type = ctx.get("target_type")
+
+    if target_type == "web":
+        tools = [t for t in tools if t.name in WEB_TOOLS]
+    elif target_type == "network":
+        tools = [t for t in tools if t.name in NETWORK_TOOLS]
+    else:
+        err(f"Unsupported target type: {target_type}")
+        return
+
     if not tools:
-        err("No Stage 2 tools registered.")
+        err(f"No Stage 2 tools registered for target type: {target_type}")
         return
 
     for tool in tools:

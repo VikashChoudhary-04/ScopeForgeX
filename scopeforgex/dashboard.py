@@ -14,7 +14,7 @@ def dashboard():
                 "Run FAST Profile",
                 "Run FULL_SAFE Profile",
                 "Install Tools",
-                "Resume Last Run",
+                "View Last Run",
                 "Exit"
             ],
         ).ask()
@@ -28,7 +28,7 @@ def dashboard():
         elif choice == "Install Tools":
             install_tools()
 
-        elif choice == "Resume Last Run":
+        elif choice == "View Last Run":
             last = load_last_run()
             if not last:
                 warn("No previous run found.")
