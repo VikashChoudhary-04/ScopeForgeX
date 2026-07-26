@@ -1,120 +1,192 @@
-import os
-from scopeforgex.ui import stage, ok
+"""
+ScopeForgeX Stage 6
+===================
+
+Reporting stage.
+
+Generates a Markdown report summarizing the assessment and
+the pipeline outputs.
+
+v0.4.0
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from scopeforgex.ui import ok, stage
 
 
-def _count_lines(path: str) -> int:
-    if not path or not os.path.exists(path):
+def _count_lines(path: str | None) -> int:
+    """
+    Count non-empty lines in a text file.
+    """
+
+    if not path:
         return 0
 
-    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-        return sum(1 for line in f if line.strip())
+    file = Path(path)
+
+    if not file.exists():
+        return 0
+
+    with file.open(
+        "r",
+        encoding="utf-8",
+        errors="ignore",
+    ) as infile:
+        return sum(1 for line in infile if line.strip())
 
 
-def _read_preview(path: str, limit: int = 20) -> list[str]:
-    if not path or not os.path.exists(path):
+def _read_preview(
+    path: str | None,
+    limit: int = 20,
+) -> list[str]:
+    """
+    Read up to 'limit' non-empty lines from a file.
+    """
+
+    if not path:
         return []
 
-    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-        return [line.strip() for line in f if line.strip()][:limit]
+    file = Path(path)
+
+    if not file.exists():
+        return []
+
+    with file.open(
+        "r",
+        encoding="utf-8",
+        errors="ignore",
+    ) as infile:
+        return [
+            line.strip()
+            for line in infile
+            if line.strip()
+        ][:limit]
 
 
-def _existing_files(paths: list[str]) -> list[str]:
-    return [path for path in paths if path and os.path.exists(path)]
+def _existing_files(paths: list[str | None]) -> list[str]:
+    """
+    Return existing files from the supplied list.
+    """
+
+    return [
+        path
+        for path in paths
+        if path and Path(path).exists()
+    ]
 
 
 def stage6_reporting(ctx: dict):
+    """
+    Generate the final assessment report.
+    """
+
     stage("STAGE 6 — REPORTING", "magenta")
 
-    outdir = ctx.get("outdir", "outputs/unknown")
-    report_path = os.path.join(outdir, "report.md")
+    outdir = Path(ctx.get("outdir", "outputs/unknown"))
+    report_path = outdir / "report.md"
 
-    pipe = ctx.get("pipeline", {})
+    pipeline = ctx.get("pipeline", {})
 
-    hosts_raw = pipe.get("hosts_raw")
-    hosts_alive = pipe.get("hosts_alive")
-    hosts_final = pipe.get("hosts_final")
-    urls_raw = pipe.get("urls_raw")
-    urls_final = pipe.get("urls_final")
+    hosts_raw = pipeline.get("hosts_raw")
+    hosts_alive = pipeline.get("hosts_alive")
+    hosts_final = pipeline.get("hosts_final")
+    urls_raw = pipeline.get("urls_raw")
+    urls_final = pipeline.get("urls_final")
 
-    nuclei_txt = os.path.join(outdir, "vuln", "nuclei.txt")
-    nuclei_hosts = os.path.join(outdir, "vuln", "nuclei_hosts.txt")
-    nuclei_urls = os.path.join(outdir, "vuln", "nuclei_urls.txt")
-    nuclei_hosts_log = os.path.join(outdir, "vuln", "nuclei_hosts.log")
-    nuclei_urls_log = os.path.join(outdir, "vuln", "nuclei_urls.log")
+    vuln_dir = outdir / "vuln"
 
-    raw_count = _count_lines(hosts_raw)
-    alive_count = _count_lines(hosts_alive)
-    final_count = _count_lines(hosts_final)
-    url_count = _count_lines(urls_final)
+    nuclei_txt = str(vuln_dir / "nuclei.txt")
+    nuclei_hosts = str(vuln_dir / "nuclei_hosts.txt")
+    nuclei_urls = str(vuln_dir / "nuclei_urls.txt")
+    nuclei_hosts_log = str(vuln_dir / "nuclei_hosts.log")
+    nuclei_urls_log = str(vuln_dir / "nuclei_urls.log")
+
+    generated_files = _existing_files(
+        [
+            hosts_raw,
+            hosts_alive,
+            hosts_final,
+            urls_raw,
+            urls_final,
+            nuclei_txt,
+            nuclei_hosts,
+            nuclei_urls,
+            nuclei_hosts_log,
+            nuclei_urls_log,
+        ]
+    )
+
+    report: list[str] = []
+
+    report.append("# ScopeForgeX Report\n\n")
+
+    report.append("## Assessment Context\n\n")
+    report.append(f"- **Target:** `{ctx.get('target', '-')}`\n")
+    report.append(f"- **Profile:** `{ctx.get('profile', '-')}`\n")
+    report.append(f"- **Target Type:** `{ctx.get('target_type', '-')}`\n\n")
+
+    report.append("## Recon Summary\n\n")
+    report.append(f"- Raw hosts discovered: **{_count_lines(hosts_raw)}**\n")
+    report.append(f"- Alive hosts identified: **{_count_lines(hosts_alive)}**\n")
+    report.append(f"- Final hosts available downstream: **{_count_lines(hosts_final)}**\n")
+    report.append(f"- Final URLs discovered: **{_count_lines(urls_final)}**\n\n")
+
+    report.append("### Final Hosts Preview\n\n")
+
+    hosts_preview = _read_preview(hosts_final)
+
+    if hosts_preview:
+        report.append("```text\n")
+        report.extend(f"{host}\n" for host in hosts_preview)
+        report.append("```\n\n")
+    else:
+        report.append("_No hosts are present in `hosts_final.txt`._\n\n")
+
+    report.append("## Vulnerability Identification\n\n")
+
     nuclei_count = _count_lines(nuclei_txt)
 
-    final_preview = _read_preview(hosts_final, 20)
-    nuclei_preview = _read_preview(nuclei_txt, 30)
+    report.append(f"- Nuclei findings recorded: **{nuclei_count}**\n\n")
 
-    generated_files = _existing_files([
-        hosts_raw,
-        hosts_alive,
-        hosts_final,
-        urls_raw,
-        urls_final,
+    nuclei_preview = _read_preview(
         nuclei_txt,
-        nuclei_hosts,
-        nuclei_urls,
-        nuclei_hosts_log,
-        nuclei_urls_log,
-    ])
-
-    md = []
-
-    md.append("# ScopeForgeX Report\n\n")
-
-    md.append("## Assessment Context\n\n")
-    md.append(f"- **Target:** `{ctx.get('target', '-')}`\n")
-    md.append(f"- **Profile:** `{ctx.get('profile', '-')}`\n")
-    md.append(f"- **Target Type:** `{ctx.get('target_type', '-')}`\n\n")
-
-    md.append("## Recon Summary\n\n")
-    md.append(f"- Raw hosts discovered: **{raw_count}**\n")
-    md.append(f"- Alive hosts identified: **{alive_count}**\n")
-    md.append(f"- Final hosts available downstream: **{final_count}**\n")
-    md.append(f"- Final URLs discovered: **{url_count}**\n\n")
-
-    md.append("### Final Hosts Preview\n\n")
-
-    if final_preview:
-        md.append("```text\n")
-        md.extend(f"{host}\n" for host in final_preview)
-        md.append("```\n\n")
-    else:
-        md.append("_No hosts are present in `hosts_final.txt`._\n\n")
-
-    md.append("## Vulnerability Identification\n\n")
-    md.append(f"- Nuclei findings recorded: **{nuclei_count}**\n\n")
+        limit=30,
+    )
 
     if nuclei_preview:
-        md.append("### Nuclei Findings Preview\n\n")
-        md.append("```text\n")
-        md.extend(f"{finding}\n" for finding in nuclei_preview)
-        md.append("```\n\n")
+        report.append("### Nuclei Findings Preview\n\n")
+        report.append("```text\n")
+        report.extend(f"{finding}\n" for finding in nuclei_preview)
+        report.append("```\n\n")
     else:
-        md.append(
+        report.append(
             "_No Nuclei findings were recorded in the combined findings file._\n\n"
         )
-        md.append(
+        report.append(
             "An empty findings file does not by itself prove that the target "
-            "has no vulnerabilities. Review the scan logs for execution errors, "
-            "timeouts, filtering, or other limitations.\n\n"
+            "has no vulnerabilities. Review the scan logs for execution "
+            "errors, timeouts, filtering, or other limitations.\n\n"
         )
 
-    md.append("## Generated Output Files\n\n")
+    report.append("## Generated Output Files\n\n")
 
     if generated_files:
-        for path in generated_files:
-            md.append(f"- `{path}`\n")
+        report.extend(
+            f"- `{path}`\n"
+            for path in generated_files
+        )
     else:
-        md.append("- No tracked pipeline output files were found.\n")
+        report.append(
+            "- No tracked pipeline output files were found.\n"
+        )
 
-    with open(report_path, "w", encoding="utf-8") as f:
-        f.write("".join(md))
+    with report_path.open(
+        "w",
+        encoding="utf-8",
+    ) as outfile:
+        outfile.write("".join(report))
 
     ok(f"Report generated: {report_path}")
