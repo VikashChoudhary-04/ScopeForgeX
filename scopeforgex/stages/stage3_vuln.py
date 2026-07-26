@@ -1,11 +1,25 @@
+"""
+ScopeForgeX Stage 3
+===================
+
+Vulnerability Identification stage.
+
+Runs all registered Stage 3 vulnerability discovery tools.
+
+v0.4.0
+"""
+
+from __future__ import annotations
+
 from scopeforgex.registry.tool_registry import build_registry
-from scopeforgex.ui import stage, ok, warn, err, info
+from scopeforgex.ui import err, info, ok, stage, warn
 
 
 def _print_tool_result(result):
     """
-    Standard output after every tool run.
+    Display the outcome of a tool execution.
     """
+
     if result.ran:
         ok(f"Tool completed: {result.name}")
     else:
@@ -15,16 +29,25 @@ def _print_tool_result(result):
         info(f"Notes: {result.notes}")
 
     if result.output_files:
-        for fpath in result.output_files:
-            info(f"Output: {fpath}")
+        for output in result.output_files:
+            info(f"Output: {output}")
     else:
         info("Output: (none)")
 
 
 def stage3_vuln(ctx: dict):
+    """
+    Execute Stage 3 vulnerability identification.
+    """
+
     stage("STAGE 3 — VULNERABILITY IDENTIFICATION", "red")
 
-    tools = [t for t in build_registry() if t.stage == 3]
+    tools = [
+        tool
+        for tool in build_registry()
+        if tool.stage == 3
+    ]
+
     if not tools:
         err("No Stage 3 tools registered.")
         return
@@ -33,4 +56,4 @@ def stage3_vuln(ctx: dict):
         result = tool.run(ctx)
         _print_tool_result(result)
 
-    ok("Stage 3 vuln finished ✅")
+    ok("Stage 3 vulnerability identification finished ✅")
