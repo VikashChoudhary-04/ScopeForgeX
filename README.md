@@ -813,14 +813,13 @@ Reporting
 
 ### Requirements
 
-- Before installing ScopeForgeX, ensure your environment provides:
+- Before installing ScopeForgeX, ensure your environment includes:
 
-    - Python 3.10+
-    - Git
-    - Linux environment
-    - Internet connectivity for installing external tools
+    * Python 3.10 or later
+    * Git
+    * A Linux environment
 
-- Several workflow integrations also require third-party security tools that are **not Python packages**.
+- Several workflow integrations also rely on external security tools, which can be installed using ScopeForgeX's built-in installer or manually as needed.
 
 ---
 
@@ -832,13 +831,9 @@ git clone https://github.com/VikashChoudhary-04/ScopeForgeX.git
 cd ScopeForgeX
 ```
 
-- HTTPS cloning may also be used if preferred.
-
 ---
 
-### Create a Virtual Environment
-
-- Although optional, using a virtual environment is recommended.
+### Create a Virtual Environment *(Recommended)*
 
 ```bash
 python3 -m venv .venv
@@ -854,65 +849,40 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-- The repository's `requirements.txt` is the authoritative source for Python dependencies.
-
 ---
 
 ### Install Supported External Tools
 
-- ScopeForgeX provides an installer for a subset of supported tools.
+- ScopeForgeX includes a built-in installer for a subset of supported tools.
 
 ```bash
 python3 scopeforgex.py --install-tools
 ```
 
-- The installer simplifies setup but does **not** install every tool listed in `config/tools.yaml`.
-
-- Always verify that the tools required by your chosen workflow profile are available.
+> **Note**
+>
+> The installer does not install every tool listed in `config/tools.yaml`. Verify that the dependencies required by your selected workflow profile are available before running an assessment.
 
 ---
 
-### Verify Installation
-
-- Launch the application.
+### Launch ScopeForgeX
 
 ```bash
 python3 scopeforgex.py
 ```
 
-- A successful installation should display the interactive dashboard.
+- If the installation is successful, the interactive dashboard will be displayed.
 
 ```text
 ScopeForgeX Dashboard
 
 1. FAST Profile
-
 2. FULL_SAFE Profile
-
 3. Install Tools
-
 4. View Last Run
-
 5. Exit
 ```
 
----
-
-## Usage
-
-- Launching ScopeForgeX opens the interactive dashboard.
-
-```bash
-python3 scopeforgex.py
-```
-
-- From here you can:
-
-    - Run FAST Profile
-    - Run FULL_SAFE Profile
-    - Install Tools
-    - View Last Run
-    - Exit
 
 ---
 
