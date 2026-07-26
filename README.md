@@ -1,18 +1,67 @@
+<div align="center">
+
 # ScopeForgeX
 
-ScopeForgeX is a modular cybersecurity workflow orchestrator designed to organize reconnaissance, enumeration, vulnerability identification, and analyst-assisted security testing into a structured assessment workflow.
+### Stage-Based Cybersecurity Workflow Automation Framework
 
-Rather than treating security tools as isolated commands, ScopeForgeX provides a stage-based framework for executing supported integrations, organizing per-target output, passing normalized data between connected stages where implemented, preparing higher-risk commands for explicit human review, and generating a Markdown assessment summary from available workflow artifacts.
+*A modular cybersecurity workflow orchestrator for reconnaissance, enumeration, vulnerability identification, analyst-assisted exploitation preparation, and automated assessment reporting.*
 
-The project is designed around a safety-conscious execution model:
+![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-Linux-success?style=for-the-badge)
+![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)
+![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge)
+![Cybersecurity](https://img.shields.io/badge/Cybersecurity-Offensive%20Security-red?style=for-the-badge)
 
-- Lower-risk discovery and identification tasks may be automated where explicitly implemented.
-- Higher-risk exploitation, credential, tunneling, and post-exploitation actions are prepared for analyst review rather than automatically executed.
-- Tool execution is organized by workflow stage and target type.
-- Generated artifacts are stored in structured per-target output directories.
-- Basic metadata from the most recent completed workflow is persisted for later review from the dashboard.
+</div>
 
-> ScopeForgeX is intended only for authorized security testing, controlled lab environments, CTFs, and systems for which you have explicit permission to assess.
+---
+
+## Overview
+
+- ScopeForgeX is a modular cybersecurity workflow orchestrator designed to organize reconnaissance, enumeration, vulnerability identification, analyst-assisted security testing, and reporting into a structured assessment workflow.
+
+- Instead of treating security tools as isolated command-line utilities, ScopeForgeX executes supported integrations through a stage-based workflow. Each stage has a clearly defined responsibility, enabling assessments to remain organized, repeatable, and easier to extend.
+
+- The framework focuses on workflow orchestration rather than replacing analyst decision-making. It automates repetitive discovery tasks, organizes generated artifacts, prepares higher-risk operations for analyst review, and produces structured Markdown reports summarizing completed workflow stages.
+
+### Quick Highlights
+
+- 🧩 Stage-based workflow architecture
+- 🌐 Supports both web and network assessments
+- ⚡ FAST and FULL_SAFE execution profiles
+- 🛡️ Safety-first automation model
+- 🔌 Modular tool registry
+- 📂 Structured per-target output directories
+- 📄 Automated Markdown reporting
+- 🖥️ Interactive terminal dashboard
+- 🧠 Shared workflow context between stages
+- 📋 Persistent last-run metadata
+
+---
+
+## Design Philosophy
+
+- ScopeForgeX is designed around several engineering principles:
+
+    - **Modularity** — Every supported integration is implemented as an independent component.
+    - **Safety** — Potentially intrusive operations remain under explicit analyst control.
+    - **Reusability** — Workflow stages operate on shared context instead of isolated command execution wherever implemented.
+    - **Extensibility** — New tools can be added without redesigning the workflow.
+    - **Consistency** — Generated artifacts follow predictable directory structures for easier reporting and later analysis.
+
+---
+
+## Safety Model
+
+- ScopeForgeX intentionally distinguishes between lower-risk discovery tasks and higher-risk offensive operations.
+
+- Lower-risk reconnaissance, enumeration, and vulnerability-identification tasks may be executed automatically where implemented.
+
+- Higher-risk activities—including exploitation, credential attacks, payload generation, tunneling, and post-exploitation actions—are represented as prepared commands requiring explicit analyst review before execution.
+
+- This architecture helps preserve analyst control while still automating repetitive workflow management.
+
+> **ScopeForgeX is intended only for authorized penetration testing, security research, CTFs, controlled laboratory environments, and systems for which you have explicit permission to assess.**
 
 ---
 
@@ -32,6 +81,7 @@ The project is designed around a safety-conscious execution model:
 - [Reporting](#reporting)
 - [Current Implementation Boundaries](#current-implementation-boundaries)
 - [ScopeForgeX vs Subhunt](#scopeforgex-vs-subhunt)
+- [Portfolio Engineering Focus](#portfolio-engineering-focus)
 - [Legal and Ethical Use](#legal-and-ethical-use)
 - [License](#license)
 
@@ -39,1198 +89,1458 @@ The project is designed around a safety-conscious execution model:
 
 ## Key Features
 
-- **Stage-based workflow orchestration**
-  * Organizes assessment activity into scope, reconnaissance, enumeration, vulnerability identification, exploitation preparation, post-exploitation preparation, and reporting stages.
+- ScopeForgeX is built around workflow orchestration rather than simply wrapping security tools behind a single command. The framework emphasizes modularity, repeatability, safety, and structured artifact generation throughout an assessment.
 
-- **Web and network target handling**
-  * Stage 0 classifies supported input as either a web/domain target or a network target.
-  * Target type is used to control applicable workflow behavior where routing has been implemented.
+---
 
-- **Interactive terminal dashboard**
-  * Run the FAST profile.
-  * Run the FULL_SAFE profile.
-  * Install supported external tools.
-  * View metadata from the most recent saved run.
+### Stage-Based Workflow
 
-- **Connected FAST reconnaissance pipeline**
-  * Uses Subhunt for discovery.
-  * Normalizes discovered hosts.
-  * Uses `httpx` for live-host validation.
-  * Optionally uses Katana for endpoint discovery when available.
-  * Passes normalized host and URL artifacts into Nuclei.
+- Security assessments are divided into clearly defined stages, each responsible for a specific phase of the engagement.
 
-- **Target-aware Stage 2 enumeration**
-  * Web targets use registered web enumeration integrations.
-  * Network targets use registered network enumeration integrations.
+| Stage | Purpose |
+|--------|---------|
+| Stage 0 | Scope collection and target classification |
+| Stage 1 | Reconnaissance |
+| Stage 2 | Enumeration |
+| Stage 3 | Vulnerability Identification |
+| Stage 4 | Exploitation Preparation |
+| Stage 5 | Post-Exploitation Preparation |
+| Stage 6 | Reporting |
 
-- **Safety-oriented command preparation**
-  * Higher-risk tools are represented through prepared commands requiring explicit analyst review rather than automatic execution.
+- This architecture makes the workflow easier to extend, debug, and maintain than treating every tool as an isolated command.
 
-- **Structured output**
-  * Creates per-target directories for reconnaissance, enumeration, vulnerability results, exploitation preparation, post-exploitation preparation, logs, and reporting.
+---
 
-- **Markdown reporting**
-  * Generates `report.md` from available workflow metadata and artifacts.
-  * Includes available Nuclei host and URL scan logs where present.
+### Multi-Target Support
 
-- **Last-run metadata persistence**
-  * Persists basic metadata for the most recent run, allowing users to review the previous target and output directory from the dashboard.
+- Stage 0 classifies input into supported target categories.
 
-- **Profile-driven execution**
-  * Provides `fast` and `full_safe` workflow profiles.
+- Currently supported routing includes:
+ 
+    - Web / Domain targets
+    - Network / IP targets
+
+- Target classification determines which workflow stages and registered tool integrations are applicable.
+
+---
+
+### Profile-Driven Execution
+
+- ScopeForgeX currently provides two workflow profiles.
+
+| Profile | Purpose |
+|----------|----------|
+| **FAST** | Connected reconnaissance pipeline for rapid discovery and vulnerability identification |
+| **FULL_SAFE** | Complete safety-constrained workflow across implemented stages |
+
+- Profiles enable users to select between faster reconnaissance and broader workflow execution without modifying the repository itself.
+
+---
+
+### Interactive Dashboard
+
+- The terminal dashboard provides a simple interface for common operations.
+
+- Current functionality includes:
+
+    - Run FAST Profile
+    - Run FULL_SAFE Profile
+    - Install Supported Tools
+    - View Last Run Metadata
+    - Exit
+
+- The dashboard removes the need to remember multiple CLI commands while exposing commonly used workflow operations.
+
+---
+
+### Connected Reconnaissance Pipeline
+
+- Unlike many wrappers that simply execute one tool after another, ScopeForgeX allows downstream stages to consume artifacts produced by previous stages where integrations have been implemented.
+
+- Current FAST workflow includes:
+
+    - Subhunt discovery
+    - Host normalization
+    - Live host validation with httpx
+    - Optional endpoint discovery using Katana
+    - Host and URL normalization
+    - Nuclei scanning
+    - Markdown reporting
+
+- This producer-to-consumer artifact flow is one of the project's primary architectural goals.
+
+---
+
+### Structured Output
+
+- Every assessment creates an isolated output directory containing workflow artifacts such as:
+
+    - Reconnaissance
+    - Enumeration
+    - Vulnerability results
+    - Prepared commands
+    - Logs
+    - Reports
+
+- Keeping artifacts separated by target simplifies later review and reporting.
+
+---
+
+### Analyst-Assisted Automation
+
+- ScopeForgeX intentionally avoids automatically executing higher-risk actions.
+
+- Instead, supported integrations can prepare commands for analyst review, allowing offensive operations to remain under explicit human control.
+
+- Examples include:
+
+    - SQLMap
+    - Dalfox
+    - XSStrike
+    - Hydra
+    - Chisel
+    - Hashcat
+    - John the Ripper 
+
+- This design helps balance automation with operational safety.
+
+---
+
+### Markdown Reporting
+
+- Stage 6 automatically generates a Markdown summary using workflow metadata and available artifacts.
+
+- The generated report provides a structured overview of completed workflow stages without claiming manual validation that has not occurred.
+
+---
+
+### Persistent Workflow Metadata
+
+- After a successful assessment, ScopeForgeX stores basic metadata describing the most recent execution.
+
+- Currently stored information includes:
+
+    - Target
+    - Target Type
+    - Output Directory
+
+- This metadata is displayed through the dashboard's **View Last Run** feature.
 
 ---
 
 ## Architecture
 
-ScopeForgeX separates workflow orchestration from individual tool integrations.
+- ScopeForgeX separates workflow orchestration from individual security tools.
 
-A simplified architecture is:
+- Instead of tightly coupling tools together, the framework coordinates independent integrations through shared workflow stages.
 
-```text
-User
-  |
-  v
-CLI / Interactive Dashboard
-  |
-  v
-Profile Selection
-  |
-  v
-Stage 0 - Scope and Target Classification
-  |
-  +-----------------------------+
-  |                             |
-  v                             v
-Web / Domain Target         Network Target
-  |                             |
-  v                             v
-Stage-Based Tool Selection and Execution
-  |
-  v
-Structured Per-Target Artifacts
-  |
-  v
-Reporting / Last-Run Metadata
+```mermaid
+flowchart TD
+
+A[User]
+
+A --> B[CLI / Dashboard]
+
+B --> C[Profile Selection]
+
+C --> D[Stage 0 - Scope]
+
+D --> E{Target Type}
+
+E --> F[Web / Domain]
+
+E --> G[Network]
+
+F --> H[Workflow Stages]
+
+G --> H
+
+H --> I[Generated Artifacts]
+
+I --> J[Reporting]
+
+J --> K[Last Run Metadata]
 ```
-
-The workflow is organized into the following stages:
-
-```text
-Stage 0 - Scope
-Stage 1 - Reconnaissance
-Stage 2 - Enumeration
-Stage 3 - Vulnerability Identification
-Stage 4 - Exploitation Preparation
-Stage 5 - Post-Exploitation / Credential Preparation
-Stage 6 - Reporting
-```
-
-Not every configured tool participates in every profile or target type.
-
-The actual execution path depends on:
-
-- Selected profile.
-- Target type.
-- Registered workflow integrations.
-- Installed external tools.
-- Availability of upstream artifacts.
-- Safety restrictions implemented by each stage.
-
-### Core Components
-
-- **`scopeforgex.py`**
-  * Top-level application entry point.
-
-- **`scopeforgex/cli.py`**
-  * Handles command-line interaction and workflow entry behavior.
-
-- **`scopeforgex/dashboard.py`**
-  * Provides the interactive terminal dashboard.
-  * Supports profile execution, tool installation, and viewing metadata from the most recent saved run.
-
-- **`scopeforgex/workflow.py`**
-  * Loads the selected profile.
-  * Executes enabled stages in sequence.
-  * Passes shared workflow context between stages.
-  * Saves basic last-run metadata after workflow completion.
-
-- **`scopeforgex/runner.py`**
-  * Provides command execution support used by tool integrations.
-
-- **`scopeforgex/state.py`**
-  * Persists basic metadata from the most recent run.
-  * Stores information such as:
-    * Target type.
-    * Target.
-    * Output directory.
-  * This state is currently used for review through **View Last Run**.
-  * It is not a stage-checkpoint or interrupted-workflow resume engine.
-
-- **`scopeforgex/merger.py`**
-  * Provides reusable line-reading and target-merging helpers.
-  * The module exists as a utility component but is not currently wired into the primary workflow dispatch.
-
-- **`scopeforgex/toolcheck.py`**
-  * Supports external-tool availability checks.
-
-- **`scopeforgex/installer.py`**
-  * Provides installation logic for a subset of external dependencies.
-  * Installer coverage is not identical to the complete configured tool catalog.
-
-- **`scopeforgex/wordlists.py`**
-  * Supports wordlist-related workflow behavior.
-
-- **`scopeforgex/registry/`**
-  * Defines tool abstractions, registration, and grouping behavior used by the workflow.
-
-- **`scopeforgex/stages/`**
-  * Contains stage-level orchestration.
-
-- **`scopeforgex/tools/`**
-  * Contains concrete tool integrations and command-preparation integrations.
-
-- **`reporting/`**
-  * Contains reporting-related code outside the main `scopeforgex` package.
-
-### How ScopeForgeX Works
-
-At a high level:
-
-1. The user launches ScopeForgeX.
-2. A workflow profile is selected.
-3. Stage 0 collects and classifies the target.
-4. A shared workflow context is created.
-5. Enabled stages are executed in profile order.
-6. Registered tools are selected for each stage.
-7. Target-type filtering is applied where implemented.
-8. Automatically supported tools execute through the workflow.
-9. Connected stages consume generated artifacts where explicitly implemented.
-10. Higher-risk operations are prepared as commands for analyst review.
-11. Stage 6 creates a Markdown report from available workflow information and artifacts.
-12. Basic metadata from the completed run is saved for later dashboard review.
-
-ScopeForgeX should therefore be understood as a **workflow orchestrator with selectively connected automation**, not as a claim that every configured security tool forms one fully automated end-to-end pipeline.
-
-### Connected FAST Pipeline
-
-The FAST profile contains the clearest implemented cross-tool data flow.
-
-For supported web/domain targets, the intended flow is:
-
-```text
-Target
-  |
-  v
-Subhunt
-  |
-  v
-subhunt.txt
-  |
-  v
-Host normalization
-  |
-  v
-hosts_raw.txt
-  |
-  v
-httpx
-  |
-  v
-hosts_alive.txt
-  |
-  v
-hosts_final.txt
-  |
-  +-----------------------------+
-  |                             |
-  v                             v
-Optional Katana             Nuclei host scan
-  |                             |
-  v                             v
-katana.txt                  nuclei_hosts.txt
-  |
-  v
-URL normalization
-  |
-  v
-urls_raw.txt
-  |
-  v
-urls_final.txt
-  |
-  v
-Nuclei URL scan
-  |
-  v
-nuclei_urls.txt
-```
-
-The exact artifacts created depend on execution results and installed tools.
-
-Katana is optional in this flow. If it is available, endpoint discovery can contribute normalized URL targets for downstream Nuclei scanning.
-
-This connected pipeline demonstrates the architectural direction of ScopeForgeX: produce structured artifacts that supported downstream stages can consume rather than treating every command as an isolated terminal action.
-
-Not every current integration is connected this deeply.
 
 ---
 
-## Safety-First Execution Model
+## Workflow Stages
 
-ScopeForgeX distinguishes between operations that can be automated with relatively lower operational risk and operations that should remain under explicit analyst control.
+```mermaid
+flowchart LR
 
-This distinction is architectural rather than merely descriptive.
+A[Stage 0<br>Scope]
 
-### Safe Auto-Run
+A --> B[Stage 1<br>Recon]
 
-Automatically executed integrations currently include selected reconnaissance, enumeration, and vulnerability-identification operations.
+B --> C[Stage 2<br>Enumeration]
 
-Depending on profile, target type, installed dependencies, and available inputs, registered integrations include:
+C --> D[Stage 3<br>Vulnerability Identification]
 
-- Subhunt
-- `httpx` as part of the connected FAST pipeline
-- Katana as an optional component of the connected FAST pipeline
-- Naabu
-- RustScan
-- Nmap
-- WhatWeb
-- wafw00f
-- ffuf
-- enum4linux-ng
-- snmpwalk
-- Nuclei
+D --> E[Stage 4<br>Exploitation Preparation]
 
-Automatic execution does not imply that every tool above runs for every target.
+E --> F[Stage 5<br>Post-Exploitation Preparation]
 
-Execution depends on workflow routing and profile selection.
+F --> G[Stage 6<br>Reporting]
+```
 
-### Prepared Commands + Human Review
+- Each stage is responsible for a clearly defined portion of the assessment workflow.
 
-Higher-risk tools are handled differently.
+- Actual execution depends on:
 
-ScopeForgeX includes integrations that prepare commands for analyst review rather than automatically carrying out potentially intrusive exploitation or post-exploitation activity.
+- Selected profile
+- Target type
+- Registered integrations
+- Installed external tools
+- Available workflow artifacts
+- Safety restrictions implemented by individual stages
 
-These integrations include tools such as:
+---
 
-- sqlmap
-- Dalfox
-- XSStrike
-- SSTImap
-- SearchSploit
-- msfvenom
-- Netcat
-- Chisel
-- SSH
-- Hydra
-- Medusa
-- Hashcat
-- John the Ripper
+## Core Components
 
-The purpose of this model is to preserve analyst control over actions that may:
+| Component | Responsibility |
+|-----------|----------------|
+| `scopeforgex.py` | Application entry point |
+| `cli.py` | Command-line interaction |
+| `dashboard.py` | Interactive terminal dashboard |
+| `workflow.py` | Profile loading and stage orchestration |
+| `runner.py` | External command execution |
+| `state.py` | Last-run metadata persistence |
+| `toolcheck.py` | Dependency validation |
+| `installer.py` | Supported tool installation |
+| `registry/` | Tool registration and grouping |
+| `stages/` | Stage orchestration |
+| `tools/` | Individual tool integrations |
+| `reporting/` | Markdown report generation |
 
-- Modify target state.
-- Trigger authentication attempts.
-- Perform exploitation.
-- Establish shells or tunnels.
-- Conduct credential attacks.
-- Create payloads.
-- Increase operational impact.
+---
 
-A generated or prepared command is not evidence that the command was executed or that exploitation succeeded.
+## Workflow Execution
+
+- The overall execution model is intentionally deterministic.
+
+```text
+Launch ScopeForgeX
+
+↓
+
+Select Workflow Profile
+
+↓
+
+Collect Target
+
+↓
+
+Classify Target
+
+↓
+
+Create Shared Workflow Context
+
+↓
+
+Execute Enabled Stages
+
+↓
+
+Run Registered Tool Integrations
+
+↓
+
+Generate Artifacts
+
+↓
+
+Generate Report
+
+↓
+
+Persist Last Run Metadata
+```
+
+- Not every configured integration participates in every workflow.
+
+- Execution depends on:
+
+    - selected profile,
+    - target type,
+    - installed dependencies,
+    - workflow routing,
+    - and generated upstream artifacts.
+
+- This distinction is important because ScopeForgeX should be understood as a **workflow orchestration framework**, not as a claim that every configured tool forms one completely automated penetration-testing pipeline.
 
 ---
 
 ## Supported Tool Integrations
 
-This section describes tools that are represented by current registered workflow integrations or directly participate in implemented workflow behavior.
+- ScopeForgeX integrates multiple open-source security tools through a modular registry and stage-based execution model.
 
-It intentionally distinguishes **implemented workflow integrations** from tools that merely appear in configuration.
+- It is important to distinguish between three different concepts used throughout the project:
 
-### Automatically Executed CLI Tools
+| Category | Meaning |
+|----------|----------|
+| **Configured Tool** | Listed in `config/tools.yaml` |
+| **Registered Integration** | Implemented inside the workflow registry |
+| **Executed Tool** | Actually executed during the selected workflow |
 
-#### Reconnaissance
+- These three categories are intentionally independent.
 
-- **Subhunt**
-  * Registered Stage 1 web reconnaissance integration.
-  * Used directly by the FAST workflow.
-  * Produces discovery artifacts consumed by the connected reconnaissance pipeline.
+- A configured tool is **not automatically registered**, and a registered integration is **not automatically executed** for every workflow profile.
 
-- **httpx**
-  * Used inside the connected FAST pipeline for live-host validation.
-  * Converts normalized discovered hosts into validated live-host artifacts.
+---
 
-- **Katana**
-  * Used optionally inside the connected FAST pipeline.
-  * Performs endpoint discovery when installed.
-  * Discovered URLs can be normalized for downstream vulnerability identification.
+## Stage 1 — Reconnaissance
 
-- **Naabu**
-  * Registered network reconnaissance integration.
+- The reconnaissance stage focuses on discovering targets and collecting information that can be consumed by downstream workflow stages.
 
-- **RustScan**
-  * Registered network reconnaissance integration.
+### Web Reconnaissance
 
-- **Nmap**
-  * Registered network reconnaissance integration.
+| Tool | Purpose |
+|------|----------|
+| **Subhunt** | Subdomain discovery |
+| **httpx** | Live host validation |
+| **Katana** *(Optional)* | Endpoint discovery |
 
-#### Enumeration
+- The FAST workflow builds a connected reconnaissance pipeline using these tools.
 
-For web targets, Stage 2 routes execution to registered web enumeration tools:
+---
 
-- **WhatWeb**
-- **wafw00f**
-- **ffuf**
+### Network Reconnaissance
 
-For network targets, Stage 2 routes execution to registered network enumeration tools:
+| Tool | Purpose |
+|------|----------|
+| **Naabu** | Fast TCP port discovery |
+| **RustScan** | High-speed port scanning |
+| **Nmap** | Detailed network scanning |
 
-- **enum4linux-ng**
-- **snmpwalk**
+---
 
-This routing prevents the Stage 2 workflow from treating web and network enumeration as interchangeable operations.
+## Stage 2 — Enumeration
 
-#### Vulnerability Identification
+- Enumeration is routed according to the classified target type.
 
-- **Nuclei**
-  * Registered Stage 3 integration.
-  * In the connected FAST workflow, consumes normalized host and URL target files when available.
-  * Produces separate host and URL output/log artifacts.
+### Web Enumeration
 
-### Assisted Command Tools
+| Tool | Purpose |
+|------|----------|
+| WhatWeb | Technology fingerprinting |
+| wafw00f | WAF detection |
+| ffuf | Directory and content discovery |
 
-The following integrations prepare commands for explicit analyst review.
+---
 
-#### Exploitation / Validation
+### Network Enumeration
 
-- **sqlmap**
-- **Dalfox**
-- **XSStrike**
-- **SSTImap**
-- **SearchSploit**
-- **msfvenom**
-- **Netcat**
+| Tool | Purpose |
+|------|----------|
+| enum4linux-ng | SMB enumeration |
+| snmpwalk | SNMP enumeration |
 
-#### Credential / Tunneling / Post-Exploitation
+- Target-aware routing prevents web and network enumeration tools from being treated as interchangeable.
 
-- **Chisel**
-- **SSH**
-- **Hydra**
-- **Medusa**
-- **Hashcat**
-- **John the Ripper**
+---
 
-These integrations should not be interpreted as evidence of automatic exploitation.
+## Stage 3 — Vulnerability Identification
 
-Their role is to help structure analyst-controlled follow-on activity.
+| Tool | Purpose |
+|------|----------|
+| Nuclei | Template-based vulnerability identification |
+
+- When supported artifacts exist, Nuclei consumes normalized host and URL targets generated by earlier stages.
+
+- Separate scans are performed for:
+
+    - Hosts
+    - URLs
+
+- This separation allows different artifact types to be processed independently.
+
+---
+
+## Stage 4 — Exploitation Preparation
+
+- Rather than automatically executing offensive actions, ScopeForgeX prepares analyst-review commands for supported validation tools.
+
+- Current integrations include:
+
+| Tool | Purpose |
+|------|----------|
+| SQLMap | SQL Injection validation |
+| Dalfox | XSS validation |
+| XSStrike | XSS testing |
+| SSTImap | SSTI testing |
+| SearchSploit | Exploit lookup |
+| msfvenom | Payload generation |
+| Netcat | Listener and shell preparation |
+
+- These integrations assist analysts without automatically launching potentially intrusive actions.
+
+---
+
+## Stage 5 — Post-Exploitation Preparation
+
+- Current prepared-command integrations include:
+
+| Tool | Purpose |
+|------|----------|
+| Chisel | Pivoting / Tunneling |
+| SSH | Remote shell preparation |
+| Hydra | Credential attacks |
+| Medusa | Credential attacks |
+| Hashcat | Password cracking |
+| John the Ripper | Password cracking |
+
+- These commands require explicit analyst review before execution.
+
+---
+
+## Workflow Philosophy
+
+- The objective of ScopeForgeX is **workflow orchestration**, not simply wrapping dozens of security tools behind a single command.
+
+- Each integration contributes to one of three responsibilities:
+
+    - Produce workflow artifacts
+    - Consume existing workflow artifacts
+    - Prepare analyst-controlled actions
+
+- This separation keeps the framework modular and easier to extend.
 
 ---
 
 ## Configured Tool Catalog
 
-`config/tools.yaml` contains a broader catalog than the set of tools currently registered for workflow execution.
+- The repository contains a broader catalog of tools than the subset currently connected to active workflow execution.
 
-Configured entries include:
+- Configured tools are defined in:
 
-```text
-chisel
-dalfox
-dig
-dnsenum
-dnsrecon
-enum4linuxng
-feroxbuster
-ffuf
-gau
-gobuster
-hashcat
-httpx
-hydra
-john
-katana
-knockpy
-lbd
-medusa
-msfvenom
-naabu
-nbtstat
-netcat
-nikto
-nmap
-nuclei
-onesixtyone
-rustscan
-searchsploit
-smbclient
-smbmap
-snmpcheck
-snmpwalk
-sqlmap
-ssh
-sstimap
-subhunt
-sublist3r
-wafw00f
-whatweb
-wpscan
-xsstrike
-```
+    ```text
+    config/tools.yaml
+    ```
 
-A configured tool is **not automatically equivalent to an active workflow integration**.
+- Current catalog includes:
 
-At the time of this documentation, the following configured tools are not represented as matching registered workflow integrations:
+    ```text
+    chisel
+    dalfox
+    dig
+    dnsenum
+    dnsrecon
+    enum4linux-ng
+    feroxbuster
+    ffuf
+    gau
+    gobuster
+    hashcat
+    httpx
+    hydra
+    john
+    katana
+    knockpy
+    lbd
+    medusa
+    msfvenom
+    naabu
+    nbtstat
+    netcat
+    nikto
+    nmap
+    nuclei
+    onesixtyone
+    rustscan
+    searchsploit
+    smbclient
+    smbmap
+    snmpcheck
+    snmpwalk
+    sqlmap
+    ssh
+    sstimap
+    subhunt
+    sublist3r
+    wafw00f
+    whatweb
+    wpscan
+    xsstrike
+    ```
 
-```text
-dig
-dnsenum
-dnsrecon
-feroxbuster
-gau
-gobuster
-knockpy
-lbd
-nbtstat
-nikto
-onesixtyone
-smbclient
-smbmap
-snmpcheck
-sublist3r
-wpscan
-```
+---
 
-`httpx` and Katana are important exceptions to a simple registry-only interpretation: they participate directly inside the connected FAST pipeline even though they are not exposed as standalone registered tool classes in the same way as several other integrations.
+## Important Distinction
 
-This distinction is important when evaluating project capabilities:
+- Some configured tools are fully integrated into workflow execution.
 
-```text
-Configured
-    !=
-Automatically registered
-    !=
-Automatically executed in every profile
-```
+- Others are currently:
+
+    - configuration entries,
+    - installer targets,
+    - or future workflow candidates.
+
+- This documentation intentionally reflects the current implementation rather than implying that every configured tool participates in automated execution.
 
 ---
 
 ## Dependencies
 
-ScopeForgeX combines Python dependencies with external security CLI tools.
+- ScopeForgeX combines Python packages with external security CLI tools.
 
-The exact external dependencies required depend on the workflow profile and target being assessed.
+---
 
-### Python Dependencies
+## Python Dependencies
 
-Install the Python requirements with:
+- Install project requirements using:
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+- A virtual environment is recommended.
 
 ```bash
+python3 -m venv .venv
+
+source .venv/bin/activate
+
 pip install -r requirements.txt
 ```
 
-The project uses Python packages for functionality including:
+- The repository's `requirements.txt` remains the authoritative dependency source.
 
-- Interactive terminal prompts.
-- Terminal formatting and progress display.
-- YAML configuration handling.
+---
 
-Use the repository's `requirements.txt` as the authoritative Python dependency list.
+## External CLI Tools
 
-### External CLI Tools
+- Depending on the selected workflow profile, ScopeForgeX may use:
 
-Core external tools used by implemented automated workflow paths include:
+| Tool Category | Examples |
+|---------------|----------|
+| Reconnaissance | Subhunt, httpx, Katana |
+| Network Discovery | Naabu, RustScan, Nmap |
+| Enumeration | WhatWeb, wafw00f, ffuf, enum4linux-ng |
+| Vulnerability Identification | Nuclei |
 
-```text
-subhunt
-httpx
-katana
-naabu
-rustscan
-nmap
-whatweb
-wafw00f
-ffuf
-enum4linux-ng
-snmpwalk
-nuclei
-```
+- Some workflow paths only execute when the corresponding dependency is available.
 
-Not all are required for every run.
+- For example:
 
-For example:
+    - Katana is optional within the FAST pipeline.
+    - Web and network assessments load different integrations.
+    - Missing tools may cause individual stages to skip execution rather than terminate the entire workflow.
 
-- Web and network targets use different tool paths.
-- Katana is optional in the FAST pipeline.
-- Missing tools may cause a specific integration to skip or return an unavailable-tool result rather than making every workflow identical.
+---
 
-### Assisted Command Dependencies
+## Prepared Command Dependencies
 
-Analyst-assisted command generation references tools including:
+- Prepared-command integrations reference tools such as:
 
-```text
-sqlmap
-dalfox
-xsstrike
-sstimap
-searchsploit
-msfvenom
-netcat
-chisel
-ssh
-hydra
-medusa
-hashcat
-john
-```
+    - SQLMap
+    - Dalfox
+    - XSStrike
+    - SSTImap
+    - SearchSploit
+    - msfvenom
+    - Chisel
+    - Hydra
+    - Hashcat
+    - John the Ripper
 
-If an analyst chooses to execute a prepared command, the corresponding external tool must be installed separately.
+- These tools are only required if the analyst intends to execute the prepared commands.
 
-### Installer Coverage
+---
 
-ScopeForgeX includes an installer module, but the installer does **not** currently provide complete installation coverage for every configured or registered tool.
+## Installer
 
-The installer currently references a subset including tools such as:
+- ScopeForgeX includes a built-in installer for a subset of supported tools.
 
-```text
-sublist3r
-dnsrecon
-httpx
-gau
-katana
-subhunt
-nmap
-whatweb
-wafw00f
-ffuf
-nuclei
-nikto
-wpscan
-sqlmap
-msfvenom
-nc
-ssh
-hydra
-john
-```
+- Run:
 
-It also contains dedicated installation logic for selected Go-based tools and Subhunt.
+    ```bash
+    python3 scopeforgex.py --install-tools
+    ```
 
-Because installer coverage and workflow integration coverage are not identical, users should verify required external dependencies before running a profile.
+- The installer is intended to simplify environment setup but should not be interpreted as a complete package manager for every configured integration.
+
+- Always verify required dependencies before running a workflow profile.
 
 ---
 
 ## Profiles
 
-ScopeForgeX currently defines two workflow profiles in `config/profiles.yaml`.
+- Workflow behavior is controlled through profile definitions stored in:
 
-### FAST
+    ```text
+    config/profiles.yaml
+    ```
 
-```text
-FAST: Subhunt discovery -> httpx validation -> optional Katana endpoint discovery -> Nuclei
-```
+- Each profile enables a different subset of workflow stages.
 
-Enabled stages:
+---
 
-```text
-1 -> Reconnaissance
-3 -> Vulnerability Identification
-6 -> Reporting
-```
+## FAST Profile
 
-Stage 0 still runs before profile stages to collect and classify the target.
+- The FAST profile focuses on rapid reconnaissance and vulnerability identification.
 
-For the connected web/domain workflow, FAST prioritizes:
+- Enabled stages:
 
-```text
-Subhunt
-   |
-   v
-Normalized discovered hosts
-   |
-   v
-httpx
-   |
-   v
-Validated hosts
-   |
-   +----------------------+
-   |                      |
-   v                      v
-Optional Katana        Nuclei
-   |                      |
-   v                      v
-Normalized URLs        Host results
-   |
-   v
-Nuclei URL results
-   |
-   v
-Reporting
-```
+| Stage | Description |
+|--------|-------------|
+| Stage 0 | Scope Collection |
+| Stage 1 | Reconnaissance |
+| Stage 3 | Vulnerability Identification |
+| Stage 6 | Reporting |
 
-FAST Stage 1 explicitly filters registered Stage 1 execution to:
+- Current connected workflow:
 
-```text
-subhunt
-pipeline_builder
-```
+    ```text
+    Target
+    │
+    ▼
+    Subhunt
+    │
+    ▼
+    Host Normalization
+    │
+    ▼
+    httpx
+    │
+    ▼
+    Validated Hosts
+    ├───────────────┐
+    ▼               ▼
+    Katana          Nuclei
+    (Optional)      Host Scan
+    │
+    ▼
+    URL Normalization
+    │
+    ▼
+    Nuclei URL Scan
+    │
+    ▼
+    Markdown Report
+    ```
 
-The pipeline builder then handles the connected host-validation and optional endpoint-discovery behavior.
+- FAST prioritizes speed while preserving structured artifact generation.
 
-### FULL_SAFE
+---
 
-```text
-Full safe workflow automation (CLI-only)
-```
+## FULL_SAFE Profile
 
-Enabled stages:
+- FULL_SAFE enables the broader stage sequence.
 
-```text
-1
-2
-3
-4
-5
-6
-```
+- Enabled stages:
 
-Stage 0 runs before these stages.
+| Stage | Description |
+|--------|-------------|
+| Stage 0 | Scope |
+| Stage 1 | Reconnaissance |
+| Stage 2 | Enumeration |
+| Stage 3 | Vulnerability Identification |
+| Stage 4 | Exploitation Preparation |
+| Stage 5 | Post-Exploitation Preparation |
+| Stage 6 | Reporting |
 
-FULL_SAFE executes the broader registered workflow while preserving the project's safety model.
+- Unlike FAST, FULL_SAFE executes the complete safety-constrained workflow.
 
-This means higher-risk stages can prepare commands for review rather than automatically performing exploitation or post-exploitation activity.
+- Higher-risk actions remain subject to analyst approval and are represented as prepared commands rather than automatically executed offensive operations.
 
-The name `FULL_SAFE` should therefore be interpreted as a broader **safety-constrained workflow**, not unrestricted autonomous penetration testing.
+---
+
+## Choosing a Profile
+
+| Use Case | Recommended Profile |
+|----------|---------------------|
+| Rapid reconnaissance | FAST |
+| Complete assessment workflow | FULL_SAFE |
+| Initial bug bounty recon | FAST |
+| Full internal assessment | FULL_SAFE |
+
+- Selecting a profile determines:
+
+    - Which workflow stages execute.
+    - Which registered integrations become available.
+    - Which artifacts are produced.
+    - Which prepared commands may be generated.
+
+- The profile system allows ScopeForgeX to support multiple assessment workflows while keeping the orchestration logic modular and easy to maintain.
 
 ---
 
 ## Repository Structure
 
-The repository is organized around configuration, orchestration, tool registration, workflow stages, integrations, reporting, and generated output.
+- ScopeForgeX follows a modular architecture that separates configuration, workflow orchestration, tool integrations, reporting, and generated assessment artifacts.
 
-A simplified structure is:
+    ```text
+    ScopeForgeX/
+    │
+    ├── config/                  # Workflow configuration
+    ├── reporting/               # Reporting implementation
+    ├── scopeforgex/             # Core framework
+    │   ├── registry/            # Tool registration
+    │   ├── stages/              # Workflow stages
+    │   ├── tools/               # Tool integrations
+    │   └── ...
+    │
+    ├── outputs/                 # Generated assessment artifacts
+    │
+    ├── requirements.txt
+    ├── scopeforgex.py
+    └── README.md
+    ```
+
+- The repository intentionally separates orchestration logic from tool-specific implementations, making it easier to extend the framework without modifying the core workflow engine.
+
+---
+
+## Repository Layout
+
+| Directory | Purpose |
+|------------|---------|
+| `config/` | Workflow profiles, default configuration and tool catalog |
+| `scopeforgex/` | Core application package |
+| `scopeforgex/stages/` | Stage orchestration |
+| `scopeforgex/tools/` | Individual tool integrations |
+| `scopeforgex/registry/` | Registry and grouping system |
+| `reporting/` | Markdown report generation |
+| `outputs/` | Runtime-generated assessment artifacts |
+
+---
+
+## Core Components
+
+| Component | Responsibility |
+|-----------|----------------|
+| `scopeforgex.py` | Main application entry point |
+| `workflow.py` | Profile execution and stage orchestration |
+| `dashboard.py` | Interactive dashboard |
+| `cli.py` | Command-line interface |
+| `runner.py` | External command execution |
+| `state.py` | Last-run metadata persistence |
+| `toolcheck.py` | Dependency validation |
+| `installer.py` | Supported dependency installation |
+| `wordlists.py` | Wordlist management |
+| `merger.py` | Utility functions for artifact merging |
+
+---
+
+## Stage Organization
+
+- Each workflow stage is implemented independently.
 
 ```text
-ScopeForgeX/
-├── README.md
-├── requirements.txt
-├── scopeforgex.py
-│
-├── config/
-│   ├── default.yaml
-│   ├── profiles.yaml
-│   └── tools.yaml
-│
-├── scopeforgex/
-│   ├── cli.py
-│   ├── dashboard.py
-│   ├── installer.py
-│   ├── merger.py
-│   ├── runner.py
-│   ├── state.py
-│   ├── toolcheck.py
-│   ├── ui.py
-│   ├── wordlists.py
-│   ├── workflow.py
-│   │
-│   ├── registry/
-│   │   ├── tool_base.py
-│   │   ├── tool_groups.py
-│   │   └── tool_registry.py
-│   │
-│   ├── stages/
-│   │   ├── stage0_scope.py
-│   │   ├── stage1_recon.py
-│   │   ├── stage2_enum.py
-│   │   ├── stage3_vuln.py
-│   │   ├── stage4_exploit.py
-│   │   ├── stage5_post.py
-│   │   └── stage6_report_cleanup.py
-│   │
-│   └── tools/
-│       └── Python tool-integration modules
-│
-├── reporting/
-│   └── Reporting-related modules
-│
-└── outputs/
-    └── Generated per-target assessment artifacts
+Stage 0
+Scope Collection
+
+↓
+
+Stage 1
+Reconnaissance
+
+↓
+
+Stage 2
+Enumeration
+
+↓
+
+Stage 3
+Vulnerability Identification
+
+↓
+
+Stage 4
+Exploitation Preparation
+
+↓
+
+Stage 5
+Post-Exploitation Preparation
+
+↓
+
+Stage 6
+Reporting
 ```
 
-The exact repository tree may contain additional implementation files.
-
-Use the tracked repository contents as the authoritative source for the current structure.
-
-### Component Responsibilities
-
-```text
-config/
-    Workflow and tool configuration.
-
-scopeforgex/registry/
-    Tool abstractions, grouping, and registry construction.
-
-scopeforgex/stages/
-    Stage-level orchestration and routing.
-
-scopeforgex/tools/
-    Concrete external-tool integrations and prepared-command integrations.
-
-scopeforgex/workflow.py
-    Profile-driven stage dispatch.
-
-scopeforgex/state.py
-    Basic last-run metadata persistence.
-
-scopeforgex/merger.py
-    Reusable merge helpers; not currently wired into primary workflow dispatch.
-
-reporting/
-    Reporting-related implementation outside the main package.
-
-outputs/
-    Runtime-generated assessment artifacts.
-```
+- This modular structure allows individual stages to evolve independently while sharing a common workflow context.
 
 ---
 
 ## Installation
 
-### 1. Clone the Repository
+### Requirements
+
+- Before installing ScopeForgeX, ensure your environment provides:
+
+    - Python 3.10+
+    - Git
+    - Linux environment
+    - Internet connectivity for installing external tools
+
+- Several workflow integrations also require third-party security tools that are **not Python packages**.
+
+---
+
+### Clone the Repository
 
 ```bash
 git clone git@github.com:VikashChoudhary-04/ScopeForgeX.git
+
 cd ScopeForgeX
 ```
 
-If SSH authentication is not configured, clone using the appropriate authenticated Git transport available in your environment.
+- HTTPS cloning may also be used if preferred.
 
-### 2. Install Python Dependencies
+---
 
-```bash
-pip install -r requirements.txt
-```
+### Create a Virtual Environment
 
-Using a Python virtual environment is recommended:
+- Although optional, using a virtual environment is recommended.
 
 ```bash
 python3 -m venv .venv
+
 source .venv/bin/activate
+```
+
+---
+
+### Install Python Dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 3. Install External Tools
+- The repository's `requirements.txt` is the authoritative source for Python dependencies.
 
-ScopeForgeX provides an installer entry point for a subset of dependencies:
+---
+
+### Install Supported External Tools
+
+- ScopeForgeX provides an installer for a subset of supported tools.
 
 ```bash
 python3 scopeforgex.py --install-tools
 ```
 
-The installer should not be interpreted as a complete dependency manager for every tool listed in `config/tools.yaml`.
+- The installer simplifies setup but does **not** install every tool listed in `config/tools.yaml`.
 
-Before running a workflow, verify that the tools required by the intended profile are installed and available in `PATH`.
-
-For the connected FAST workflow, important dependencies include:
-
-```text
-subhunt
-httpx
-nuclei
-```
-
-Katana adds optional endpoint discovery when available.
+- Always verify that the tools required by your chosen workflow profile are available.
 
 ---
 
-## Usage
+### Verify Installation
 
-Launch ScopeForgeX according to the supported CLI behavior:
+- Launch the application.
 
 ```bash
 python3 scopeforgex.py
 ```
 
-The interactive dashboard provides actions including:
+- A successful installation should display the interactive dashboard.
 
 ```text
-Run FAST Profile
-Run FULL_SAFE Profile
-Install Tools
-View Last Run
-Exit
+ScopeForgeX Dashboard
+
+1. FAST Profile
+
+2. FULL_SAFE Profile
+
+3. Install Tools
+
+4. View Last Run
+
+5. Exit
 ```
 
-### Run FAST Profile
+---
 
-Use FAST when you want the narrower connected reconnaissance and vulnerability-identification workflow.
+## Usage
 
-Its implemented connected path emphasizes:
+- Launching ScopeForgeX opens the interactive dashboard.
 
-```text
-Subhunt
--> host normalization
--> httpx
--> optional Katana
--> normalized host / URL targets
--> Nuclei
--> reporting
+```bash
+python3 scopeforgex.py
 ```
 
-### Run FULL_SAFE Profile
+- From here you can:
 
-Use FULL_SAFE for the broader stage sequence.
+    - Run FAST Profile
+    - Run FULL_SAFE Profile
+    - Install Tools
+    - View Last Run
+    - Exit
 
-It enables Stages 1 through 6 after Stage 0 scope collection.
+---
 
-Target type and registered integrations determine which supported operations apply.
+## Running the FAST Profile
 
-Higher-risk actions remain subject to the prepared-command safety model.
+- FAST focuses on rapid reconnaissance.
 
-### View Last Run
+- Typical execution flow:
 
-The dashboard can display metadata persisted from the most recent completed workflow.
+    ```text
+    Collect Target
 
-The stored information includes basic fields such as:
+    ↓
 
-```text
-Target Type
-Target
-Output Directory
-```
+    Subhunt
 
-**View Last Run does not continue an interrupted assessment.**
+    ↓
 
-The current implementation does not persist:
+    Host Validation
 
-- Current stage checkpoints.
-- Completed-tool checkpoints.
-- Partial-stage execution state.
-- Artifact validation state required for safe continuation.
-- A restored context that is passed back into `run_profile()` for continuation.
+    ↓
 
-A true workflow-resume engine would require explicit checkpointing and safe handling of partially generated artifacts.
+    Optional Endpoint Discovery
+
+    ↓
+
+    Nuclei
+
+    ↓
+
+    Report Generation
+    ```
+
+- FAST is recommended for:
+
+    - Bug bounty reconnaissance
+    - Asset discovery
+    - Initial attack-surface mapping
+    - Quick vulnerability identification
+
+---
+
+## Running the FULL_SAFE Profile
+
+- FULL_SAFE executes every implemented workflow stage.
+
+- Typical execution sequence:
+
+    ```text
+    Scope
+
+    ↓
+
+    Reconnaissance
+
+    ↓
+
+    Enumeration
+
+    ↓
+
+    Vulnerability Identification
+
+    ↓
+
+    Prepared Exploitation Commands
+
+    ↓
+
+    Prepared Post-Exploitation Commands
+
+    ↓
+
+    Reporting
+    ```
+
+- This profile is intended for broader security assessments while maintaining the framework's safety-first philosophy.
+
+---
+
+## View Last Run
+
+- ScopeForgeX stores metadata describing the most recently completed workflow.
+
+- Current metadata includes:
+
+    - Target
+    - Target Type
+    - Output Directory
+ 
+- This information can be reviewed directly from the dashboard.
+
+> **Note**
+>
+> View Last Run is **not** a workflow resume feature.
+> It displays metadata only and does not restore partially completed assessments.
+
+---
+
+## Workflow Example
+
+- Example assessment:
+
+    ```text
+    python3 scopeforgex.py
+
+    ↓
+
+    Select FAST
+
+    ↓
+
+    Target:
+    example.com
+
+    ↓
+
+    Reconnaissance
+
+    ↓
+
+    Host Validation
+
+    ↓
+
+    Nuclei
+
+    ↓
+
+    report.md generated
+    ```
+
+- The exact execution path depends on:
+
+    - selected profile,
+    - installed dependencies,
+    - target type,
+    - available workflow artifacts.
 
 ---
 
 ## Output Structure
 
-ScopeForgeX creates structured per-target workflow output.
+- Every assessment creates a dedicated output directory.
 
-The exact files depend on:
+- Typical layout:
 
-- Target type.
-- Selected profile.
-- Installed tools.
-- Tool execution results.
-- Whether optional pipeline components are available.
+    ```text
+    outputs/
 
-A run may contain directories conceptually organized as:
+    └── example.com/
 
-```text
-outputs/
-└── <target>/
     ├── recon/
+
     ├── enum/
+
     ├── vuln/
+
     ├── exploit/
+
     ├── post/
+
+    ├── logs/
+
     └── report.md
-```
+  ```
 
-Actual generated filenames are determined by the implementation.
+- Organizing artifacts by target keeps assessments isolated and simplifies later review.
 
-### FAST Reconnaissance Artifacts
+---
 
-The connected FAST pipeline can produce files including:
+## Reconnaissance Artifacts
 
-```text
-recon/subhunt.txt
-recon/subhunt.log
-recon/subhunt_wordlist_used.txt
+- Depending on the selected workflow and installed tools, the reconnaissance stage may generate files such as:
 
-recon/hosts_raw.txt
-recon/hosts_alive.txt
-recon/hosts_final.txt
+    ```text
+    subhunt.txt
 
-recon/httpx.log
+    hosts_raw.txt
 
-recon/katana.txt
-recon/katana.log
+    hosts_alive.txt
 
-recon/urls_raw.txt
-recon/urls_final.txt
-```
+    hosts_final.txt
 
-Katana-related artifacts are conditional on Katana availability and execution.
+    katana.txt
 
-### Vulnerability Artifacts
+    urls_raw.txt
 
-Stage 3 can produce Nuclei artifacts including:
+    urls_final.txt
+    ```
 
-```text
-vuln/nuclei_hosts.txt
-vuln/nuclei_urls.txt
-vuln/nuclei.txt
+- Some artifacts are conditional.
 
-vuln/nuclei_hosts.log
-vuln/nuclei_urls.log
-```
+- For example, Katana output is only produced when Katana is installed and executed.
 
-Host and URL scans are handled separately where their corresponding normalized target files are available.
+---
 
-### Prepared Commands
+## Vulnerability Artifacts
 
-Higher-risk workflow stages may produce or expose commands intended for manual analyst review.
+- Stage 3 generates vulnerability-identification artifacts.
 
-These commands should be treated as **prepared actions**, not evidence of execution.
+- Typical examples include:
 
-### Last-Run State
+    ```text
+    nuclei_hosts.txt
 
-Basic run metadata is persisted under:
+    nuclei_urls.txt
+
+    nuclei_hosts.log
+
+    nuclei_urls.log
+    ```
+
+- Host and URL scans are intentionally separated.
+
+---
+
+## Prepared Commands
+
+- Stages 4 and 5 may generate prepared commands for analyst review.
+
+- These outputs should be interpreted as:
+
+    - suggested follow-on actions,
+    - not evidence of exploitation,
+    - and not proof of successful compromise.
+
+---
+
+## Generated Reports
+
+- Stage 6 automatically produces:
+
+    ```text
+    report.md
+    ```
+
+- The report summarizes:
+
+    - workflow metadata,
+    - executed stages,
+    - available artifacts,
+    - vulnerability-identification results.
+
+- The generated report is designed as a structured workflow summary and should not be interpreted as a complete professional penetration-testing report without analyst review.
+
+---
+
+## Last-Run Metadata
+
+- Basic workflow metadata is stored separately from assessment artifacts.
 
 ```text
 outputs/.last_run.json
 ```
 
-This supports the dashboard's **View Last Run** functionality.
-
-It is not a workflow checkpoint file.
+- This file enables the dashboard's **View Last Run** feature and should not be confused with a workflow checkpoint or resume mechanism.
 
 ---
 
 ## Reporting
 
-Stage 6 generates:
+- Stage 6 generates a structured Markdown report summarizing the completed assessment workflow.
 
-```text
-report.md
-```
+- The report consolidates workflow metadata together with available artifacts produced during earlier stages.
 
-The report summarizes available workflow information such as:
+- Current report contents may include:
 
-- Target.
-- Target type.
-- Profile.
-- Output directory.
-- Available stage/tool results.
-- Available vulnerability-identification artifacts.
+    - Target
+    - Target Type
+    - Selected Workflow Profile
+    - Output Directory
+    - Executed Workflow Stages
+    - Available Reconnaissance Artifacts
+    - Available Enumeration Results
+    - Available Vulnerability Identification Results
 
-The current Stage 6 implementation reads the Nuclei logging contract used by Stage 3:
+- Where available, Stage 6 consumes the Nuclei logging contract produced during Stage 3.
 
-```text
-vuln/nuclei_hosts.log
-vuln/nuclei_urls.log
-```
+- Current supported inputs include:
 
-It does not depend on a nonexistent:
+    ```text
+    vuln/nuclei_hosts.log
+    vuln/nuclei_urls.log
+    ```
 
-```text
-vuln/nuclei.log
-```
+---
 
-The report should be treated as an automatically generated workflow summary.
+## Purpose
 
-It is not automatically equivalent to a complete professional penetration-test report containing:
+- The generated report is intended to provide a structured summary of the automated workflow.
 
-- Fully validated findings.
-- Manual exploit verification.
-- Business-impact analysis.
-- CVSS scoring.
-- Evidence screenshots.
-- Executive risk narratives.
-- Remediation verification.
+- It should **not** be interpreted as a complete professional penetration-testing report containing:
 
-Those activities still require analyst review and, where appropriate, manual documentation.
+    - Manual validation
+    - Business impact analysis
+    - CVSS scoring
+    - Executive summaries
+    - Evidence screenshots
+    - Risk prioritization
+    - Remediation verification
 
-### Reporting Package
+- Those activities remain the responsibility of the security analyst.
 
-The repository contains a top-level:
+---
 
-```text
-reporting/
-```
+## Reporting Package
 
-package/directory with reporting-related implementation.
+- Reporting logic is implemented through the repository's top-level:
 
-Documentation should not assume the existence of:
+    ```text
+    reporting/
+    ```
 
-```text
-scopeforgex/reporting/
-```
+directory.
 
-unless that package exists in the tracked repository.
-
-The active Stage 6 Markdown report generation remains part of the main staged workflow.
+- Documentation intentionally avoids referencing packages that do not exist within the repository.
 
 ---
 
 ## Current Implementation Boundaries
 
-ScopeForgeX intentionally documents current implementation boundaries so that portfolio claims remain aligned with the code.
+- ScopeForgeX deliberately documents its implementation boundaries so that repository documentation remains aligned with the actual codebase.
 
-### 1. Last-Run State Is Not Workflow Resume
+- The goal is to describe current capabilities accurately without overstating automation.
 
-`state.py` persists basic metadata from the latest run.
+---
 
-The dashboard can load and display this information through:
+## Last-Run Metadata Is Not Workflow Resume
 
-```text
-View Last Run
-```
+- The dashboard's **View Last Run** feature displays metadata describing the most recent completed workflow.
 
-There is currently no full interrupted-workflow continuation engine.
+- Currently stored information includes:
 
-### 2. Not Every Configured Tool Is Registered
+    - Target
+    - Target Type
+    - Output Directory
 
-`config/tools.yaml` contains a broader catalog than the active workflow registry.
+- It does **not** restore:
 
-Configuration presence alone does not mean a tool is automatically executed.
+    - interrupted workflows,
+    - stage checkpoints,
+    - execution context,
+    - partial artifacts,
+    - or workflow state.
 
-### 3. Installer Coverage Is Partial
+---
 
-The installer handles a subset of dependencies.
+## Configured Tools Are Not Always Registered
 
-Users may need to install additional tools separately.
+- A tool appearing in:
 
-### 4. Pipeline Connectivity Varies
+    ```text
+    config/tools.yaml
+    ```
 
-The FAST workflow contains explicit cross-tool artifact flow.
+- does not automatically imply:
 
-Other integrations may execute as stage-level operations without equivalent producer-to-consumer chaining.
+    - workflow integration,
+    - stage registration,
+    - or execution within every profile.
 
-### 5. `merger.py` Is Currently a Utility Module
+- Documentation intentionally distinguishes between configuration and implementation.
 
-The merger module provides reusable helpers such as target merging, but the current primary workflow does not import or dispatch it.
+---
 
-It should not be described as an active central pipeline component until it is wired into workflow execution.
+## Installer Coverage Is Partial
 
-### 6. Higher-Risk Actions Are Prepared, Not Automatically Proven
+- The built-in installer simplifies environment setup but does not install every configured tool.
 
-Prepared exploitation or post-exploitation commands do not establish:
+- Users should verify required dependencies before running a workflow.
 
-- Successful exploitation.
-- Shell access.
-- Credential compromise.
-- Privilege escalation.
-- Lateral movement.
-- Persistence.
-- Target compromise.
+---
 
-Those outcomes require separate authorized execution and validation.
+## Pipeline Connectivity Varies
 
-### 7. Reporting Is Artifact-Based
+- The FAST workflow contains the project's most complete producer-to-consumer artifact flow.
 
-Generated reporting reflects information available to the workflow.
+- Other workflow stages may execute independently without the same level of downstream artifact integration.
 
-It should not infer evidence, cleanup completion, or security impact that was not actually captured or validated.
+- This reflects the current implementation rather than a design limitation.
+
+---
+
+## Prepared Commands Are Not Executed Automatically
+
+- Stages 4 and 5 prepare analyst-review commands.
+
+- Prepared commands do **not** imply:
+
+    - successful exploitation,
+    - shell access,
+    - privilege escalation,
+    - credential compromise,
+    - persistence,
+    - or lateral movement.
+
+- Those actions remain under explicit analyst control.
+
+---
+
+## Reporting Reflects Available Artifacts
+
+- Generated reports summarize workflow outputs that actually exist.
+
+- They do not infer findings or generate evidence that has not been produced during the assessment.
 
 ---
 
 ## ScopeForgeX vs Subhunt
 
-ScopeForgeX and Subhunt serve different purposes.
+- Although closely related, ScopeForgeX and Subhunt solve different problems.
+
+---
 
 ### Subhunt
 
-Subhunt is a focused subdomain-discovery tool.
+- Subhunt is a dedicated subdomain discovery utility.
 
-Within ScopeForgeX, it acts as a discovery source for the connected FAST web reconnaissance pipeline.
+- Within ScopeForgeX it serves as one reconnaissance integration capable of producing normalized discovery artifacts for downstream workflow stages.
 
-Its output can feed downstream processing such as:
+- Typical FAST pipeline:
 
-```text
-Subhunt
--> normalized hosts
--> httpx validation
--> optional Katana discovery
--> Nuclei
-```
+    ```text
+    Subhunt
+
+    ↓
+
+    Host Normalization
+
+    ↓
+
+    httpx
+
+    ↓
+
+    Optional Katana
+
+    ↓
+
+    Nuclei
+    ```
+
+---
 
 ### ScopeForgeX
 
-ScopeForgeX is the broader orchestration layer.
+- ScopeForgeX is the orchestration layer responsible for coordinating multiple assessment stages.
 
-It provides:
+- Current responsibilities include:
 
-- Target classification.
-- Profile-driven workflow execution.
-- Stage-based organization.
-- Tool registration.
-- Web/network routing where implemented.
-- Structured artifact handling.
-- Connected FAST data flow.
-- Analyst-assisted command preparation.
-- Markdown reporting.
-- Basic last-run metadata persistence.
+    - Workflow orchestration
+    - Target classification
+    - Stage management
+    - Tool registration
+    - Profile execution
+    - Artifact organization
+    - Connected FAST workflow
+    - Prepared-command generation
+    - Markdown reporting
+    - Last-run metadata persistence
 
-The relationship can be summarized as:
-
-```text
-Subhunt
-    =
-Focused discovery capability
-
-ScopeForgeX
-    =
-Assessment workflow orchestration
-```
-
-Subhunt is therefore one component that ScopeForgeX can orchestrate rather than a replacement for the larger workflow.
+- Subhunt is therefore one component within the larger ScopeForgeX ecosystem rather than a replacement for it.
 
 ---
 
 ## Portfolio Engineering Focus
 
-ScopeForgeX demonstrates several security-engineering concepts beyond simply invoking command-line tools:
+- ScopeForgeX demonstrates software engineering concepts that extend beyond simply executing security tools.
 
-- Workflow decomposition into explicit stages.
-- Tool abstraction and registry design.
-- Profile-driven execution.
-- Shared workflow context.
-- Target-type routing.
-- Producer-to-consumer artifact flow.
-- Normalized intermediate files.
-- Optional dependency handling.
-- Safety boundaries between automation and analyst-controlled actions.
-- Structured output organization.
-- State persistence for run metadata.
-- Automated Markdown summary generation.
-- Separation between configured capabilities and implemented integrations.
+- Current architectural concepts include:
 
-The project also deliberately documents incomplete or partially connected capabilities rather than presenting them as finished features.
+    - Stage-based workflow orchestration
+    - Modular tool registry
+    - Profile-driven execution
+    - Shared workflow context
+    - Target-aware routing
+    - Producer-to-consumer artifact flow
+    - Normalized intermediate artifacts
+    - Structured output organization
+    - Analyst-assisted automation
+    - Dependency validation
+    - Modular reporting
+    - Persistent workflow metadata
 
-That distinction is important for maintaining technically defensible portfolio claims.
+- A deliberate design goal of the project is to document implementation status honestly rather than presenting planned functionality as completed features.
+
+- This helps ensure portfolio claims remain technically defensible.
+
+---
+
+## Roadmap
+
+- Future improvements planned for ScopeForgeX include:
+
+    - Additional workflow integrations
+    - Expanded artifact chaining
+    - Resume-capable workflow checkpoints
+    - Enhanced reporting templates
+    - Plugin architecture for third-party integrations
+    - Parallel task execution where appropriate
+    - Improved dashboard analytics
+    - Export formats beyond Markdown
+    - Additional workflow profiles
+    - Extended installer coverage
+
+- These items represent planned enhancements and should not be interpreted as currently implemented functionality.
+
+---
+
+## Contributing
+
+- Contributions that improve code quality, workflow reliability, documentation, testing, or usability are welcome.
+
+- When contributing:
+
+    1. Fork the repository.
+    2. Create a feature branch.
+    3. Implement and test your changes.
+    4. Update documentation where appropriate.
+    5. Submit a Pull Request describing the proposed improvement.
+
+- Large architectural changes should be discussed before implementation to ensure they align with the project's design philosophy.
 
 ---
 
 ## Legal and Ethical Use
 
-ScopeForgeX is intended exclusively for:
+- ScopeForgeX is intended exclusively for:
 
-- Authorized penetration testing.
-- Red-team exercises conducted with explicit permission.
-- Controlled cybersecurity labs.
-- CTF environments.
-- Systems owned by the tester.
-- Security research performed within clearly defined authorization and scope.
+    - Authorized penetration testing
+    - Internal security assessments
+    - Red-team exercises conducted with explicit permission
+    - Controlled laboratory environments
+    - Capture The Flag (CTF) competitions
+    - Security research performed within approved scope
 
-Do not use ScopeForgeX against systems, networks, applications, accounts, or infrastructure without explicit authorization.
+- Do **not** use ScopeForgeX against systems, applications, networks, or infrastructure without explicit authorization.
 
-The user is responsible for:
+- Users are responsible for:
 
-- Obtaining permission before testing.
-- Respecting defined scope.
-- Understanding the behavior of external tools before execution.
-- Reviewing prepared commands before running them.
-- Avoiding unnecessary operational impact.
-- Protecting collected assessment data.
-- Following applicable laws, contracts, and disclosure requirements.
+    - obtaining written permission where required,
+    - respecting assessment scope,
+    - understanding the behavior of external tools,
+    - reviewing prepared commands before execution,
+    - protecting collected assessment data, 
+    - complying with applicable laws and organizational policies.
 
-ScopeForgeX's safety-oriented workflow design does not replace professional judgment or legal authorization.
+- The framework's safety-oriented architecture does not replace professional judgment or legal authorization.
 
 ---
 
 ## License
 
-This project is distributed under the license included in the repository.
+- This project is released under the license included in this repository.
 
-Review the repository's license file for the exact terms governing use, modification, and distribution.
+- Please refer to the repository's `LICENSE` file for the complete licensing terms governing use, modification, and distribution.
+
+---
+
+<div align="center">
+
+**ScopeForgeX**
+
+*A Modular, Stage-Based Cybersecurity Workflow Automation Framework*
+
+Designed for authorized security assessments, offensive security training, and workflow-driven penetration testing.
+
+⭐ If you find this project useful, consider starring the repository.
+
+</div>
