@@ -1,48 +1,80 @@
+"""
+ScopeForgeX Dashboard
+=====================
+
+Interactive dashboard for launching workflows,
+installing tools, and viewing previous runs.
+
+v0.4.0
+"""
+
+from __future__ import annotations
+
 import questionary
-from scopeforgex.ui import stage, ok, warn, summary_table
-from scopeforgex.workflow import run_profile
+
 from scopeforgex.installer import install_tools
 from scopeforgex.state import load_last_run
+from scopeforgex.ui import ok, stage, summary_table, warn
+from scopeforgex.workflow import run_profile
+
+
+_MENU_ACTIONS = {
+    "Run FAST Profile": lambda: run_profile("fast"),
+    "Run FULL_SAFE Profile": lambda: run_profile("full_safe"),
+    "Install Tools": install_tools,
+}
+
+
+def _show_last_run():
+    """
+    Display information about the most recent workflow.
+    """
+
+    last = load_last_run()
+
+    if not last:
+        warn("No previous run found.")
+        return
+
+    ok("Loaded last run ✅")
+
+    summary_table(
+        "Last Run",
+        [
+            ("Target Type", str(last.get("target_type", "-"))),
+            ("Target", str(last.get("target", "-"))),
+            ("Output Directory", str(last.get("outdir", "-"))),
+        ],
+    )
+
 
 def dashboard():
+    """
+    Launch the interactive ScopeForgeX dashboard.
+    """
+
     while True:
+
         stage("ScopeForgeX Dashboard", "green")
 
         choice = questionary.select(
             "Choose an action:",
             choices=[
-                "Run FAST Profile",
-                "Run FULL_SAFE Profile",
-                "Install Tools",
+                *list(_MENU_ACTIONS.keys()),
                 "View Last Run",
-                "Exit"
+                "Exit",
             ],
         ).ask()
 
-        if choice == "Run FAST Profile":
-            run_profile("fast")
-
-        elif choice == "Run FULL_SAFE Profile":
-            run_profile("full_safe")
-
-        elif choice == "Install Tools":
-            install_tools()
-
-        elif choice == "View Last Run":
-            last = load_last_run()
-            if not last:
-                warn("No previous run found.")
-            else:
-                ok("Loaded last run ✅")
-                summary_table(
-                    "Last Run",
-                    [
-                        ("Target Type", str(last.get("target_type"))),
-                        ("Target", str(last.get("target"))),
-                        ("Output Directory", str(last.get("outdir"))),
-                    ],
-                )
-
-        else:
+        if choice == "Exit":
             ok("Goodbye ✅")
             break
+
+        if choice == "View Last Run":
+            _show_last_run()
+            continue
+
+        action = _MENU_ACTIONS.get(choice)
+
+        if action is not None:
+            action()
