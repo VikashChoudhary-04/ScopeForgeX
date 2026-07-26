@@ -1,12 +1,24 @@
 """
-reporting/models.py
-
-Expanded reporting models for ScopeForgeX.
+Reporting models for ScopeForgeX.
 """
 
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List
+
+
+@dataclass
+class FindingSummary:
+    """
+    Summary of automated findings grouped by severity.
+    """
+
+    critical: int = 0
+    high: int = 0
+    medium: int = 0
+    low: int = 0
+    info: int = 0
+    unknown: int = 0
 
 
 @dataclass
@@ -37,6 +49,8 @@ class ReportData:
     duration_seconds: float = 0.0
 
     statistics: ScanStatistics = field(default_factory=ScanStatistics)
+
+    findings: FindingSummary = field(default_factory=FindingSummary)
 
     stages: List[StageResult] = field(default_factory=list)
 
