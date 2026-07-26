@@ -4,85 +4,40 @@ ScopeForgeX Stage 6
 
 Reporting stage.
 
-Generates a Markdown report summarizing the assessment and
-the pipeline outputs.
-
-v0.4.0
+Collects workflow results and delegates Markdown rendering
+to the reporting engine.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime
+
+from reporting.models import (
+    ReportData,
+    ScanStatistics,
+    StageResult,
+)
+from reporting.report_generator import ReportGenerator
 
 from scopeforgex.ui import ok, stage
 
 
 def _count_lines(path: str | None) -> int:
-    """
-    Count non-empty lines in a text file.
-    """
-
     if not path:
         return 0
-
-    file = Path(path)
-
-    if not file.exists():
+    p = Path(path)
+    if not p.exists():
         return 0
-
-    with file.open(
-        "r",
-        encoding="utf-8",
-        errors="ignore",
-    ) as infile:
-        return sum(1 for line in infile if line.strip())
-
-
-def _read_preview(
-    path: str | None,
-    limit: int = 20,
-) -> list[str]:
-    """
-    Read up to 'limit' non-empty lines from a file.
-    """
-
-    if not path:
-        return []
-
-    file = Path(path)
-
-    if not file.exists():
-        return []
-
-    with file.open(
-        "r",
-        encoding="utf-8",
-        errors="ignore",
-    ) as infile:
-        return [
-            line.strip()
-            for line in infile
-            if line.strip()
-        ][:limit]
+    with p.open("r", encoding="utf-8", errors="ignore") as f:
+        return sum(1 for line in f if line.strip())
 
 
 def _existing_files(paths: list[str | None]) -> list[str]:
-    """
-    Return existing files from the supplied list.
-    """
-
-    return [
-        path
-        for path in paths
-        if path and Path(path).exists()
-    ]
+    return [p for p in paths if p and Path(p).exists()]
 
 
 def stage6_reporting(ctx: dict):
-    """
-    Generate the final assessment report.
-    """
-
     stage("STAGE 6 — REPORTING", "magenta")
 
     outdir = Path(ctx.get("outdir", "outputs/unknown"))
@@ -93,7 +48,6 @@ def stage6_reporting(ctx: dict):
     hosts_raw = pipeline.get("hosts_raw")
     hosts_alive = pipeline.get("hosts_alive")
     hosts_final = pipeline.get("hosts_final")
-    urls_raw = pipeline.get("urls_raw")
     urls_final = pipeline.get("urls_final")
 
     vuln_dir = outdir / "vuln"
@@ -104,89 +58,54 @@ def stage6_reporting(ctx: dict):
     nuclei_hosts_log = str(vuln_dir / "nuclei_hosts.log")
     nuclei_urls_log = str(vuln_dir / "nuclei_urls.log")
 
-    generated_files = _existing_files(
-        [
-            hosts_raw,
-            hosts_alive,
-            hosts_final,
-            urls_raw,
-            urls_final,
-            nuclei_txt,
-            nuclei_hosts,
-            nuclei_urls,
-            nuclei_hosts_log,
-            nuclei_urls_log,
-        ]
-    )
-
-    report: list[str] = []
-
-    report.append("# ScopeForgeX Report\n\n")
-
-    report.append("## Assessment Context\n\n")
-    report.append(f"- **Target:** `{ctx.get('target', '-')}`\n")
-    report.append(f"- **Profile:** `{ctx.get('profile', '-')}`\n")
-    report.append(f"- **Target Type:** `{ctx.get('target_type', '-')}`\n\n")
-
-    report.append("## Recon Summary\n\n")
-    report.append(f"- Raw hosts discovered: **{_count_lines(hosts_raw)}**\n")
-    report.append(f"- Alive hosts identified: **{_count_lines(hosts_alive)}**\n")
-    report.append(f"- Final hosts available downstream: **{_count_lines(hosts_final)}**\n")
-    report.append(f"- Final URLs discovered: **{_count_lines(urls_final)}**\n\n")
-
-    report.append("### Final Hosts Preview\n\n")
-
-    hosts_preview = _read_preview(hosts_final)
-
-    if hosts_preview:
-        report.append("```text\n")
-        report.extend(f"{host}\n" for host in hosts_preview)
-        report.append("```\n\n")
-    else:
-        report.append("_No hosts are present in `hosts_final.txt`._\n\n")
-
-    report.append("## Vulnerability Identification\n\n")
-
-    nuclei_count = _count_lines(nuclei_txt)
-
-    report.append(f"- Nuclei findings recorded: **{nuclei_count}**\n\n")
-
-    nuclei_preview = _read_preview(
+    generated_files = _existing_files([
+        hosts_raw,
+        hosts_alive,
+        hosts_final,
+        urls_final,
         nuclei_txt,
-        limit=30,
+        nuclei_hosts,
+        nuclei_urls,
+        nuclei_hosts_log,
+        nuclei_urls_log,
+    ])
+
+    stats = ScanStatistics(
+        subdomains_found=_count_lines(hosts_raw),
+        alive_hosts=_count_lines(hosts_alive),
+        final_hosts=_count_lines(hosts_final),
+        urls_discovered=_count_lines(urls_final),
+        nuclei_findings=_count_lines(nuclei_txt),
+        files_generated=len(generated_files),
     )
 
-    if nuclei_preview:
-        report.append("### Nuclei Findings Preview\n\n")
-        report.append("```text\n")
-        report.extend(f"{finding}\n" for finding in nuclei_preview)
-        report.append("```\n\n")
-    else:
-        report.append(
-            "_No Nuclei findings were recorded in the combined findings file._\n\n"
-        )
-        report.append(
-            "An empty findings file does not by itself prove that the target "
-            "has no vulnerabilities. Review the scan logs for execution "
-            "errors, timeouts, filtering, or other limitations.\n\n"
+    report = ReportData(
+        target=ctx.get("target", "-"),
+        profile=ctx.get("profile", "-"),
+        target_type=ctx.get("target_type", "-"),
+        start_time=datetime.now(),
+        end_time=datetime.now(),
+        statistics=stats,
+        generated_files=generated_files,
+    )
+
+    report.stages.extend([
+        StageResult("Scope", True),
+        StageResult("Reconnaissance", True),
+        StageResult("Vulnerability Identification", True),
+        StageResult("Reporting", True),
+    ])
+
+    if stats.alive_hosts == 0:
+        report.warnings.append(
+            "No live hosts were identified. Downstream discovery may have been skipped."
         )
 
-    report.append("## Generated Output Files\n\n")
-
-    if generated_files:
-        report.extend(
-            f"- `{path}`\n"
-            for path in generated_files
-        )
-    else:
-        report.append(
-            "- No tracked pipeline output files were found.\n"
+    if stats.nuclei_findings == 0:
+        report.warnings.append(
+            "No automated vulnerability findings were recorded."
         )
 
-    with report_path.open(
-        "w",
-        encoding="utf-8",
-    ) as outfile:
-        outfile.write("".join(report))
+    ReportGenerator(report).generate_markdown(str(report_path))
 
     ok(f"Report generated: {report_path}")
