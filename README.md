@@ -887,7 +887,7 @@ Reporting
 ### Clone the Repository
 
 ```bash
-git clone git@github.com:VikashChoudhary-04/ScopeForgeX.git
+git clone https://github.com/VikashChoudhary-04/ScopeForgeX.git
 
 cd ScopeForgeX
 ```
