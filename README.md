@@ -1035,19 +1035,19 @@ ScopeForgeX Dashboard
 
     └── example.com/
 
-    ├── recon/
+        ├── recon/
 
-    ├── enum/
+        ├── enum/
 
-    ├── vuln/
+        ├── vuln/
 
-    ├── exploit/
+        ├── exploit/
 
-    ├── post/
+        ├── post/
 
-    ├── logs/
+        ├── logs/
 
-    └── report.md
+        └── report.md
   ```
 
 - Organizing artifacts by target keeps assessments isolated and simplifies later review.
