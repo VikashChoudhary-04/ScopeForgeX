@@ -146,14 +146,17 @@ class FastPipelineBuilderTool(ToolBase):
         katana_out = os.path.join(recon_dir, "katana.txt")
         katana_log = os.path.join(recon_dir, "katana.log")
 
-        # Reset pipeline files
-        open(hosts_raw, "w", encoding="utf-8").close()
+        # Reset downstream pipeline files.
+        # Preserve hosts_raw because previous discovery producers (e.g. Nmap)
+        # may already have populated it.
+        if not os.path.exists(hosts_raw):
+            open(hosts_raw, "w", encoding="utf-8").close()
         open(hosts_alive, "w", encoding="utf-8").close()
         open(hosts_final, "w", encoding="utf-8").close()
         open(urls_raw, "w", encoding="utf-8").close()
         open(urls_final, "w", encoding="utf-8").close()
 
-        # ✅ FAST: hosts_raw should come from Subhunt output
+        # Merge Subhunt discoveries into the shared discovery pipeline.
         _append_clean_hosts(subhunt_out, hosts_raw)
         raw_count = _dedupe_file(hosts_raw)
 
