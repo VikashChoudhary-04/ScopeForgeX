@@ -19,7 +19,8 @@ def _print_tool_result(result):
 
 
 def stage1_recon(ctx: dict):
-    stage("STAGE 1 — RECON", "green")
+    # v0.4.0
+stage("STAGE 1 — RECON", "green")
 
     tools = [t for t in build_registry() if t.stage == 1]
     if not tools:
@@ -41,3 +42,9 @@ def stage1_recon(ctx: dict):
         _print_tool_result(result)
 
     ok("Stage 1 recon finished ✅")
+
+
+# ---- v0.4.0 NOTE ----
+# Stage 1 now supports multiple discovery producers.
+# Pipeline builders should preserve existing hosts_raw.txt so
+# network and web discoveries can be merged before downstream stages.
