@@ -1,7 +1,43 @@
 import os
+
 from scopeforgex.registry.tool_base import ToolBase, ToolResult
 from scopeforgex.runner import run_cmd
 from scopeforgex.toolcheck import is_tool_installed
+
+
+NUCLEI_FAST_FLAGS = (
+    "-severity high,critical "
+    "-rate-limit 30 "
+    "-timeout 5 "
+    "-retries 1"
+)
+
+
+def _merge_results(inputs, output):
+    """
+    Merge multiple nuclei result files into a single deduplicated file.
+    """
+
+    findings = []
+
+    for path in inputs:
+        if not os.path.exists(path):
+            continue
+
+        with open(path, "r", encoding="utf-8", errors="ignore") as infile:
+            findings.extend(
+                line.strip()
+                for line in infile
+                if line.strip()
+            )
+
+    findings = list(dict.fromkeys(findings))
+
+    with open(output, "w", encoding="utf-8") as outfile:
+        if findings:
+            outfile.write("\n".join(findings) + "\n")
+
+    return len(findings)
 
 
 class NucleiTool(ToolBase):
@@ -21,44 +57,71 @@ class NucleiTool(ToolBase):
         log_urls = os.path.join(vuln_dir, "nuclei_urls.log")
 
         if not is_tool_installed("nuclei"):
-            return ToolResult(self.name, False, [], "nuclei not installed")
+            return ToolResult(
+                self.name,
+                False,
+                [],
+                "nuclei not installed",
+            )
 
-        pipe = ctx.get("pipeline", {})
-        hosts_final = pipe.get("hosts_final")
-        urls_final = pipe.get("urls_final")
+        pipeline = ctx.get("pipeline", {})
 
-        # FAST defaults
-        base = "-severity high,critical -rate-limit 30 -timeout 5 -retries 1"
+        hosts_final = pipeline.get("hosts_final")
+        urls_final = pipeline.get("urls_final")
 
-        # Scan alive subdomains
-        if hosts_final and os.path.exists(hosts_final) and os.path.getsize(hosts_final) > 0:
-            run_cmd(f"nuclei -l {hosts_final} {base} -o {out_hosts}", outfile=log_hosts, timeout=600)
+        # Scan alive hosts
+        if (
+            hosts_final
+            and os.path.exists(hosts_final)
+            and os.path.getsize(hosts_final) > 0
+        ):
+            run_cmd(
+                f"nuclei -l {hosts_final} "
+                f"{NUCLEI_FAST_FLAGS} "
+                f"-o {out_hosts}",
+                outfile=log_hosts,
+                timeout=600,
+            )
         else:
-            # If pipeline is empty, don't scan root domain (your requested behavior)
             open(out_hosts, "w", encoding="utf-8").close()
 
-        # Scan endpoints from those subdomains
-        if urls_final and os.path.exists(urls_final) and os.path.getsize(urls_final) > 0:
-            run_cmd(f"nuclei -l {urls_final} {base} -o {out_urls}", outfile=log_urls, timeout=600)
+        # Scan discovered endpoints
+        if (
+            urls_final
+            and os.path.exists(urls_final)
+            and os.path.getsize(urls_final) > 0
+        ):
+            run_cmd(
+                f"nuclei -l {urls_final} "
+                f"{NUCLEI_FAST_FLAGS} "
+                f"-o {out_urls}",
+                outfile=log_urls,
+                timeout=600,
+            )
         else:
             open(out_urls, "w", encoding="utf-8").close()
 
-        # Merge results
-        combined = []
-        for fp in [out_hosts, out_urls]:
-            if os.path.exists(fp):
-                with open(fp, "r", encoding="utf-8", errors="ignore") as f:
-                    combined += [x.strip() for x in f.readlines() if x.strip()]
+        total = _merge_results(
+            [out_hosts, out_urls],
+            out_combined,
+        )
 
-        combined = list(dict.fromkeys(combined))
-        with open(out_combined, "w", encoding="utf-8") as f:
-            f.write("\n".join(combined) + ("\n" if combined else ""))
+        notes = (
+            f"Nuclei executed on hosts_final + urls_final "
+            f"({total} unique findings)."
+        )
 
         return ToolResult(
             self.name,
             True,
-            [out_combined, out_hosts, out_urls, log_hosts, log_urls],
-            "Nuclei executed on Subhunt pipeline (hosts_final + urls_final)."
+            [
+                out_combined,
+                out_hosts,
+                out_urls,
+                log_hosts,
+                log_urls,
+            ],
+            notes,
         )
 
 
