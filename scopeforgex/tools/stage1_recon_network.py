@@ -1,4 +1,20 @@
-import os
+"""
+ScopeForgeX Stage 1 - Network Recon Tools
+=========================================
+
+Network reconnaissance implementations.
+
+Tools:
+    • Naabu
+    • RustScan
+    • Nmap
+
+v0.4.0
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from scopeforgex.registry.tool_base import ToolBase, ToolResult
@@ -24,79 +40,133 @@ HTTP_PORTS = {
 }
 
 
-def _extract_web_targets(xml_file: str) -> list[str]:
+def _network_only(tool_name: str, ctx: dict) -> ToolResult | None:
     """
-    Parse Nmap XML and extract HTTP/HTTPS endpoints.
+    Skip execution unless the workflow target is a network target.
     """
 
-    if not os.path.exists(xml_file):
+    if ctx.get("target_type") == "network":
+        return None
+
+    return ToolResult(
+        tool_name,
+        False,
+        [],
+        "Skipped (web/domain target)",
+    )
+
+
+def _recon_dir(ctx: dict) -> Path:
+    """
+    Return the recon output directory.
+    """
+
+    directory = Path(ctx["outdir"]) / "recon"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _tool_missing(tool_name: str) -> ToolResult | None:
+    """
+    Return a ToolResult if the executable is unavailable.
+    """
+
+    if is_tool_installed(tool_name):
+        return None
+
+    return ToolResult(
+        tool_name,
+        False,
+        [],
+        f"{tool_name} not installed",
+    )
+
+
+def _extract_web_targets(xml_file: str) -> list[str]:
+    """
+    Parse an Nmap XML report and extract HTTP/HTTPS endpoints.
+    """
+
+    xml_path = Path(xml_file)
+
+    if not xml_path.exists():
         return []
 
     try:
-        tree = ET.parse(xml_file)
-    except Exception:
+        root = ET.parse(xml_path).getroot()
+    except ET.ParseError:
         return []
 
-    root = tree.getroot()
-
-    targets = []
+    discovered: set[str] = set()
 
     for host in root.findall("host"):
 
         status = host.find("status")
+
         if status is None or status.attrib.get("state") != "up":
             continue
 
-        addr = host.find("address")
-        if addr is None:
+        address = host.find("address")
+
+        if address is None:
             continue
 
-        host_ip = addr.attrib.get("addr")
+        host_ip = address.attrib.get("addr")
+
         if not host_ip:
             continue
 
         ports = host.find("ports")
+
         if ports is None:
             continue
 
         for port in ports.findall("port"):
 
             state = port.find("state")
+
             if state is None or state.attrib.get("state") != "open":
                 continue
 
-            portid = int(port.attrib.get("portid", "0"))
+            try:
+                port_id = int(port.attrib.get("portid", "0"))
+            except ValueError:
+                continue
 
             service = port.find("service")
-            svc = ""
+
+            service_name = ""
 
             if service is not None:
-                svc = service.attrib.get("name", "").lower()
+                service_name = service.attrib.get(
+                    "name",
+                    "",
+                ).lower()
 
             scheme = None
 
-            if "https" in svc:
+            if "https" in service_name:
                 scheme = "https"
-            elif "http" in svc:
+            elif "http" in service_name:
                 scheme = "http"
-            elif portid in HTTP_PORTS:
-                scheme = HTTP_PORTS[portid]
+            else:
+                scheme = HTTP_PORTS.get(port_id)
 
             if scheme is None:
                 continue
 
-            default = (
-                (scheme == "http" and portid == 80)
+            if (
+                (scheme == "http" and port_id == 80)
                 or
-                (scheme == "https" and portid == 443)
-            )
-
-            if default:
-                targets.append(f"{scheme}://{host_ip}")
+                (scheme == "https" and port_id == 443)
+            ):
+                discovered.add(f"{scheme}://{host_ip}")
             else:
-                targets.append(f"{scheme}://{host_ip}:{portid}")
+                discovered.add(
+                    f"{scheme}://{host_ip}:{port_id}"
+                )
 
-    return sorted(set(targets))
+    return sorted(discovered)
 
 
 class NaabuTool(ToolBase):
@@ -108,37 +178,27 @@ class NaabuTool(ToolBase):
 
     def run(self, ctx: dict) -> ToolResult:
 
-        if ctx.get("target_type") != "network":
-            return ToolResult(
-                self.name,
-                False,
-                [],
-                "Skipped (web/domain target)"
-            )
+        skipped = _network_only(self.name, ctx)
+        if skipped:
+            return skipped
 
-        recon = os.path.join(ctx["outdir"], "recon")
-        os.makedirs(recon, exist_ok=True)
+        missing = _tool_missing(self.name)
+        if missing:
+            return missing
 
-        log = os.path.join(recon, "naabu.log")
-
-        if not is_tool_installed("naabu"):
-            return ToolResult(
-                self.name,
-                False,
-                [],
-                "naabu not installed"
-            )
+        recon = _recon_dir(ctx)
+        log = recon / "naabu.log"
 
         run_cmd(
             f"naabu -host {ctx['target']} -top-ports 1000 -silent",
-            outfile=log
+            outfile=str(log),
         )
 
         return ToolResult(
             self.name,
             True,
-            [log],
-            "naabu completed"
+            [str(log)],
+            "naabu completed",
         )
 
 
@@ -149,39 +209,29 @@ class RustscanTool(ToolBase):
     description = "Fast port scan (network targets only)"
     risk = "low"
 
-    def run(self, ctx: dict):
+    def run(self, ctx: dict) -> ToolResult:
 
-        if ctx.get("target_type") != "network":
-            return ToolResult(
-                self.name,
-                False,
-                [],
-                "Skipped (web/domain target)"
-            )
+        skipped = _network_only(self.name, ctx)
+        if skipped:
+            return skipped
 
-        recon = os.path.join(ctx["outdir"], "recon")
-        os.makedirs(recon, exist_ok=True)
+        missing = _tool_missing(self.name)
+        if missing:
+            return missing
 
-        log = os.path.join(recon, "rustscan.log")
-
-        if not is_tool_installed("rustscan"):
-            return ToolResult(
-                self.name,
-                False,
-                [],
-                "rustscan not installed"
-            )
+        recon = _recon_dir(ctx)
+        log = recon / "rustscan.log"
 
         run_cmd(
             f"rustscan -a {ctx['target']} --ulimit 5000 -- -sV",
-            outfile=log
+            outfile=str(log),
         )
 
         return ToolResult(
             self.name,
             True,
-            [log],
-            "rustscan completed"
+            [str(log)],
+            "rustscan completed",
         )
 
 
@@ -192,32 +242,23 @@ class NmapTool(ToolBase):
     description = "Nmap service enumeration (network targets only)"
     risk = "low"
 
-    def run(self, ctx: dict):
+    def run(self, ctx: dict) -> ToolResult:
 
-        if ctx.get("target_type") != "network":
-            return ToolResult(
-                self.name,
-                False,
-                [],
-                "Skipped (web/domain target)"
-            )
+        skipped = _network_only(self.name, ctx)
+        if skipped:
+            return skipped
 
-        recon = os.path.join(ctx["outdir"], "recon")
-        os.makedirs(recon, exist_ok=True)
+        missing = _tool_missing(self.name)
+        if missing:
+            return missing
 
-        log = os.path.join(recon, "nmap.log")
-        xml = os.path.join(recon, "nmap.xml")
-        hosts_raw = os.path.join(recon, "hosts_raw.txt")
+        recon = _recon_dir(ctx)
 
-        if not is_tool_installed("nmap"):
-            return ToolResult(
-                self.name,
-                False,
-                [],
-                "nmap not installed"
-            )
+        log = recon / "nmap.log"
+        xml = recon / "nmap.xml"
+        hosts_raw = recon / "hosts_raw.txt"
 
-        cmd = (
+        command = (
             f"nmap "
             f"-Pn "
             f"-sC "
@@ -226,28 +267,33 @@ class NmapTool(ToolBase):
             f"{ctx['target']}"
         )
 
-        run_cmd(cmd, outfile=log)
-
-        targets = _extract_web_targets(xml)
-
-        with open(hosts_raw, "w", encoding="utf-8") as f:
-            for target in targets:
-                f.write(target + "\n")
-
-        notes = (
-            f"nmap completed. "
-            f"Discovered {len(targets)} web endpoint(s)."
+        run_cmd(
+            command,
+            outfile=str(log),
         )
+
+        targets = _extract_web_targets(str(xml))
+
+        with hosts_raw.open(
+            "w",
+            encoding="utf-8",
+        ) as outfile:
+
+            for target in targets:
+                outfile.write(target + "\n")
 
         return ToolResult(
             self.name,
             True,
             [
-                log,
-                xml,
-                hosts_raw,
+                str(log),
+                str(xml),
+                str(hosts_raw),
             ],
-            notes,
+            (
+                f"nmap completed. "
+                f"Discovered {len(targets)} web endpoint(s)."
+            ),
         )
 
 
