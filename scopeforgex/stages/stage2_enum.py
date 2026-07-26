@@ -1,23 +1,43 @@
+"""
+ScopeForgeX Stage 2
+===================
+
+Enumeration stage.
+
+Runs the appropriate enumeration tools depending on the
+selected target type.
+
+v0.4.0
+"""
+
+from __future__ import annotations
+
 from scopeforgex.registry.tool_registry import build_registry
-from scopeforgex.ui import stage, ok, warn, err, info
+from scopeforgex.ui import err, info, ok, stage, warn
 
 
-WEB_TOOLS = {
-    "whatweb",
-    "wafw00f",
-    "ffuf",
-}
+# ----------------------------------------------------------------------
+# Tool selection
+# ----------------------------------------------------------------------
 
-NETWORK_TOOLS = {
-    "enum4linux-ng",
-    "snmpwalk",
+_TARGET_TOOLSETS = {
+    "web": {
+        "whatweb",
+        "wafw00f",
+        "ffuf",
+    },
+    "network": {
+        "enum4linux-ng",
+        "snmpwalk",
+    },
 }
 
 
 def _print_tool_result(result):
     """
-    Standard output after every tool run.
+    Display the outcome of a tool execution.
     """
+
     if result.ran:
         ok(f"Tool completed: {result.name}")
     else:
@@ -27,26 +47,32 @@ def _print_tool_result(result):
         info(f"Notes: {result.notes}")
 
     if result.output_files:
-        for fpath in result.output_files:
-            info(f"Output: {fpath}")
+        for output in result.output_files:
+            info(f"Output: {output}")
     else:
         info("Output: (none)")
 
 
 def stage2_enum(ctx: dict):
-    stage("STAGE 2 — ENUMERATION", "yellow")
+    """
+    Execute Stage 2 enumeration.
+    """
 
-    tools = [t for t in build_registry() if t.stage == 2]
+    stage("STAGE 2 — ENUMERATION", "yellow")
 
     target_type = ctx.get("target_type")
 
-    if target_type == "web":
-        tools = [t for t in tools if t.name in WEB_TOOLS]
-    elif target_type == "network":
-        tools = [t for t in tools if t.name in NETWORK_TOOLS]
-    else:
+    allowed_tools = _TARGET_TOOLSETS.get(target_type)
+
+    if allowed_tools is None:
         err(f"Unsupported target type: {target_type}")
         return
+
+    tools = [
+        tool
+        for tool in build_registry()
+        if tool.stage == 2 and tool.name in allowed_tools
+    ]
 
     if not tools:
         err(f"No Stage 2 tools registered for target type: {target_type}")
