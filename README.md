@@ -157,16 +157,6 @@
 
 - Unlike many wrappers that simply execute one tool after another, ScopeForgeX allows downstream stages to consume artifacts produced by previous stages where integrations have been implemented.
 
-- Current FAST workflow includes:
-
-    - Subhunt discovery
-    - Host normalization
-    - Live host validation with httpx
-    - Optional endpoint discovery using Katana
-    - Host and URL normalization
-    - Nuclei scanning
-    - Markdown reporting
-
 - This producer-to-consumer artifact flow is one of the project's primary architectural goals.
 
 ---
@@ -203,28 +193,6 @@
     - John the Ripper 
 
 - This design helps balance automation with operational safety.
-
----
-
-### Markdown Reporting
-
-- Stage 6 automatically generates a Markdown summary using workflow metadata and available artifacts.
-
-- The generated report provides a structured overview of completed workflow stages without claiming manual validation that has not occurred.
-
----
-
-### Persistent Workflow Metadata
-
-- After a successful assessment, ScopeForgeX stores basic metadata describing the most recent execution.
-
-- Currently stored information includes:
-
-    - Target
-    - Target Type
-    - Output Directory
-
-- This metadata is displayed through the dashboard's **View Last Run** feature.
 
 ---
 
@@ -497,20 +465,6 @@ Persist Last Run Metadata
 
 ---
 
-## Workflow Philosophy
-
-- The objective of ScopeForgeX is **workflow orchestration**, not simply wrapping dozens of security tools behind a single command.
-
-- Each integration contributes to one of three responsibilities:
-
-    - Produce workflow artifacts
-    - Consume existing workflow artifacts
-    - Prepare analyst-controlled actions
-
-- This separation keeps the framework modular and easier to extend.
-
----
-
 ## Configured Tool Catalog
 
 - The repository contains a broader catalog of tools than the subset currently connected to active workflow execution.
@@ -566,20 +520,6 @@ Persist Last Run Metadata
     wpscan
     xsstrike
     ```
-
----
-
-## Important Distinction
-
-- Some configured tools are fully integrated into workflow execution.
-
-- Others are currently:
-
-    - configuration entries,
-    - installer targets,
-    - or future workflow candidates.
-
-- This documentation intentionally reflects the current implementation rather than implying that every configured tool participates in automated execution.
 
 ---
 
@@ -1221,18 +1161,6 @@ python3 scopeforgex.py
 
 ---
 
-## Last-Run Metadata
-
-- Basic workflow metadata is stored separately from assessment artifacts.
-
-```text
-outputs/.last_run.json
-```
-
-- This file enables the dashboard's **View Last Run** feature and should not be confused with a workflow checkpoint or resume mechanism.
-
----
-
 ## Reporting
 
 - Stage 6 generates a structured Markdown report summarizing the completed assessment workflow.
@@ -1276,20 +1204,6 @@ outputs/.last_run.json
     - Remediation verification
 
 - Those activities remain the responsibility of the security analyst.
-
----
-
-## Reporting Package
-
-- Reporting logic is implemented through the repository's top-level:
-
-    ```text
-    reporting/
-    ```
-
-directory.
-
-- Documentation intentionally avoids referencing packages that do not exist within the repository.
 
 ---
 
@@ -1422,41 +1336,13 @@ directory.
 
 - ScopeForgeX is the orchestration layer responsible for coordinating multiple assessment stages.
 
-- Current responsibilities include:
-
-    - Workflow orchestration
-    - Target classification
-    - Stage management
-    - Tool registration
-    - Profile execution
-    - Artifact organization
-    - Connected FAST workflow
-    - Prepared-command generation
-    - Markdown reporting
-    - Last-run metadata persistence
-
-- Subhunt is therefore one component within the larger ScopeForgeX ecosystem rather than a replacement for it.
+- Subhunt is one component within the larger ScopeForgeX ecosystem rather than a replacement for it.
 
 ---
 
 ## Portfolio Engineering Focus
 
 - ScopeForgeX demonstrates software engineering concepts that extend beyond simply executing security tools.
-
-- Current architectural concepts include:
-
-    - Stage-based workflow orchestration
-    - Modular tool registry
-    - Profile-driven execution
-    - Shared workflow context
-    - Target-aware routing
-    - Producer-to-consumer artifact flow
-    - Normalized intermediate artifacts
-    - Structured output organization
-    - Analyst-assisted automation
-    - Dependency validation
-    - Modular reporting
-    - Persistent workflow metadata
 
 - A deliberate design goal of the project is to document implementation status honestly rather than presenting planned functionality as completed features.
 
