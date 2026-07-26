@@ -1,27 +1,52 @@
+"""
+ScopeForgeX Validators
+======================
+
+Shared validation helpers for domains, IP addresses, CIDRs,
+host:port combinations, and URL/hostname detection.
+
+v0.4.0
+"""
+
+from __future__ import annotations
+
 import ipaddress
 import re
 from urllib.parse import urlparse
 
 
 _DOMAIN_RE = re.compile(
-    r"^(?=.{1,253}$)(?!-)(?:[a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,63}$"
+    r"^(?=.{1,253}$)(?!-)(?:[A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63}$"
 )
 
-_HOST_PORT_RE = re.compile(r"^(?P<host>[^:]+):(?P<port>\d{1,5})$")
+# Matches hostname:port or IPv4:port.
+# IPv6 literals are handled separately by urlparse/ipaddress.
+_HOST_PORT_RE = re.compile(
+    r"^(?P<host>[^:]+):(?P<port>\d{1,5})$"
+)
+
+_BANNER_CHARS = ("│", "┌", "└", "─")
 
 
 def is_valid_domain(domain: str) -> bool:
     """
-    Validate a DNS hostname/domain.
+    Validate a DNS hostname.
+
+    Examples:
+        example.com
+        api.example.com
     """
+
     domain = (domain or "").strip().rstrip(".")
+
     return bool(_DOMAIN_RE.fullmatch(domain))
 
 
 def is_valid_ip_or_cidr(value: str) -> bool:
     """
-    Validate IPv4, IPv6 or CIDR.
+    Validate an IPv4/IPv6 address or CIDR block.
     """
+
     value = (value or "").strip()
 
     if not value:
@@ -35,6 +60,10 @@ def is_valid_ip_or_cidr(value: str) -> bool:
 
 
 def _is_valid_ip(value: str) -> bool:
+    """
+    Validate a single IPv4 or IPv6 address.
+    """
+
     try:
         ipaddress.ip_address(value)
         return True
@@ -44,17 +73,20 @@ def _is_valid_ip(value: str) -> bool:
 
 def _split_host_port(value: str):
     """
+    Split a host[:port] string.
+
     Returns:
-        (host, port) or (value, None)
+        (host, port) if a valid port exists.
+        (value, None) otherwise.
     """
 
-    m = _HOST_PORT_RE.fullmatch(value)
+    match = _HOST_PORT_RE.fullmatch(value)
 
-    if not m:
+    if not match:
         return value, None
 
-    host = m.group("host")
-    port = int(m.group("port"))
+    host = match.group("host")
+    port = int(match.group("port"))
 
     if not (1 <= port <= 65535):
         return value, None
@@ -62,9 +94,20 @@ def _split_host_port(value: str):
     return host, port
 
 
+def _contains_banner_chars(text: str) -> bool:
+    """
+    Detect common terminal/table drawing characters.
+    """
+
+    return any(ch in text for ch in _BANNER_CHARS)
+
+
 def looks_like_hostname(line: str) -> bool:
     """
-    Accepts:
+    Determine whether a line is likely to contain a hostname, IP,
+    URL, or host:port combination.
+
+    Accepted examples:
 
         example.com
         api.example.com
@@ -73,43 +116,42 @@ def looks_like_hostname(line: str) -> bool:
         http://example.com
         https://example.com
         http://192.168.1.10:3000
+        https://example.com/login
 
-    Rejects:
+    Rejected examples:
 
-        banners
-        unicode tables
-        random text
+        ASCII banners
+        Unicode tables
+        Random sentences
     """
 
-    s = (line or "").strip()
+    value = (line or "").strip()
 
-    if not s:
+    if not value:
         return False
 
-    # Common banner characters
-    if any(ch in s for ch in ("│", "┌", "└", "─")):
+    if _contains_banner_chars(value):
         return False
 
-    if " " in s:
+    if " " in value:
         return False
 
-    # URL?
-    if s.startswith(("http://", "https://")):
-        parsed = urlparse(s)
-
-        if not parsed.hostname:
-            return False
+    if value.startswith(("http://", "https://")):
+        parsed = urlparse(value)
 
         host = parsed.hostname
 
-        return _is_valid_ip(host) or is_valid_domain(host)
+        if not host:
+            return False
 
-    host, _ = _split_host_port(s)
+        return (
+            _is_valid_ip(host)
+            or is_valid_domain(host)
+        )
 
-    if _is_valid_ip(host):
-        return True
+    host, _ = _split_host_port(value)
 
-    if is_valid_domain(host):
-        return True
-
-    return False
+    return (
+        _is_valid_ip(host)
+        or is_valid_domain(host)
+    )
