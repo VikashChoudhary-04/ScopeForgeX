@@ -21,7 +21,18 @@ class WhatwebTool(ToolBase):
         if not is_tool_installed("whatweb"):
             return ToolResult(self.name, False, [], "whatweb not installed")
 
-        run_cmd(f"whatweb https://{ctx['target']} > {out_txt}", outfile=out_log)
+        targets=[f"https://{ctx['target']}"]
+        pipe=ctx.get("pipeline",{})
+        hf=pipe.get("hosts_final")
+        if hf and os.path.exists(hf):
+            with open(hf,encoding="utf-8") as f:
+                vals=[x.strip() for x in f if x.strip()]
+            if vals:
+                targets=vals
+        with open(out_txt,"w",encoding="utf-8") as out:
+            for t in targets:
+                run_cmd(f"whatweb {t}",outfile=out_log)
+                out.write(f"Scanned: {t}\n")
 
         notes = build_notes_from_log(out_log, "WhatWeb finished.")
         if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
@@ -44,7 +55,18 @@ class Wafw00fTool(ToolBase):
         if not is_tool_installed("wafw00f"):
             return ToolResult(self.name, False, [], "wafw00f not installed")
 
-        run_cmd(f"wafw00f https://{ctx['target']} > {out_txt}", outfile=out_log)
+        targets=[f"https://{ctx['target']}"]
+        pipe=ctx.get("pipeline",{})
+        hf=pipe.get("hosts_final")
+        if hf and os.path.exists(hf):
+            with open(hf,encoding="utf-8") as f:
+                vals=[x.strip() for x in f if x.strip()]
+            if vals:
+                targets=vals
+        with open(out_txt,"w",encoding="utf-8") as out:
+            for t in targets:
+                run_cmd(f"wafw00f {t}",outfile=out_log)
+                out.write(f"Scanned: {t}\n")
 
         notes = build_notes_from_log(out_log, "wafw00f finished.")
         if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
