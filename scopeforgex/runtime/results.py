@@ -105,11 +105,20 @@ class WorkflowResult(ExecutionResult):
     Final workflow execution result.
     """
 
-    workflow_id: str
+    workflow_id: str = field(
+        default="",
+        kw_only=True,
+    )
 
-    target: str
+    target: str = field(
+        default="",
+        kw_only=True,
+    )
 
-    profile: str
+    profile: str = field(
+        default="",
+        kw_only=True,
+    )
 
     stages: tuple[StageResult, ...] = field(
         default_factory=tuple,
