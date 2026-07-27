@@ -1,148 +1,376 @@
 """
-reporting/models.py
+ScopeForgeX Reporting Models
+============================
 
-Reporting data models for ScopeForgeX.
+Canonical reporting data structures.
 
-These dataclasses provide a stable contract between workflow stages and
-report generators, allowing Markdown, HTML, PDF, JSON and future output
-formats to share the same data source.
+v0.6.0
+
+Supports:
+    - Professional pentest reports
+    - Vulnerability findings
+    - Evidence tracking
+    - Tool execution summaries
+    - Severity aggregation
+    - JSON serialization
 """
 
-from dataclasses import dataclass, field
+from __future__ import annotations
+
+from dataclasses import (
+    asdict,
+    dataclass,
+    field,
+)
 from datetime import datetime
-from typing import Dict, List
+from typing import Any
 
 
-# ----------------------------------------------------------------------
-# Finding Summary
-# ----------------------------------------------------------------------
+###############################################################################
+# Finding Models
+###############################################################################
 
 
 @dataclass
-class FindingSummary:
+class FindingEvidence:
     """
-    Severity breakdown of automated findings.
+    Evidence attached to a vulnerability finding.
+    """
+
+    description: str = ""
+
+    request: str = ""
+
+    response: str = ""
+
+    screenshot: str = ""
+
+    file_path: str = ""
+
+
+    def as_dict(self) -> dict[str, Any]:
+
+        return asdict(self)
+
+
+
+@dataclass
+class Finding:
+    """
+    Normalized vulnerability finding.
+
+    All vulnerability sources should eventually
+    convert into this format.
+    """
+
+    finding_id: str
+
+    title: str
+
+    severity: str
+
+    target: str
+
+    source: str
+
+    description: str = ""
+
+    impact: str = ""
+
+    remediation: str = ""
+
+    evidence: FindingEvidence = field(
+        default_factory=FindingEvidence,
+    )
+
+    cvss: float | None = None
+
+    references: list[str] = field(
+        default_factory=list,
+    )
+
+
+    def as_dict(self) -> dict[str, Any]:
+
+        data = asdict(self)
+
+        data["evidence"] = (
+            self.evidence.as_dict()
+        )
+
+        return data
+
+
+
+###############################################################################
+# Severity Models
+###############################################################################
+
+
+@dataclass
+class SeveritySummary:
+    """
+    Vulnerability severity distribution.
     """
 
     critical: int = 0
-    high: int = 0
-    medium: int = 0
-    low: int = 0
-    info: int = 0
-    unknown: int = 0
 
-    @property
+    high: int = 0
+
+    medium: int = 0
+
+    low: int = 0
+
+    informational: int = 0
+
+
     def total(self) -> int:
+
         return (
             self.critical
-            + self.high
-            + self.medium
-            + self.low
-            + self.info
-            + self.unknown
+            +
+            self.high
+            +
+            self.medium
+            +
+            self.low
+            +
+            self.informational
         )
 
 
-# ----------------------------------------------------------------------
-# Scan Statistics
-# ----------------------------------------------------------------------
+    def as_dict(self) -> dict[str, int]:
+
+        return asdict(self)
+
+
+
+###############################################################################
+# Tool Execution Models
+###############################################################################
+
+
+@dataclass
+class ToolExecutionResult:
+    """
+    Individual tool execution record.
+    """
+
+    tool: str
+
+    stage: str
+
+    status: str
+
+    findings: int = 0
+
+    duration: float = 0.0
+
+    artifacts: list[str] = field(
+        default_factory=list,
+    )
+
+    errors: list[str] = field(
+        default_factory=list,
+    )
+
+
+    def as_dict(self) -> dict[str, Any]:
+
+        return asdict(self)
+
+
+
+###############################################################################
+# Existing Report Models
+###############################################################################
 
 
 @dataclass
 class ScanStatistics:
     """
-    High-level workflow statistics.
+    Workflow statistics.
     """
 
     subdomains_found: int = 0
+
     alive_hosts: int = 0
+
     final_hosts: int = 0
+
     urls_discovered: int = 0
+
     nuclei_findings: int = 0
+
     files_generated: int = 0
 
-    stages_executed: int = 0
-    stages_skipped: int = 0
-    tools_executed: int = 0
-
-
-# ----------------------------------------------------------------------
-# Stage Result
-# ----------------------------------------------------------------------
 
 
 @dataclass
 class StageResult:
     """
-    Individual workflow stage result.
+    Workflow stage result.
     """
 
     name: str
-    status: str = "Completed"
+
+    status: str
 
 
-# ----------------------------------------------------------------------
-# Report Data
-# ----------------------------------------------------------------------
+
+@dataclass
+class ReportMetadata:
+    """
+    Additional report information.
+    """
+
+    generator: str = "ScopeForgeX"
+
+    version: str = "v0.6.0"
+
+    generated_by: str = "ScopeForgeX Reporting Engine"
+
 
 
 @dataclass
 class ReportData:
     """
-    Master reporting object consumed by all report generators.
+    Complete assessment report object.
     """
 
-    # Assessment
-
     target: str
+
     profile: str
+
     target_type: str
 
-    # Timing
-
     start_time: datetime
+
     end_time: datetime
+
+    statistics: ScanStatistics
+
+
+    generated_files: list[str] = field(
+        default_factory=list,
+    )
+
+
+    stages: list[StageResult] = field(
+        default_factory=list,
+    )
+
+
+    tool_results: dict[str, str] = field(
+        default_factory=dict,
+    )
+
+
+    warnings: list[str] = field(
+        default_factory=list,
+    )
+
+
+    findings: list[Finding] = field(
+        default_factory=list,
+    )
+
+
+    severity_summary: SeveritySummary = field(
+        default_factory=SeveritySummary,
+    )
+
+
+    metadata: ReportMetadata = field(
+        default_factory=ReportMetadata,
+    )
+
+
     duration_seconds: float = 0.0
 
-    # Metadata
 
-    assessment_id: str = ""
-    assessment_type: str = "External Web Assessment"
-    workflow_name: str = ""
-    scopeforgex_version: str = "v0.4.0"
 
-    # Scope
+    ###########################################################################
+    # Serialization
+    ###########################################################################
 
-    authentication: str = "None"
-    out_of_scope: str = "None"
+    def as_dict(self) -> dict[str, Any]:
 
-    # Environment
+        return {
 
-    operating_system: str = ""
-    python_version: str = ""
+            "target": self.target,
 
-    # Statistics
+            "profile": self.profile,
 
-    statistics: ScanStatistics = field(default_factory=ScanStatistics)
+            "target_type": self.target_type,
 
-    findings: FindingSummary = field(default_factory=FindingSummary)
+            "start_time":
+                self.start_time.isoformat(),
 
-    # Execution
+            "end_time":
+                self.end_time.isoformat(),
 
-    stages: List[StageResult] = field(default_factory=list)
+            "duration_seconds":
+                self.duration_seconds,
 
-    tool_results: Dict[str, str] = field(default_factory=dict)
+            "statistics":
+                asdict(
+                    self.statistics
+                ),
 
-    # Files
+            "generated_files":
+                self.generated_files,
 
-    generated_files: List[str] = field(default_factory=list)
+            "stages":
+                [
+                    asdict(stage)
+                    for stage in self.stages
+                ],
 
-    # Notes
+            "tool_results":
+                self.tool_results,
 
-    warnings: List[str] = field(default_factory=list)
+            "warnings":
+                self.warnings,
 
-    recommendations: List[str] = field(default_factory=list)
+            "findings":
+                [
+                    finding.as_dict()
+                    for finding in self.findings
+                ],
 
-    # Reserved for future renderers (HTML/PDF/JSON)
+            "severity_summary":
+                self.severity_summary.as_dict(),
 
-    metadata: Dict[str, str] = field(default_factory=dict)
+            "metadata":
+                asdict(
+                    self.metadata
+                ),
+        }
+
+
+
+###############################################################################
+# Public API
+###############################################################################
+
+
+__all__ = [
+
+    "FindingEvidence",
+
+    "Finding",
+
+    "SeveritySummary",
+
+    "ToolExecutionResult",
+
+    "ScanStatistics",
+
+    "StageResult",
+
+    "ReportMetadata",
+
+    "ReportData",
+
+]
