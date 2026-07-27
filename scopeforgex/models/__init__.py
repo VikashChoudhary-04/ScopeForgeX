@@ -2,8 +2,8 @@
 Core data models used throughout ScopeForgeX.
 """
 
-from .tool_result import ToolResult
+from .tool_result import ExecutionResult
 
 __all__ = [
-    "ToolResult",
+    "ExecutionResult",
 ]
