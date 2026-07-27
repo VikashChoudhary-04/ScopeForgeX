@@ -4,11 +4,11 @@ ScopeForgeX JSON Report Exporter
 
 Machine-readable report exporter.
 
-v0.6.0
+v0.6.1
 
 Responsibilities:
     - Export ReportData to JSON
-    - Preserve findings
+    - Serialize ExecutionResult objects
     - Preserve workflow metadata
     - Enable automation/dashboard integrations
 """
@@ -16,10 +16,112 @@ Responsibilities:
 from __future__ import annotations
 
 import json
+from dataclasses import asdict, is_dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from reporting.models import ReportData
+
+
+###############################################################################
+# JSON Serialization Helpers
+###############################################################################
+
+
+def _json_safe(
+    value: Any,
+) -> Any:
+    """
+    Convert objects into JSON serializable structures.
+    """
+
+    if value is None:
+        return None
+
+
+    if isinstance(
+        value,
+        (str, int, float, bool),
+    ):
+
+        return value
+
+
+    if isinstance(
+        value,
+        datetime,
+    ):
+
+        return value.isoformat()
+
+
+    if isinstance(
+        value,
+        list,
+    ):
+
+        return [
+            _json_safe(item)
+            for item in value
+        ]
+
+
+    if isinstance(
+        value,
+        tuple,
+    ):
+
+        return [
+            _json_safe(item)
+            for item in value
+        ]
+
+
+    if isinstance(
+        value,
+        dict,
+    ):
+
+        return {
+            str(key): _json_safe(item)
+            for key, item in value.items()
+        }
+
+
+    if is_dataclass(
+        value,
+    ):
+
+        return {
+            key: _json_safe(item)
+            for key, item in asdict(value).items()
+        }
+
+
+    if hasattr(
+        value,
+        "as_dict",
+    ):
+
+        return _json_safe(
+            value.as_dict()
+        )
+
+
+    if hasattr(
+        value,
+        "__dict__",
+    ):
+
+        return {
+            key: _json_safe(item)
+            for key, item in value.__dict__.items()
+        }
+
+
+    return str(value)
+
 
 
 ###############################################################################
@@ -32,12 +134,14 @@ class JSONReportExporter:
     Generates JSON reports from ReportData.
     """
 
+
     def __init__(
         self,
         report: ReportData,
     ) -> None:
 
         self.report = report
+
 
 
     ###########################################################################
@@ -51,7 +155,12 @@ class JSONReportExporter:
         Build JSON-compatible report payload.
         """
 
-        return self.report.as_dict()
+        payload = self.report.as_dict()
+
+        return _json_safe(
+            payload
+        )
+
 
 
     ###########################################################################
@@ -70,6 +179,7 @@ class JSONReportExporter:
             output_file
         )
 
+
         path.parent.mkdir(
             parents=True,
             exist_ok=True,
@@ -84,6 +194,7 @@ class JSONReportExporter:
             ),
             encoding="utf-8",
         )
+
 
 
 ###############################################################################
@@ -106,10 +217,10 @@ def export_json_report(
     )
 
 
+
 ###############################################################################
 # Public API
 ###############################################################################
-
 
 __all__ = [
     "JSONReportExporter",
