@@ -12,7 +12,7 @@ Design Goals
 * Clean Markdown formatting
 * Future-ready architecture
 
-v0.4.0
+v0.4.1
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ class ReportGenerator:
 
     TITLE = "ScopeForgeX Assessment Report"
 
+
     def __init__(
         self,
         report: ReportData,
@@ -47,6 +48,7 @@ class ReportGenerator:
 
         self.report = report
         self.lines: list[str] = []
+
 
     ###########################################################################
     # Basic Markdown Helpers
@@ -56,10 +58,18 @@ class ReportGenerator:
         self,
         text: str = "",
     ) -> None:
-        self.lines.append(f"{text}\n")
+
+        self.lines.append(
+            f"{text}\n"
+        )
+
 
     def _blank(self) -> None:
-        self.lines.append("\n")
+
+        self.lines.append(
+            "\n"
+        )
+
 
     def _heading(
         self,
@@ -70,7 +80,9 @@ class ReportGenerator:
         self._line(
             f'{"#" * level} {title}'
         )
+
         self._blank()
+
 
     def _bullet(
         self,
@@ -81,6 +93,7 @@ class ReportGenerator:
         self._line(
             f"- **{label}:** {value}"
         )
+
 
     def _table(
         self,
@@ -104,6 +117,7 @@ class ReportGenerator:
         )
 
         for row in rows:
+
             self._line(
                 "| "
                 + " | ".join(
@@ -115,11 +129,14 @@ class ReportGenerator:
 
         self._blank()
 
+
     ###########################################################################
     # Rendering Sections
     ###########################################################################
 
-    def _render_title(self) -> None:
+    def _render_title(
+        self,
+    ) -> None:
 
         self._heading(
             1,
@@ -138,9 +155,12 @@ class ReportGenerator:
 
         self._blank()
 
-    def _render_summary(self) -> None:
 
-        r = self.report
+    def _render_summary(
+        self,
+    ) -> None:
+
+        report = self.report
 
         self._heading(
             2,
@@ -149,66 +169,76 @@ class ReportGenerator:
 
         self._bullet(
             "Target",
-            f"`{r.target}`",
+            f"`{report.target}`",
         )
 
         self._bullet(
             "Profile",
-            f"`{r.profile}`",
+            f"`{report.profile}`",
         )
 
         self._bullet(
             "Target Type",
-            f"`{r.target_type}`",
+            f"`{report.target_type}`",
         )
 
         if getattr(
-            r,
+            report,
             "start_time",
             None,
         ):
+
             self._bullet(
                 "Started",
-                r.start_time,
+                report.start_time,
             )
 
+
         if getattr(
-            r,
+            report,
             "end_time",
             None,
         ):
+
             self._bullet(
                 "Finished",
-                r.end_time,
+                report.end_time,
             )
+
 
         if hasattr(
-            r,
+            report,
             "duration_seconds",
         ):
+
             self._bullet(
                 "Duration",
-                f"{r.duration_seconds:.2f} seconds",
+                f"{report.duration_seconds:.2f} seconds",
             )
 
+
         self._blank()
-    def _render_workflow(self) -> None:
-        """
-        Render workflow execution summary.
-        """
+
+
+    def _render_workflow(
+        self,
+    ) -> None:
 
         self._heading(
             2,
             "Workflow Execution",
         )
 
-        rows: list[list[str]] = []
+
+        rows = []
+
 
         for stage in getattr(
             self.report,
             "stages",
             [],
         ):
+
             rows.append(
                 [
                     stage.name,
@@ -216,7 +246,9 @@ class ReportGenerator:
                 ]
             )
 
+
         if rows:
+
             self._table(
                 [
                     "Stage",
@@ -224,27 +256,32 @@ class ReportGenerator:
                 ],
                 rows,
             )
+
         else:
+
             self._line(
                 "_No workflow information available._"
             )
+
             self._blank()
+
 
     ###########################################################################
     # Statistics
     ###########################################################################
 
-    def _render_statistics(self) -> None:
-        """
-        Render workflow statistics.
-        """
+    def _render_statistics(
+        self,
+    ) -> None:
 
         stats = self.report.statistics
+
 
         self._heading(
             2,
             "Workflow Statistics",
         )
+
 
         metrics = [
             (
@@ -273,22 +310,25 @@ class ReportGenerator:
             ),
         ]
 
+
         for label, value in metrics:
+
             self._bullet(
                 label,
                 f"**{value}**",
             )
 
+
         self._blank()
+
 
     ###########################################################################
     # Tool Execution
     ###########################################################################
 
-    def _render_tools(self) -> None:
-        """
-        Render tool execution results.
-        """
+    def _render_tools(
+        self,
+    ) -> None:
 
         tool_results = getattr(
             self.report,
@@ -296,23 +336,30 @@ class ReportGenerator:
             None,
         )
 
+
         if not tool_results:
+
             return
+
 
         self._heading(
             2,
             "Tool Execution",
         )
 
+
         rows = []
 
+
         for tool, status in tool_results.items():
+
             rows.append(
                 [
                     tool,
                     status,
                 ]
             )
+
 
         self._table(
             [
@@ -322,38 +369,49 @@ class ReportGenerator:
             rows,
         )
 
+
     ###########################################################################
     # Generated Artifacts
     ###########################################################################
 
-    def _render_artifacts(self) -> None:
+    def _render_artifacts(
+        self,
+    ) -> None:
         """
         Render generated files.
+
+        Keeps relative artifact paths instead of
+        flattening them to filenames.
         """
 
         if not self.report.generated_files:
+
             return
+
 
         self._heading(
             2,
             "Generated Artifacts",
         )
 
+
         for artifact in self.report.generated_files:
+
             self._line(
-                f"- `{Path(artifact).name}`"
+                f"- `{artifact}`"
             )
 
+
         self._blank()
+
 
     ###########################################################################
     # Execution Notes
     ###########################################################################
 
-    def _render_notes(self) -> None:
-        """
-        Render warnings and execution notes.
-        """
+    def _render_notes(
+        self,
+    ) -> None:
 
         warnings = getattr(
             self.report,
@@ -361,33 +419,41 @@ class ReportGenerator:
             None,
         )
 
+
         if not warnings:
+
             return
+
 
         self._heading(
             2,
             "Execution Notes",
         )
 
+
         for warning in warnings:
+
             self._line(
                 f"- {warning}"
             )
 
+
         self._blank()
+
+
     ###########################################################################
     # Analyst Guidance
     ###########################################################################
 
-    def _render_guidance(self) -> None:
-        """
-        Render analyst recommendations.
-        """
+    def _render_guidance(
+        self,
+    ) -> None:
 
         self._heading(
             2,
             "Analyst Guidance",
         )
+
 
         guidance = [
             "Review all automated findings before reporting them.",
@@ -398,12 +464,16 @@ class ReportGenerator:
             "Re-run using the FULL_SAFE profile if broader coverage is required.",
         ]
 
+
         for item in guidance:
+
             self._line(
                 f"- {item}"
             )
 
+
         self._blank()
+
 
     ###########################################################################
     # Public API
@@ -414,15 +484,11 @@ class ReportGenerator:
         output_file: str,
     ) -> None:
         """
-        Generate a Markdown report.
-
-        Parameters
-        ----------
-        output_file:
-            Destination Markdown file.
+        Generate Markdown report.
         """
 
         self.lines.clear()
+
 
         self._render_title()
         self._render_summary()
@@ -433,10 +499,16 @@ class ReportGenerator:
         self._render_notes()
         self._render_guidance()
 
-        Path(output_file).write_text(
-            "".join(self.lines),
+
+        Path(
+            output_file
+        ).write_text(
+            "".join(
+                self.lines
+            ),
             encoding="utf-8",
         )
+
 
     ###########################################################################
     # Future Extension Hooks
@@ -446,13 +518,6 @@ class ReportGenerator:
         self,
         output_file: str,
     ) -> None:
-        """
-        Placeholder for a future HTML report exporter.
-
-        The Markdown generator remains the canonical implementation in
-        v0.4.0. HTML/PDF generation can reuse the same rendering model
-        without changing the ReportData structure.
-        """
 
         raise NotImplementedError(
             "HTML report generation is planned for a future release."
