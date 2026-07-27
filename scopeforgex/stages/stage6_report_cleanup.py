@@ -6,23 +6,19 @@ Reporting & Cleanup Stage
 
 Responsibilities
 ----------------
-* Consume RuntimeState execution data
 * Collect workflow metadata
+* Discover generated artifacts
 * Build ReportData
 * Generate Markdown report
 
-Runtime execution data is the primary source.
-Filesystem discovery is used as a compatibility fallback.
-
-v0.5.0
+v0.5.2
 """
 
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from reporting.models import (
     ReportData,
@@ -66,18 +62,32 @@ def _count_lines(
         )
 
 
-def _existing_files(
-    paths: list[Path],
+def _discover_artifacts(
+    outdir: Path,
 ) -> list[str]:
     """
-    Return existing file paths.
+    Recursively discover generated artifacts.
     """
 
-    return [
-        str(path)
-        for path in paths
-        if path.exists()
-    ]
+    if not outdir.exists():
+        return []
+
+    artifacts = []
+
+    for path in outdir.rglob("*"):
+
+        if (
+            path.is_file()
+            and ".gitkeep" not in str(path)
+        ):
+
+            artifacts.append(
+                str(path)
+            )
+
+    return sorted(
+        artifacts
+    )
 
 
 ###############################################################################
@@ -97,30 +107,15 @@ class ReportingStage:
 
         self.ctx = ctx
 
-        self.runtime = ctx.get(
-            "runtime_state",
-        )
-
         self.outdir = Path(
-            ctx.get(
-                "outdir",
-                ".",
-            )
-        )
-
-        self.recon_dir = (
-            self.outdir / "recon"
-        )
-
-        self.vuln_dir = (
-            self.outdir / "vuln"
+            ctx["outdir"]
         )
 
         self.report_path = (
             self.outdir / "report.md"
         )
 
-        self.artifacts: list[str] = []
+        self.artifacts = []
 
 
     ###########################################################################
@@ -131,56 +126,27 @@ class ReportingStage:
         self,
     ) -> dict[str, Path]:
 
+        recon = self.outdir / "recon"
+        vuln = self.outdir / "vuln"
+
         return {
+
             "hosts_raw":
-                self.recon_dir / "hosts_raw.txt",
+                recon / "hosts_raw.txt",
 
             "hosts_alive":
-                self.recon_dir / "hosts_alive.txt",
+                recon / "hosts_alive.txt",
 
             "hosts_final":
-                self.recon_dir / "hosts_final.txt",
+                recon / "hosts_final.txt",
 
             "urls_final":
-                self.recon_dir / "urls_final.txt",
+                recon / "urls_final.txt",
 
             "nuclei":
-                self.vuln_dir / "nuclei.txt",
+                vuln / "nuclei.txt",
 
-            "nuclei_hosts":
-                self.vuln_dir / "nuclei_hosts.txt",
-
-            "nuclei_urls":
-                self.vuln_dir / "nuclei_urls.txt",
         }
-
-
-    def runtime_artifacts(
-        self,
-    ) -> list[str]:
-        """
-        Collect artifacts from RuntimeState.
-        """
-
-        if not self.runtime:
-            return []
-
-        artifacts = []
-
-        for artifact in self.runtime.artifacts:
-
-            path = getattr(
-                artifact,
-                "path",
-                None,
-            )
-
-            if path:
-                artifacts.append(
-                    str(path)
-                )
-
-        return artifacts
 
 
     ###########################################################################
@@ -193,18 +159,8 @@ class ReportingStage:
 
         files = self.artifact_paths()
 
-        discovered = _existing_files(
-            list(
-                files.values()
-            )
-        )
-
-        runtime_files = self.runtime_artifacts()
-
-        self.artifacts = list(
-            dict.fromkeys(
-                runtime_files + discovered
-            )
+        self.artifacts = _discover_artifacts(
+            self.outdir
         )
 
         return ScanStatistics(
@@ -233,22 +189,156 @@ class ReportingStage:
                 self.artifacts
             ),
 
-            stages_executed=(
-                len(
-                    self.runtime.stage_results
-                )
-                if self.runtime
-                else 0
-            ),
-
-            tools_executed=(
-                len(
-                    self.runtime.tool_results
-                )
-                if self.runtime
-                else 0
-            ),
         )
+
+
+    ###########################################################################
+    # Dynamic Stage Summary
+    ###########################################################################
+
+    def _stage_results(
+        self,
+    ) -> list[StageResult]:
+
+        runtime_results = self.ctx.get(
+            "stage_results",
+            [],
+        )
+
+        if not runtime_results:
+
+            return [
+                StageResult(
+                    "Reporting",
+                    "Completed",
+                )
+            ]
+
+
+        output = []
+
+
+        for result in runtime_results:
+
+            name = getattr(
+                result,
+                "tool",
+                None,
+            )
+
+            if not name:
+                continue
+
+
+            if name.startswith(
+                "stage"
+            ):
+
+                name = name.replace(
+                    "_",
+                    " ",
+                ).title()
+
+
+            status = (
+                "Completed"
+                if getattr(
+                    result,
+                    "success",
+                    False,
+                )
+                else "Failed"
+            )
+
+
+            output.append(
+                StageResult(
+                    name,
+                    status,
+                )
+            )
+
+
+        output.append(
+            StageResult(
+                "Reporting",
+                "Completed",
+            )
+        )
+
+
+        return output
+
+
+    ###########################################################################
+    # Tool Summary
+    ###########################################################################
+
+    def _tool_results(
+        self,
+    ) -> dict[str, str]:
+
+        tools = {}
+
+        runtime = self.ctx.get(
+            "tool_results",
+            [],
+        )
+
+
+        for result in runtime:
+
+            tool = getattr(
+                result,
+                "tool",
+                None,
+            )
+
+            if not tool:
+                continue
+
+
+            tools[tool] = (
+                "Completed"
+                if getattr(
+                    result,
+                    "success",
+                    False,
+                )
+                else "Failed"
+            )
+
+
+        return tools
+
+
+    ###########################################################################
+    # Warning Collection
+    ###########################################################################
+
+    def _warnings(
+        self,
+        stats: ScanStatistics,
+    ) -> list[str]:
+
+        warnings = []
+
+
+        if stats.alive_hosts == 0:
+
+            warnings.append(
+                "No live hosts were identified."
+            )
+
+
+        if stats.nuclei_findings == 0:
+
+            warnings.append(
+                "No automated vulnerability findings were recorded."
+            )
+
+
+        return warnings
 
 
     ###########################################################################
@@ -261,12 +351,17 @@ class ReportingStage:
 
         stats = self.statistics()
 
+
         start = self.ctx.get(
             "workflow_start_time",
             time.time(),
         )
 
-        end = time.time()
+
+        end = self.ctx.get(
+            "workflow_end_time",
+            time.time(),
+        )
 
 
         report = ReportData(
@@ -288,17 +383,16 @@ class ReportingStage:
 
             start_time=datetime.fromtimestamp(
                 start,
-                tz=timezone.utc,
             ),
 
             end_time=datetime.fromtimestamp(
                 end,
-                tz=timezone.utc,
             ),
 
             statistics=stats,
 
             generated_files=self.artifacts,
+
         )
 
 
@@ -311,106 +405,12 @@ class ReportingStage:
 
         report.tool_results = self._tool_results()
 
-        report.warnings = self._warnings()
+        report.warnings = self._warnings(
+            stats
+        )
 
 
         return report
-
-
-    ###########################################################################
-    # Stage Summary
-    ###########################################################################
-
-    def _stage_results(
-        self,
-    ) -> list[StageResult]:
-
-        if self.runtime:
-
-            return [
-                StageResult(
-                    name=(
-                        result.name
-                    ),
-                    status=(
-                        "Completed"
-                        if result.successful
-                        else "Failed"
-                    ),
-                )
-
-                for result
-                in self.runtime.stage_results
-            ]
-
-
-        return [
-            StageResult(
-                "Scope",
-                "Completed",
-            ),
-            StageResult(
-                "Reconnaissance",
-                "Completed",
-            ),
-            StageResult(
-                "Validation",
-                "Completed",
-            ),
-            StageResult(
-                "Reporting",
-                "Completed",
-            ),
-        ]
-
-
-    ###########################################################################
-    # Tool Summary
-    ###########################################################################
-
-    def _tool_results(
-        self,
-    ) -> dict[str, str]:
-
-        if self.runtime:
-
-            return {
-                result.tool:
-                    (
-                        "Completed"
-                        if result.success
-                        else "Failed"
-                    )
-
-                for result
-                in self.runtime.tool_results
-            }
-
-
-        return {}
-
-
-    ###########################################################################
-    # Warning Collection
-    ###########################################################################
-
-    def _warnings(
-        self,
-    ) -> list[str]:
-
-        warnings: list[str] = []
-
-        if self.runtime:
-
-            warnings.extend(
-                self.runtime.warnings
-            )
-
-            warnings.extend(
-                self.runtime.errors
-            )
-
-        return warnings
 
 
     ###########################################################################
@@ -423,13 +423,15 @@ class ReportingStage:
 
         report = self.build_report()
 
+
         ReportGenerator(
-            report,
+            report
         ).generate_markdown(
             str(
                 self.report_path
             )
         )
+
 
         ok(
             f"Report written to {self.report_path}"
@@ -450,10 +452,15 @@ def stage6_reporting(
         "magenta",
     )
 
+
     ReportingStage(
-        ctx,
+        ctx
     ).write_report()
 
+
+###############################################################################
+# Module Exports
+###############################################################################
 
 __all__ = [
     "ReportingStage",
