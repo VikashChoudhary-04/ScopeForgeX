@@ -2,93 +2,34 @@
 ScopeForgeX Runtime Results
 ===========================
 
-Defines immutable execution result models used by the ScopeForgeX runtime.
+Defines runtime execution result models used by ScopeForgeX.
 
-Result objects represent the outcome of workflow, stage and tool execution.
-They are the authoritative runtime records consumed by reporting, storage and
-future dashboard components.
+Runtime results extend the canonical ExecutionResult model and provide
+specialized records for:
+- tools
+- stages
+- workflows
 
-Design Principles
------------------
-- Immutable dataclasses.
-- Strong typing.
-- Standard-library only.
-- JSON serialization friendly.
-- Thread-safe.
-- Independent of CLI/UI.
+v0.5.0
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
+from scopeforgex.models.execution_result import ExecutionResult
+
 from .artifacts import Artifact
-from .enums import Severity, StageType, Status
+from .enums import Severity, StageType
 from .events import RuntimeEvent
 
 
-def utc_now() -> datetime:
-    """Return the current UTC timestamp."""
-    return datetime.now(timezone.utc)
-
-
-# ============================================================================
-# Base Result
-# ============================================================================
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionResult:
-    """
-    Base execution result.
-    """
-
-    name: str
-
-    status: Status
-
-    started_at: datetime
-
-    finished_at: datetime
-
-    elapsed: float
-
-    result_id: UUID = field(default_factory=uuid4)
-
-    warnings: tuple[str, ...] = ()
-
-    errors: tuple[str, ...] = ()
-
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def successful(self) -> bool:
-        return self.status is Status.COMPLETED
-
-    @property
-    def failed(self) -> bool:
-        return self.status is Status.FAILED
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "result_id": str(self.result_id),
-            "name": self.name,
-            "status": self.status.value,
-            "started_at": self.started_at.isoformat(),
-            "finished_at": self.finished_at.isoformat(),
-            "elapsed": self.elapsed,
-            "warnings": list(self.warnings),
-            "errors": list(self.errors),
-            "metadata": self.metadata,
-        }
-
-
-# ============================================================================
+###############################################################################
 # Tool Result
-# ============================================================================
+###############################################################################
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,22 +38,40 @@ class ToolResult(ExecutionResult):
     Result of a single tool execution.
     """
 
-    command: str | None = None
+    command: str | None = field(
+        default=None,
+        kw_only=True,
+    )
 
-    exit_code: int | None = None
+    exit_code: int | None = field(
+        default=None,
+        kw_only=True,
+    )
 
-    category: str | None = None
+    category: str | None = field(
+        default=None,
+        kw_only=True,
+    )
 
-    artifacts: tuple[Artifact, ...] = ()
+    artifacts: tuple[Artifact, ...] = field(
+        default_factory=tuple,
+        kw_only=True,
+    )
 
-    events: tuple[RuntimeEvent, ...] = ()
+    events: tuple[RuntimeEvent, ...] = field(
+        default_factory=tuple,
+        kw_only=True,
+    )
 
-    findings: int = 0
+    finding_count: int = field(
+        default=0,
+        kw_only=True,
+    )
 
 
-# ============================================================================
+###############################################################################
 # Stage Result
-# ============================================================================
+###############################################################################
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,22 +80,38 @@ class StageResult(ExecutionResult):
     Result of a workflow stage.
     """
 
-    stage: StageType = StageType.RECON
+    stage: StageType = field(
+        default=StageType.RECON,
+        kw_only=True,
+    )
 
-    tools: tuple[ToolResult, ...] = ()
+    tools: tuple[ToolResult, ...] = field(
+        default_factory=tuple,
+        kw_only=True,
+    )
 
-    events: tuple[RuntimeEvent, ...] = ()
+    events: tuple[RuntimeEvent, ...] = field(
+        default_factory=tuple,
+        kw_only=True,
+    )
 
-    artifacts: tuple[Artifact, ...] = ()
+    artifacts: tuple[Artifact, ...] = field(
+        default_factory=tuple,
+        kw_only=True,
+    )
 
     @property
-    def tool_count(self) -> int:
-        return len(self.tools)
+    def tool_count(
+        self,
+    ) -> int:
+        return len(
+            self.tools
+        )
 
 
-# ============================================================================
+###############################################################################
 # Workflow Result
-# ============================================================================
+###############################################################################
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,31 +126,54 @@ class WorkflowResult(ExecutionResult):
 
     profile: str
 
-    stages: tuple[StageResult, ...] = ()
+    stages: tuple[StageResult, ...] = field(
+        default_factory=tuple,
+        kw_only=True,
+    )
 
-    events: tuple[RuntimeEvent, ...] = ()
+    events: tuple[RuntimeEvent, ...] = field(
+        default_factory=tuple,
+        kw_only=True,
+    )
 
-    artifacts: tuple[Artifact, ...] = ()
+    artifacts: tuple[Artifact, ...] = field(
+        default_factory=tuple,
+        kw_only=True,
+    )
 
-    severity: Severity = Severity.INFO
+    severity: Severity = field(
+        default=Severity.INFO,
+        kw_only=True,
+    )
 
     @property
-    def stage_count(self) -> int:
-        return len(self.stages)
+    def stage_count(
+        self,
+    ) -> int:
+        return len(
+            self.stages
+        )
 
     @property
-    def artifact_count(self) -> int:
-        return len(self.artifacts)
+    def artifact_count(
+        self,
+    ) -> int:
+        return len(
+            self.artifacts
+        )
 
     @property
-    def event_count(self) -> int:
-        return len(self.events)
+    def event_count(
+        self,
+    ) -> int:
+        return len(
+            self.events
+        )
 
 
 __all__ = [
     "ExecutionResult",
-    "StageResult",
     "ToolResult",
+    "StageResult",
     "WorkflowResult",
-    "utc_now",
 ]
