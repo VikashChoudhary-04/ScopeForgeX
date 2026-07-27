@@ -1,5 +1,5 @@
 """
-ScopeForgeX v0.4.0
+ScopeForgeX v0.5.0
 Stage 5 - Post-Exploitation Preparation
 
 ScopeForgeX intentionally does NOT execute
@@ -17,15 +17,19 @@ import shlex
 
 import questionary
 
-from scopeforgex.registry.tool_base import ToolBase, ToolResult
+from scopeforgex.models.execution_result import ExecutionResult
+from scopeforgex.registry.tool_base import ToolBase
 from scopeforgex.ui import ok
+
 
 ###############################################################################
 # Helper Functions
 ###############################################################################
 
 
-def _post_directory(ctx: dict) -> Path:
+def _post_directory(
+    ctx: dict,
+) -> Path:
     """
     Return the Stage-5 post directory.
 
@@ -58,12 +62,16 @@ def _prepared_commands_file(
     )
 
 
-def _quote(value: str) -> str:
+def _quote(
+    value: str,
+) -> str:
     """
     Safely quote shell arguments.
     """
 
-    return shlex.quote(value)
+    return shlex.quote(
+        value
+    )
 
 
 def _append_command(
@@ -91,7 +99,10 @@ def _append_command(
         outfile.write("-" * 80)
         outfile.write("\n")
 
-        outfile.write(command.strip())
+        outfile.write(
+            command.strip()
+        )
+
         outfile.write("\n")
 
 
@@ -112,20 +123,26 @@ class PostExploitationPreparationTool(ToolBase):
         self,
         ctx: dict,
     ) -> Path:
-        return _post_directory(ctx)
+
+        return _post_directory(
+            ctx
+        )
 
     def prepared_file(
         self,
         ctx: dict,
     ) -> Path:
-        return _prepared_commands_file(ctx)
+
+        return _prepared_commands_file(
+            ctx
+        )
 
     def build_command(
         self,
         ctx: dict,
     ) -> str:
         """
-        Render the command template.
+        Render command template.
         """
 
         return self.template_cmd.format(
@@ -143,7 +160,9 @@ class PostExploitationPreparationTool(ToolBase):
         command: str,
     ) -> Path:
 
-        output = self.prepared_file(ctx)
+        output = self.prepared_file(
+            ctx
+        )
 
         _append_command(
             output,
@@ -151,19 +170,23 @@ class PostExploitationPreparationTool(ToolBase):
             command,
         )
 
-        return output 
+        return output
+
+
 ###############################################################################
-# Post-Exploitation Preparation Tool
+# Post Preparation Tool
 ###############################################################################
 
 
-class PostPrepTool(PostExploitationPreparationTool):
+class PostPrepTool(
+    PostExploitationPreparationTool
+):
     """
-    Prepare reproducible post-exploitation commands
-    for authorized manual execution.
+    Prepare reproducible post-exploitation
+    commands for authorized manual execution.
 
-    ScopeForgeX intentionally does not execute these
-    tools automatically.
+    ScopeForgeX intentionally does not execute
+    these tools automatically.
     """
 
     def __init__(
@@ -177,7 +200,9 @@ class PostPrepTool(PostExploitationPreparationTool):
         self.description = description
         self.template_cmd = template_cmd
 
-    def confirm(self) -> bool:
+    def confirm(
+        self,
+    ) -> bool:
         """
         Ask whether this command should be prepared.
         """
@@ -191,17 +216,21 @@ class PostPrepTool(PostExploitationPreparationTool):
     def run(
         self,
         ctx: dict,
-    ) -> ToolResult:
+    ) -> ExecutionResult:
 
         if not self.confirm():
-            return ToolResult(
-                self.name,
-                False,
-                [],
-                "Skipped by user",
+
+            return ExecutionResult.skipped(
+                tool=self.name,
+                capability=(
+                    "post_exploitation_preparation"
+                ),
+                reason="Skipped by user",
             )
 
-        command = self.build_command(ctx)
+        command = self.build_command(
+            ctx
+        )
 
         output = self.save_command(
             ctx,
@@ -213,18 +242,21 @@ class PostPrepTool(PostExploitationPreparationTool):
             f"{self.name}"
         )
 
-        notes = (
-            "Prepared command saved for "
-            "manual execution."
-        )
-
-        return ToolResult(
-            self.name,
-            True,
-            [
-                str(output),
+        return ExecutionResult.success_result(
+            tool=self.name,
+            capability=(
+                "post_exploitation_preparation"
+            ),
+            artifacts=[
+                output,
             ],
-            notes,
+            metadata={
+                "message": (
+                    "Prepared command saved for "
+                    "manual execution."
+                ),
+                "execution_mode": "manual",
+            },
         )
 
 
@@ -283,6 +315,8 @@ JOHN_TEMPLATE = (
     "--wordlist=/path/to/wordlist.txt "
     "hashes.txt"
 )
+
+
 ###############################################################################
 # Tool Registration
 ###############################################################################
@@ -325,6 +359,7 @@ ALL_STAGE5_POST_TOOLS = [
 ###############################################################################
 # Public Exports
 ###############################################################################
+
 
 __all__ = [
     "PostExploitationPreparationTool",
