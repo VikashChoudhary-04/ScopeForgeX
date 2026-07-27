@@ -2,17 +2,17 @@
 ScopeForgeX Stage 6
 ===================
 
-Professional Reporting & Cleanup Stage
+Reporting & Cleanup Stage
 
-v0.6.0
+Responsibilities
+----------------
+* Collect workflow metadata
+* Discover generated artifacts
+* Parse vulnerability scanner output
+* Build ReportData
+* Generate Markdown + JSON reports
 
-Responsibilities:
-    - Collect workflow metadata
-    - Discover generated artifacts
-    - Collect findings
-    - Calculate severity summary
-    - Generate Markdown report
-    - Generate JSON report
+v0.6.1
 """
 
 from __future__ import annotations
@@ -29,13 +29,9 @@ from reporting.models import (
 
 from reporting.report_generator import ReportGenerator
 from reporting.json_exporter import export_json_report
-from reporting.findings import FindingCollector
-from reporting.severity import calculate_summary, calculate_risk_rating
+from reporting.parsers.nuclei_parser import parse_nuclei
 
-from scopeforgex.ui import (
-    ok,
-    stage,
-)
+from scopeforgex.ui import ok, stage
 
 
 ###############################################################################
@@ -46,14 +42,12 @@ from scopeforgex.ui import (
 def _count_lines(
     path: Path | None,
 ) -> int:
-    """
-    Count non-empty lines in file.
-    """
 
-    if path is None or not path.exists():
-
+    if path is None:
         return 0
 
+    if not path.exists():
+        return 0
 
     with path.open(
         "r",
@@ -72,27 +66,17 @@ def _count_lines(
 def _discover_artifacts(
     outdir: Path,
 ) -> list[str]:
-    """
-    Discover generated files.
-    """
 
     if not outdir.exists():
-
         return []
 
-
     artifacts = []
-
 
     for path in outdir.rglob("*"):
 
         if (
             path.is_file()
             and ".gitkeep" not in str(path)
-            and path.name not in (
-                "report.md",
-                "report.json",
-            )
         ):
 
             artifacts.append(
@@ -100,7 +84,6 @@ def _discover_artifacts(
                     path.relative_to(outdir)
                 )
             )
-
 
     return sorted(
         artifacts
@@ -115,8 +98,9 @@ def _discover_artifacts(
 
 class ReportingStage:
     """
-    Builds professional ScopeForgeX reports.
+    Builds final ScopeForgeX reports.
     """
+
 
     def __init__(
         self,
@@ -142,6 +126,40 @@ class ReportingStage:
 
 
     ###########################################################################
+    # Artifact Paths
+    ###########################################################################
+
+    def artifact_paths(
+        self,
+    ) -> dict[str, Path]:
+
+        recon = self.outdir / "recon"
+
+        vuln = self.outdir / "vuln"
+
+
+        return {
+
+            "hosts_raw":
+                recon / "hosts_raw.txt",
+
+            "hosts_alive":
+                recon / "hosts_alive.txt",
+
+            "hosts_final":
+                recon / "hosts_final.txt",
+
+            "urls_final":
+                recon / "urls_final.txt",
+
+            "nuclei":
+                vuln / "nuclei.txt",
+
+        }
+
+
+
+    ###########################################################################
     # Statistics
     ###########################################################################
 
@@ -149,9 +167,7 @@ class ReportingStage:
         self,
     ) -> ScanStatistics:
 
-        recon = self.outdir / "recon"
-
-        vuln = self.outdir / "vuln"
+        files = self.artifact_paths()
 
 
         self.artifacts = _discover_artifacts(
@@ -161,35 +177,30 @@ class ReportingStage:
 
         return ScanStatistics(
 
-            subdomains_found=
-                _count_lines(
-                    recon / "hosts_raw.txt"
-                ),
+            subdomains_found=_count_lines(
+                files["hosts_raw"]
+            ),
 
-            alive_hosts=
-                _count_lines(
-                    recon / "hosts_alive.txt"
-                ),
+            alive_hosts=_count_lines(
+                files["hosts_alive"]
+            ),
 
-            final_hosts=
-                _count_lines(
-                    recon / "hosts_final.txt"
-                ),
+            final_hosts=_count_lines(
+                files["hosts_final"]
+            ),
 
-            urls_discovered=
-                _count_lines(
-                    recon / "urls_final.txt"
-                ),
+            urls_discovered=_count_lines(
+                files["urls_final"]
+            ),
 
-            nuclei_findings=
-                _count_lines(
-                    vuln / "nuclei.txt"
-                ),
+            nuclei_findings=_count_lines(
+                files["nuclei"]
+            ),
 
-            files_generated=
-                len(
-                    self.artifacts
-                ),
+            files_generated=len(
+                self.artifacts
+            ),
+
         )
 
 
@@ -202,26 +213,16 @@ class ReportingStage:
         self,
     ):
 
-        collector = FindingCollector()
+        nuclei_file = (
+            self.artifact_paths()["nuclei"]
+        )
 
 
-        nuclei_files = [
-
-            self.outdir
-            / "vuln"
-            / "nuclei.txt",
-
-        ]
-
-
-        for file in nuclei_files:
-
-            collector.parse_nuclei_file(
-                str(file)
+        return parse_nuclei(
+            str(
+                nuclei_file
             )
-
-
-        return collector.all()
+        )
 
 
 
@@ -229,60 +230,70 @@ class ReportingStage:
     # Stage Results
     ###########################################################################
 
-    def stages(
+    def _stage_results(
         self,
     ) -> list[StageResult]:
 
-        results = []
-
-
-        for item in self.ctx.get(
+        results = self.ctx.get(
             "stage_results",
             [],
-        ):
+        )
 
-            results.append(
+
+        output = []
+
+
+        for result in results:
+
+            output.append(
 
                 StageResult(
-
-                    name=getattr(
-                        item,
+                    getattr(
+                        result,
                         "tool",
                         "Unknown",
                     ),
 
-                    status=(
-
+                    (
                         "Completed"
-
                         if getattr(
-                            item,
+                            result,
                             "success",
                             False,
                         )
-
                         else "Failed"
-
                     ),
                 )
 
             )
 
 
-        results.append(
+        output.append(
 
             StageResult(
-
-                name="Reporting",
-
-                status="Completed",
-
+                "Reporting",
+                "Completed",
             )
 
         )
 
 
-        return results
+        return output
+
+
+
+    ###########################################################################
+    # Tool Results
+    ###########################################################################
+
+    def _tool_results(
+        self,
+    ):
+
+        return self.ctx.get(
+            "tool_results",
+            [],
+        )
 
 
 
@@ -293,6 +304,22 @@ class ReportingStage:
     def build_report(
         self,
     ) -> ReportData:
+
+
+        stats = self.statistics()
+
+
+        start = self.ctx.get(
+            "workflow_start_time",
+            time.time(),
+        )
+
+
+        end = self.ctx.get(
+            "workflow_end_time",
+            time.time(),
+        )
+
 
         findings = self.findings()
 
@@ -315,59 +342,35 @@ class ReportingStage:
             ),
 
             start_time=datetime.fromtimestamp(
-                self.ctx.get(
-                    "workflow_start_time",
-                    time.time(),
-                )
+                start
             ),
 
             end_time=datetime.fromtimestamp(
-                self.ctx.get(
-                    "workflow_end_time",
-                    time.time(),
-                )
+                end
             ),
 
-            statistics=self.statistics(),
+            statistics=stats,
 
             generated_files=self.artifacts,
-
-            stages=self.stages(),
-
-            findings=findings,
 
         )
 
 
         report.duration_seconds = (
-
-            self.ctx.get(
-                "workflow_end_time",
-                time.time(),
-            )
-
-            -
-
-            self.ctx.get(
-                "workflow_start_time",
-                time.time(),
-            )
-
+            end - start
         )
 
 
-        report.severity_summary = (
-            calculate_summary(
-                findings
-            )
+        report.findings = findings
+
+
+        report.stages = (
+            self._stage_results()
         )
 
 
         report.tool_results = (
-            self.ctx.get(
-                "tool_results",
-                {},
-            )
+            self._tool_results()
         )
 
 
@@ -381,11 +384,6 @@ class ReportingStage:
             )
 
 
-        report.metadata.generator = (
-            "ScopeForgeX"
-        )
-
-
         return report
 
 
@@ -394,9 +392,10 @@ class ReportingStage:
     # Generate Reports
     ###########################################################################
 
-    def write_reports(
+    def write_report(
         self,
     ) -> None:
+
 
         report = self.build_report()
 
@@ -404,23 +403,29 @@ class ReportingStage:
         ReportGenerator(
             report
         ).generate_markdown(
+
             str(
                 self.report_path
             )
+
         )
 
 
         export_json_report(
+
             report,
+
             str(
                 self.json_path
-            ),
+            )
+
         )
 
 
         ok(
             f"Report written to {self.report_path}"
         )
+
 
         ok(
             f"JSON report written to {self.json_path}"
@@ -437,6 +442,7 @@ def stage6_reporting(
     ctx: dict,
 ) -> None:
 
+
     stage(
         "STAGE 6 — REPORTING",
         "magenta",
@@ -445,7 +451,7 @@ def stage6_reporting(
 
     ReportingStage(
         ctx
-    ).write_reports()
+    ).write_report()
 
 
 
