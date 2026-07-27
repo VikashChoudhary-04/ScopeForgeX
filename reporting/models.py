@@ -51,7 +51,7 @@ class FindingSummary:
 @dataclass
 class ScanStatistics:
     """
-    High-level assessment statistics.
+    High-level workflow statistics.
     """
 
     subdomains_found: int = 0
@@ -74,7 +74,7 @@ class ScanStatistics:
 @dataclass
 class StageResult:
     """
-    Workflow stage execution status.
+    Individual workflow stage result.
     """
 
     name: str
@@ -89,7 +89,7 @@ class StageResult:
 @dataclass
 class ReportData:
     """
-    Complete report model consumed by ReportGenerator.
+    Master reporting object consumed by all report generators.
     """
 
     # Assessment
@@ -142,3 +142,7 @@ class ReportData:
     warnings: List[str] = field(default_factory=list)
 
     recommendations: List[str] = field(default_factory=list)
+
+    # Reserved for future renderers (HTML/PDF/JSON)
+
+    metadata: Dict[str, str] = field(default_factory=dict)
