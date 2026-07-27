@@ -8,7 +8,7 @@ Responsibilities
 ----------------
 * Profile loading
 * Stage execution
-* Runtime state management
+* RuntimeState management
 * Workflow timing
 * State persistence
 * Summary generation
@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
+from uuid import uuid4
+from typing import Callable
 
 from rich.progress import (
     BarColumn,
@@ -27,13 +29,6 @@ from rich.progress import (
     SpinnerColumn,
     TextColumn,
     TimeElapsedColumn,
-)
-
-from scopeforgex.runtime import (
-    RuntimeState,
-    StageResult,
-    Status,
-    WorkflowResult,
 )
 
 from scopeforgex.state import save_last_run
@@ -46,6 +41,12 @@ from scopeforgex.ui import (
 )
 
 from scopeforgex.utils import load_yaml
+
+from scopeforgex.runtime import (
+    RuntimeState,
+    StageResult,
+    WorkflowResult,
+)
 
 from scopeforgex.stages.stage0_scope import stage0_scope
 from scopeforgex.stages.stage1_recon import stage1_recon
@@ -60,7 +61,8 @@ from scopeforgex.stages.stage6_report_cleanup import stage6_reporting
 # Stage Registry
 ###############################################################################
 
-_STAGE_FUNCTIONS = {
+
+_STAGE_FUNCTIONS: dict[int, Callable[[dict], None]] = {
     1: stage1_recon,
     2: stage2_enum,
     3: stage3_vuln,
@@ -104,7 +106,10 @@ class WorkflowEngine:
             profile=profile_name,
         )
 
+        self.ctx["runtime_state"] = self.runtime
+
         self.stage_results: list[StageResult] = []
+
 
     ###########################################################################
     # Internal Helpers
@@ -161,10 +166,17 @@ class WorkflowEngine:
 
 
         started = datetime.now(
-            timezone.utc,
+            timezone.utc
         )
 
-        start_time = time.time()
+        result = StageResult(
+            tool=stage_function.__name__,
+            capability=f"stage_{stage_number}",
+            success=False,
+            started_at=started,
+            finished_at=started,
+            duration=0.0,
+        )
 
 
         try:
@@ -173,18 +185,39 @@ class WorkflowEngine:
                 self.ctx,
             )
 
-            success = True
-            error = None
+            finished = datetime.now(
+                timezone.utc
+            )
+
+            result.success = True
+            result.finished_at = finished
+            result.duration = (
+                finished.timestamp()
+                -
+                started.timestamp()
+            )
 
 
         except Exception as exc:
 
-            success = False
-            error = str(exc)
+            finished = datetime.now(
+                timezone.utc
+            )
+
+            result.finished_at = finished
+            result.duration = (
+                finished.timestamp()
+                -
+                started.timestamp()
+            )
+
+            result.errors.append(
+                str(exc)
+            )
 
             self.ctx[
                 "workflow_error"
-            ] = error
+            ] = str(exc)
 
             self.ctx[
                 "failed_stage"
@@ -195,41 +228,15 @@ class WorkflowEngine:
             )
 
 
-        finished = datetime.now(
-            timezone.utc,
-        )
+        finally:
 
-        elapsed = (
-            time.time()
-            - start_time
-        )
+            self.stage_results.append(
+                result,
+            )
 
-
-        result = StageResult(
-            name=stage_function.__name__,
-            status=(
-                Status.COMPLETED
-                if success
-                else Status.FAILED
-            ),
-            started_at=started,
-            finished_at=finished,
-            elapsed=elapsed,
-            stage=stage_number,
-            metadata={
-                "stage_number": stage_number,
-                "error": error,
-            },
-        )
-
-
-        self.stage_results.append(
-            result
-        )
-
-        self.runtime.add_stage_result(
-            result
-        )
+            self.runtime.add_stage_result(
+                result,
+            )
 
 
     ###########################################################################
@@ -253,11 +260,22 @@ class WorkflowEngine:
                     self.ctx,
                 )
 
+                self.runtime.target = (
+                    self.ctx.get(
+                        "target",
+                        "",
+                    )
+                )
+
             except Exception as exc:
 
                 self.ctx[
                     "workflow_error"
                 ] = str(exc)
+
+                self.ctx[
+                    "failed_stage"
+                ] = 0
 
                 warn(
                     f"Stage 0 failed: {exc}"
@@ -277,12 +295,8 @@ class WorkflowEngine:
                     TimeElapsedColumn(),
                 ) as progress:
 
-
                     task = progress.add_task(
-                        (
-                            f"Running profile: "
-                            f"{self.profile_name}"
-                        ),
+                        f"Running profile: {self.profile_name}",
                         total=len(
                             self.enabled_stages,
                         ),
@@ -299,13 +313,13 @@ class WorkflowEngine:
                             task,
                         )
 
+
                         if self.ctx.get(
                             "workflow_error",
                         ):
 
                             warn(
-                                "Workflow stopped "
-                                f"after stage {stage_number}."
+                                f"Workflow stopped after stage {stage_number}."
                             )
 
                             break
@@ -332,14 +346,60 @@ class WorkflowEngine:
         self.ctx[
             "workflow_elapsed"
         ] = (
-            self.ctx[
-                "workflow_end_time"
-            ]
+            self.ctx["workflow_end_time"]
             -
-            self.ctx[
-                "workflow_start_time"
-            ]
+            self.ctx["workflow_start_time"]
         )
+
+
+        try:
+
+            workflow_failed = (
+                "workflow_error"
+                in self.ctx
+            )
+
+
+            workflow_result = WorkflowResult(
+                tool="scopeforgex",
+                capability="workflow",
+                success=not workflow_failed,
+                started_at=datetime.fromtimestamp(
+                    self.ctx["workflow_start_time"],
+                    tz=timezone.utc,
+                ),
+                finished_at=datetime.now(
+                    timezone.utc,
+                ),
+                duration=self.ctx[
+                    "workflow_elapsed"
+                ],
+                workflow_id=str(
+                    self.runtime.workflow_id
+                ),
+                target=self.ctx.get(
+                    "target",
+                    "",
+                ),
+                profile=self.profile_name,
+                stages=tuple(
+                    self.stage_results
+                ),
+            )
+
+
+            self.runtime.set_workflow_result(
+                workflow_result,
+            )
+
+            self.runtime.finish()
+
+
+        except Exception as exc:
+
+            warn(
+                f"Unable to create workflow result: {exc}"
+            )
 
 
         try:
@@ -355,50 +415,7 @@ class WorkflowEngine:
             )
 
 
-        failed = bool(
-            self.ctx.get(
-                "workflow_error"
-            )
-        )
-
-
-        self.runtime.finish()
-
-
-        workflow_result = WorkflowResult(
-            name="ScopeForgeX Workflow",
-            status=(
-                Status.FAILED
-                if failed
-                else Status.COMPLETED
-            ),
-            started_at=self.runtime.started_at,
-            finished_at=datetime.now(
-                timezone.utc,
-            ),
-            elapsed=self.ctx[
-                "workflow_elapsed"
-            ],
-            workflow_id=str(
-                self.runtime.workflow_id
-            ),
-            target=self.ctx.get(
-                "target",
-                "",
-            ),
-            profile=self.profile_name,
-            stages=tuple(
-                self.stage_results
-            ),
-        )
-
-
-        self.runtime.set_workflow_result(
-            workflow_result
-        )
-
-
-        if failed:
+        if "workflow_error" in self.ctx:
 
             warn(
                 "Workflow completed with errors."
@@ -429,7 +446,8 @@ class WorkflowEngine:
                     "Status",
                     (
                         "FAILED"
-                        if failed
+                        if "workflow_error"
+                        in self.ctx
                         else "SUCCESS"
                     ),
                 ),
@@ -443,9 +461,7 @@ class WorkflowEngine:
                 ),
                 (
                     "Elapsed",
-                    (
-                        f"{self.ctx['workflow_elapsed']:.2f}s"
-                    ),
+                    f"{self.ctx['workflow_elapsed']:.2f}s",
                 ),
             ],
         )
@@ -457,9 +473,9 @@ class WorkflowEngine:
     ) -> int:
 
         return sum(
-            1
-            for result in self.stage_results
-            if result.successful
+            result.success
+            for result
+            in self.stage_results
         )
 
 
@@ -469,20 +485,11 @@ class WorkflowEngine:
     ) -> int:
 
         return (
-            len(self.stage_results)
+            len(
+                self.stage_results
+            )
             -
             self.successful_stages
-        )
-
-
-    @property
-    def total_stage_time(
-        self,
-    ) -> float:
-
-        return sum(
-            result.elapsed
-            for result in self.stage_results
         )
 
 
@@ -494,9 +501,6 @@ class WorkflowEngine:
 def run_profile(
     profile_name: str,
 ) -> None:
-    """
-    Backward-compatible CLI entry point.
-    """
 
     engine = WorkflowEngine(
         profile_name,
@@ -507,6 +511,5 @@ def run_profile(
 
 __all__ = [
     "WorkflowEngine",
-    "StageResult",
     "run_profile",
 ]
