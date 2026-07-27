@@ -2,21 +2,24 @@
 ScopeForgeX Stage 3
 ===================
 
-Vulnerability Assessment Stage
+Vulnerability Intelligence Stage
 
 Responsibilities
 ----------------
-* Run Nuclei vulnerability scanning
-* Scan discovered hosts and URLs
-* Produce parser-ready JSONL output
-* Aggregate vulnerability results
-* Store vulnerability artifacts
+* Execute Nuclei vulnerability scanning
+* Support FAST and FULL_SAFE severity profiles
+* Generate JSONL machine-readable output
+* Aggregate findings
+* Generate vulnerability summaries
+* Preserve ExecutionResult compatibility
 
-v0.6.1
+v0.6.2
 """
 
 from __future__ import annotations
 
+import json
+from collections import Counter
 from pathlib import Path
 
 from scopeforgex.models.execution_result import ExecutionResult
@@ -34,7 +37,7 @@ def _count_lines(
     path: Path,
 ) -> int:
     """
-    Count non-empty lines in a file.
+    Count non-empty lines.
     """
 
     if not path.exists():
@@ -44,11 +47,11 @@ def _count_lines(
         "r",
         encoding="utf-8",
         errors="ignore",
-    ) as file:
+    ) as handle:
 
         return sum(
             1
-            for line in file
+            for line in handle
             if line.strip()
         )
 
@@ -59,7 +62,7 @@ def _merge_files(
     destination: Path,
 ) -> None:
     """
-    Merge scanner output files.
+    Merge JSONL outputs.
     """
 
     with destination.open(
@@ -93,8 +96,123 @@ def _merge_files(
 
 
 
+def _analyse_findings(
+    nuclei_file: Path,
+) -> dict:
+    """
+    Analyse Nuclei JSONL output.
+    """
+
+    severity = Counter()
+
+    templates = set()
+
+    hosts = set()
+
+    findings = 0
+
+
+    if not nuclei_file.exists():
+
+        return {
+            "finding_count": 0,
+            "severity": {},
+            "templates": [],
+            "hosts": [],
+        }
+
+
+
+    with nuclei_file.open(
+        "r",
+        encoding="utf-8",
+        errors="ignore",
+    ) as handle:
+
+        for line in handle:
+
+            if not line.strip():
+                continue
+
+
+            try:
+
+                data = json.loads(
+                    line
+                )
+
+            except json.JSONDecodeError:
+
+                continue
+
+
+
+            findings += 1
+
+
+            info = data.get(
+                "info",
+                {},
+            )
+
+
+            sev = info.get(
+                "severity",
+                "unknown",
+            )
+
+
+            severity[
+                sev
+            ] += 1
+
+
+            template = data.get(
+                "template-id"
+            )
+
+
+            if template:
+
+                templates.add(
+                    template
+                )
+
+
+            host = data.get(
+                "host"
+            )
+
+
+            if host:
+
+                hosts.add(
+                    host
+                )
+
+
+    return {
+
+        "finding_count": findings,
+
+        "severity": dict(
+            severity
+        ),
+
+        "templates": sorted(
+            templates
+        ),
+
+        "hosts": sorted(
+            hosts
+        ),
+
+    }
+
+
+
 ###############################################################################
-# Nuclei Scanner
+# Nuclei Tool
 ###############################################################################
 
 
@@ -107,7 +225,7 @@ class NucleiTool(
     stage = 3
 
     description = (
-        "Nuclei vulnerability assessment"
+        "Nuclei vulnerability intelligence scanner"
     )
 
     risk = "low"
@@ -119,19 +237,8 @@ class NucleiTool(
         ctx: dict,
     ) -> ExecutionResult:
         """
-        Execute Nuclei scans.
+        Execute vulnerability assessment.
         """
-
-        if ctx.get(
-            "target_type"
-        ) != "web":
-
-            return ExecutionResult.skipped(
-                tool=self.name,
-                capability="vulnerability_scanning",
-                reason="Skipped (not web target)",
-            )
-
 
         if not is_tool_installed(
             "nuclei"
@@ -144,82 +251,120 @@ class NucleiTool(
             )
 
 
-        recon_dir = Path(
+
+        outdir = Path(
             ctx["outdir"]
-        ) / "recon"
+        )
 
 
-        vuln_dir = Path(
-            ctx["outdir"]
-        ) / "vuln"
+        recon = (
+            outdir /
+            "recon"
+        )
 
 
-        vuln_dir.mkdir(
+        vuln = (
+            outdir /
+            "vuln"
+        )
+
+
+        vuln.mkdir(
             parents=True,
             exist_ok=True,
         )
 
 
-        hosts_file = (
-            recon_dir /
+
+        hosts = (
+            recon /
             "hosts_final.txt"
         )
 
-        urls_file = (
-            recon_dir /
+
+        urls = (
+            recon /
             "urls_final.txt"
         )
 
 
-        hosts_output = (
-            vuln_dir /
+
+        profile = ctx.get(
+            "profile",
+            "fast",
+        )
+
+
+
+        if profile == "full_safe":
+
+            severity = (
+                "info,low,medium,high,critical"
+            )
+
+        else:
+
+            severity = (
+                "high,critical"
+            )
+
+
+
+        host_json = (
+            vuln /
             "nuclei_hosts.jsonl"
         )
 
-        urls_output = (
-            vuln_dir /
+
+        url_json = (
+            vuln /
             "nuclei_urls.jsonl"
         )
 
-        merged_output = (
-            vuln_dir /
-            "nuclei.txt"
+
+        all_json = (
+            vuln /
+            "nuclei_all.jsonl"
         )
 
 
-        hosts_log = (
-            vuln_dir /
-            "nuclei_hosts.log"
+        findings_file = (
+            vuln /
+            "nuclei_findings.txt"
         )
 
-        urls_log = (
-            vuln_dir /
-            "nuclei_urls.log"
+
+        summary_file = (
+            vuln /
+            "nuclei_summary.json"
         )
+
 
 
         artifacts = []
 
 
+
         if _count_lines(
-            hosts_file
+            hosts
         ):
 
             run_cmd(
 
                 (
                     f"nuclei "
-                    f"-l {hosts_file} "
-                    f"-severity high,critical "
+                    f"-l {hosts} "
+                    f"-severity {severity} "
                     f"-jsonl "
                     f"-rate-limit 30 "
                     f"-timeout 5 "
                     f"-retries 1 "
-                    f"-o {hosts_output}"
+                    f"-o {host_json}"
                 ),
 
                 outfile=str(
-                    hosts_log
+                    vuln /
+                    "nuclei_hosts.log"
                 ),
 
                 timeout=900,
@@ -229,31 +374,33 @@ class NucleiTool(
 
             artifacts.extend(
                 [
-                    str(hosts_output),
-                    str(hosts_log),
+                    str(host_json),
+                    str(vuln / "nuclei_hosts.log"),
                 ]
             )
 
 
+
         if _count_lines(
-            urls_file
+            urls
         ):
 
             run_cmd(
 
                 (
                     f"nuclei "
-                    f"-l {urls_file} "
-                    f"-severity high,critical "
+                    f"-l {urls} "
+                    f"-severity {severity} "
                     f"-jsonl "
                     f"-rate-limit 30 "
                     f"-timeout 5 "
                     f"-retries 1 "
-                    f"-o {urls_output}"
+                    f"-o {url_json}"
                 ),
 
                 outfile=str(
-                    urls_log
+                    vuln /
+                    "nuclei_urls.log"
                 ),
 
                 timeout=900,
@@ -263,43 +410,88 @@ class NucleiTool(
 
             artifacts.extend(
                 [
-                    str(urls_output),
-                    str(urls_log),
+                    str(url_json),
+                    str(vuln / "nuclei_urls.log"),
                 ]
             )
+
 
 
         _merge_files(
             [
-                hosts_output,
-                urls_output,
+                host_json,
+                url_json,
             ],
-            merged_output,
+            all_json,
         )
 
 
-        artifacts.append(
-            str(
-                merged_output
-            )
+
+        analysis = _analyse_findings(
+            all_json
         )
 
 
-        finding_count = _count_lines(
-            merged_output
+
+        findings_file.write_text(
+            "\n".join(
+                [
+                    str(item)
+                    for item in analysis["templates"]
+                ]
+            ),
+            encoding="utf-8",
         )
+
+
+
+        summary_file.write_text(
+            json.dumps(
+                analysis,
+                indent=4,
+            ),
+            encoding="utf-8",
+        )
+
+
+
+        artifacts.extend(
+            [
+                str(all_json),
+                str(findings_file),
+                str(summary_file),
+            ]
+        )
+
 
 
         return ExecutionResult.success_result(
+
             tool=self.name,
+
             capability="vulnerability_scanning",
+
             artifacts=artifacts,
+
             metadata={
-                "scanned_sources": 2,
-                "finding_count": finding_count,
+
+                "severity_profile":
+                    severity,
+
+                "finding_count":
+                    analysis["finding_count"],
+
+                "severity":
+                    analysis["severity"],
+
                 "message":
-                    "Nuclei vulnerability assessment completed.",
+                    (
+                        "Nuclei vulnerability "
+                        "assessment completed."
+                    ),
+
             },
+
         )
 
 
@@ -313,7 +505,7 @@ def stage3_vuln(
     ctx: dict,
 ) -> ExecutionResult:
     """
-    Execute Stage 3 vulnerability assessment.
+    Execute Stage 3.
     """
 
     result = NucleiTool().run(
@@ -331,11 +523,6 @@ def stage3_vuln(
 
     return result
 
-
-
-###############################################################################
-# Public API
-###############################################################################
 
 
 __all__ = [
