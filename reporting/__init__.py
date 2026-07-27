@@ -1,35 +1,26 @@
 """
-Reporting package for ScopeForgeX.
+ScopeForgeX Reporting Package
+=============================
 
-The reporting system follows a simple architecture:
+Central exports for the reporting subsystem.
 
-Scanning Tools
-        │
-        ▼
-   ReportData Model
-        │
-        ▼
- Report Generator(s)
-        │
-        ├── Markdown (current)
-        ├── JSON (future)
-        ├── HTML (future)
-        └── PDF (future)
+v0.6.0
 """
 
 from .models import (
     ReportData,
     StageResult,
     ScanStatistics,
-    FindingSummary,
 )
 
-from .report_generator import ReportGenerator
+from .report_generator import (
+    ReportGenerator,
+)
+
 
 __all__ = [
     "ReportData",
     "StageResult",
     "ScanStatistics",
-    "FindingSummary",
     "ReportGenerator",
 ]
