@@ -13,11 +13,11 @@ from typing import Any
 
 
 @dataclass(slots=True)
-class ToolResult:
+class ExecutionResult:
     """
     Canonical execution result for a ScopeForgeX capability.
 
-    Every tool should return exactly one ToolResult instance.
+    Every tool should return exactly one ExecutionResult instance.
     """
 
     # ------------------------------------------------------------------
@@ -79,4 +79,4 @@ class ToolResult:
         return bool(self.errors)
 
 
-__all__ = ["ToolResult"]
+__all__ = ["ExecutionResult"]
