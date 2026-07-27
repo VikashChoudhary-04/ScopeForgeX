@@ -2,10 +2,16 @@
 ScopeForgeX Workflow Engine
 ===========================
 
-Main workflow orchestrator.
+Workflow orchestration framework.
 
-Loads a profile, executes the enabled stages in order,
-persists state, and displays a final summary.
+Responsibilities
+----------------
+* Profile loading
+* Stage execution
+* Progress reporting
+* Workflow timing
+* State persistence
+* Summary generation
 
 v0.4.0
 """
@@ -13,6 +19,8 @@ v0.4.0
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass, field
+from typing import Callable
 
 from rich.progress import (
     BarColumn,
@@ -34,12 +42,14 @@ from scopeforgex.stages.stage4_exploit import stage4_exploit
 from scopeforgex.stages.stage5_post import stage5_post
 from scopeforgex.stages.stage6_report_cleanup import stage6_reporting
 
+###############################################################################
+# Stage Registry
+###############################################################################
 
-# ----------------------------------------------------------------------
-# Stage registry
-# ----------------------------------------------------------------------
-
-_STAGE_FUNCTIONS = {
+_STAGE_FUNCTIONS: dict[
+    int,
+    Callable[[dict], None],
+] = {
     1: stage1_recon,
     2: stage2_enum,
     3: stage3_vuln,
@@ -48,77 +58,276 @@ _STAGE_FUNCTIONS = {
     6: stage6_reporting,
 }
 
+###############################################################################
+# Workflow Metadata
+###############################################################################
 
-def run_profile(profile_name: str):
+
+@dataclass(slots=True)
+class StageResult:
     """
-    Execute a ScopeForgeX profile.
+    Runtime information for a stage.
     """
 
-    profiles = load_yaml("config/profiles.yaml").get("profiles", {})
+    number: int
+    name: str
+    started: float
+    finished: float | None = None
+    success: bool = False
 
-    if profile_name not in profiles:
-        raise SystemExit(f"Unknown profile: {profile_name}")
+    @property
+    def elapsed(self) -> float:
 
-    profile = profiles[profile_name]
-    enabled_stages = profile.get("enabled_stages", [])
+        if self.finished is None:
+            return 0.0
 
-    ctx: dict = {
-        "profile": profile_name,
-    }
+        return self.finished - self.started
 
-    # --------------------------------------------------------------
-    # Reporting metadata
-    # --------------------------------------------------------------
 
-    ctx["workflow_start_time"] = time.time()
+###############################################################################
+# Workflow Engine
+###############################################################################
 
-    # --------------------------------------------------------------
-    # Stage 0 (always runs)
-    # --------------------------------------------------------------
 
-    stage("STAGE 0 — SCOPE", "blue")
-    stage0_scope(ctx)
+class WorkflowEngine:
+    """
+    Executes a ScopeForgeX profile.
+    """
 
-    # --------------------------------------------------------------
-    # Remaining enabled stages
-    # --------------------------------------------------------------
+    def __init__(
+        self,
+        profile_name: str,
+    ) -> None:
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TimeElapsedColumn(),
-    ) as progress:
+        self.profile_name = profile_name
 
-        task = progress.add_task(
-            f"Running profile: {profile_name}",
-            total=len(enabled_stages),
+        profiles = load_yaml(
+            "config/profiles.yaml"
+        ).get(
+            "profiles",
+            {},
         )
 
-        for stage_number in enabled_stages:
+        if profile_name not in profiles:
+            raise SystemExit(
+                f"Unknown profile: {profile_name}"
+            )
 
-            stage_func = _STAGE_FUNCTIONS.get(stage_number)
+        self.profile = profiles[
+            profile_name
+        ]
 
-            if stage_func is None:
-                continue
+        self.enabled_stages = (
+            self.profile.get(
+                "enabled_stages",
+                [],
+            )
+        )
 
-            stage_func(ctx)
-            progress.advance(task)
+        self.ctx: dict = {
+            "profile": profile_name,
+            "workflow_start_time": time.time(),
+        }
 
-    # --------------------------------------------------------------
-    # Persist workflow state
-    # --------------------------------------------------------------
+        self.stage_results: list[
+            StageResult
+        ] = []
 
-    save_last_run(ctx)
+    def execute_stage(
+        self,
+        stage_number: int,
+    ) -> None:
 
-    ok("Workflow completed ✅")
+        stage_function = (
+            _STAGE_FUNCTIONS.get(
+                stage_number
+            )
+        )
 
-    summary_table(
-        "ScopeForgeX Summary",
-        [
-            ("Profile", profile_name),
-            ("Target Type", ctx.get("target_type", "-")),
-            ("Target", ctx.get("target", "-")),
-            ("Output Directory", ctx.get("outdir", "-")),
-        ],
+        if stage_function is None:
+            return
+
+        result = StageResult(
+            number=stage_number,
+            name=stage_function.__name__,
+            started=time.time(),
+        )
+
+        stage_function(
+            self.ctx
+        )
+
+        result.finished = time.time()
+        result.success = True
+
+        self.stage_results.append(
+            result
+        )
+###############################################################################
+# Workflow Execution
+###############################################################################
+
+
+    def execute(self) -> None:
+        """
+        Execute the complete workflow.
+        """
+
+        stage(
+            "STAGE 0 — SCOPE",
+            "blue",
+        )
+
+        stage0_scope(
+            self.ctx,
+        )
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn(
+                "[progress.description]{task.description}"
+            ),
+            BarColumn(),
+            TimeElapsedColumn(),
+        ) as progress:
+
+            task = progress.add_task(
+                f"Running profile: {self.profile_name}",
+                total=len(self.enabled_stages),
+            )
+
+            for stage_number in self.enabled_stages:
+
+                self.execute_stage(
+                    stage_number,
+                )
+
+                progress.advance(task)
+
+        self.finish()
+
+    def finish(self) -> None:
+        """
+        Persist workflow state and
+        display the final summary.
+        """
+
+        self.ctx[
+            "workflow_end_time"
+        ] = time.time()
+
+        self.ctx[
+            "workflow_elapsed"
+        ] = (
+            self.ctx["workflow_end_time"]
+            - self.ctx["workflow_start_time"]
+        )
+
+        save_last_run(
+            self.ctx,
+        )
+
+        ok(
+            "Workflow completed ✅"
+        )
+
+        summary_table(
+            "ScopeForgeX Summary",
+            [
+                (
+                    "Profile",
+                    self.profile_name,
+                ),
+                (
+                    "Target Type",
+                    self.ctx.get(
+                        "target_type",
+                        "-",
+                    ),
+                ),
+                (
+                    "Target",
+                    self.ctx.get(
+                        "target",
+                        "-",
+                    ),
+                ),
+                (
+                    "Output Directory",
+                    self.ctx.get(
+                        "outdir",
+                        "-",
+                    ),
+                ),
+                (
+                    "Stages Executed",
+                    str(
+                        len(
+                            self.stage_results
+                        )
+                    ),
+                ),
+                (
+                    "Elapsed",
+                    (
+                        f"{self.ctx['workflow_elapsed']:.2f} s"
+                    ),
+                ),
+            ],
+        )
+
+    @property
+    def successful_stages(
+        self,
+    ) -> int:
+        """
+        Number of successfully completed stages.
+        """
+
+        return sum(
+            result.success
+            for result in self.stage_results
+        )
+
+    @property
+    def total_stage_time(
+        self,
+    ) -> float:
+        """
+        Combined execution time for all stages.
+        """
+
+        return sum(
+            result.elapsed
+            for result in self.stage_results
+        )
+###############################################################################
+# Public API
+###############################################################################
+
+
+def run_profile(
+    profile_name: str,
+) -> None:
+    """
+    Backward-compatible entry point used by the CLI.
+
+    Executes the selected ScopeForgeX profile.
+    """
+
+    engine = WorkflowEngine(
+        profile_name,
     )
+
+    engine.execute()
+
+
+###############################################################################
+# Module Exports
+###############################################################################
+
+__all__ = [
+    "WorkflowEngine",
+    "StageResult",
+    "run_profile",
+]
