@@ -4,7 +4,7 @@ ScopeForgeX Execution Result Model
 
 Canonical execution result object used by all tools.
 
-v0.5.0
+v0.5.1
 """
 
 from __future__ import annotations
@@ -76,6 +76,49 @@ class ExecutionResult:
 
 
     ###########################################################################
+    # Runtime Compatibility Properties
+    ###########################################################################
+
+
+    @property
+    def duration(
+        self,
+    ) -> float:
+        """
+        Return execution duration in seconds.
+
+        Compatible with workflow runtime tracking.
+        """
+
+        return (
+            self.finished_at.timestamp()
+            -
+            self.started_at.timestamp()
+        )
+
+
+    @property
+    def status(
+        self,
+    ) -> str:
+        """
+        Return human-readable execution status.
+        """
+
+        if self.metadata.get(
+            "status"
+        ) == "skipped":
+
+            return "skipped"
+
+        if self.success:
+
+            return "success"
+
+        return "failed"
+
+
+    ###########################################################################
     # Constructors
     ###########################################################################
 
@@ -94,6 +137,8 @@ class ExecutionResult:
         Create successful execution result.
         """
 
+        now = utc_now()
+
         return cls(
             tool=tool,
             capability=capability,
@@ -109,6 +154,8 @@ class ExecutionResult:
             ),
             errors=[],
             metadata=metadata or {},
+            started_at=now,
+            finished_at=utc_now(),
         )
 
 
@@ -125,6 +172,8 @@ class ExecutionResult:
         Create failed execution result.
         """
 
+        now = utc_now()
+
         return cls(
             tool=tool,
             capability=capability,
@@ -138,6 +187,8 @@ class ExecutionResult:
                 error
             ],
             metadata=metadata or {},
+            started_at=now,
+            finished_at=utc_now(),
         )
 
 
@@ -152,6 +203,8 @@ class ExecutionResult:
         Create skipped execution result.
         """
 
+        now = utc_now()
+
         return cls(
             tool=tool,
             capability=capability,
@@ -165,6 +218,8 @@ class ExecutionResult:
             metadata={
                 "status": "skipped",
             },
+            started_at=now,
+            finished_at=utc_now(),
         )
 
 
@@ -184,6 +239,8 @@ class ExecutionResult:
             "tool": self.tool,
             "capability": self.capability,
             "success": self.success,
+            "status": self.status,
+            "duration": self.duration,
             "artifacts": self.artifacts,
             "findings": self.findings,
             "warnings": self.warnings,
