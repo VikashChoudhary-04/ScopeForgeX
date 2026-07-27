@@ -10,22 +10,21 @@ Features
 * Consistent logging
 * Safe output handling
 * Timeout support
-* Future retry support
-* Future parallel execution support
 * Backward-compatible run_cmd() API
 
-v0.4.0
+v0.4.1
 """
 
 from __future__ import annotations
 
-import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from typing import Mapping
 
-from scopeforgex.ui import info, warn
+from scopeforgex.ui import info
+from scopeforgex.ui import warn
 
 ###############################################################################
 # Defaults
@@ -61,7 +60,7 @@ def _prepare_output(
     outfile: str | None,
 ) -> Path | None:
     """
-    Create output directory if required.
+    Create the output file and its parent directory if required.
     """
 
     if outfile is None:
@@ -82,7 +81,7 @@ def _append_log(
     message: str,
 ) -> None:
     """
-    Append a message to the log file.
+    Append a message to the output log.
     """
 
     if outfile is None:
@@ -91,49 +90,66 @@ def _append_log(
     with outfile.open(
         "a",
         encoding="utf-8",
-    ) as fp:
+    ) as stream:
 
-        fp.write("\n")
-        fp.write(message.rstrip())
-        fp.write("\n")
+        stream.write("\n")
+        stream.write(message.rstrip())
+        stream.write("\n")
+
+
+def _build_run_kwargs(
+    execution: CommandExecution,
+) -> dict[str, Any]:
+    """
+    Build the common keyword arguments passed to subprocess.run().
+    """
+
+    return {
+        "shell": True,
+        "text": True,
+        "check": False,
+        "timeout": execution.timeout,
+        "cwd": execution.cwd,
+        "env": execution.environment,
+    }
 
 
 def _execute(
     execution: CommandExecution,
 ) -> subprocess.CompletedProcess:
+    """
+    Execute a shell command.
+    """
 
     info(
         f"Running: {execution.command}"
     )
 
-    if execution.outfile:
+    kwargs = _build_run_kwargs(
+        execution,
+    )
+
+    if execution.outfile is not None:
 
         with execution.outfile.open(
             "w",
             encoding="utf-8",
         ) as stream:
 
+            kwargs["stdout"] = stream
+            kwargs["stderr"] = subprocess.STDOUT
+
             return subprocess.run(
                 execution.command,
-                shell=True,
-                stdout=stream,
-                stderr=subprocess.STDOUT,
-                text=True,
-                check=False,
-                timeout=execution.timeout,
-                cwd=execution.cwd,
-                env=execution.environment,
+                **kwargs,
             )
 
     return subprocess.run(
         execution.command,
-        shell=True,
-        text=True,
-        check=False,
-        timeout=execution.timeout,
-        cwd=execution.cwd,
-        env=execution.environment,
+        **kwargs,
     )
+
+
 ###############################################################################
 # Public API
 ###############################################################################
@@ -161,19 +177,22 @@ def run_cmd(
     Returns
     -------
     subprocess.CompletedProcess | None
-        CompletedProcess on successful execution,
+        CompletedProcess on success,
         otherwise None.
     """
 
     execution = CommandExecution(
         command=cmd,
         timeout=timeout,
-        outfile=_prepare_output(outfile),
+        outfile=_prepare_output(
+            outfile,
+        ),
     )
-
     try:
 
-        result = _execute(execution)
+        result = _execute(
+            execution,
+        )
 
         if result.returncode != 0:
 
@@ -196,7 +215,7 @@ def run_cmd(
 
         warn(
             f"Timeout reached "
-            f"({timeout}s). "
+            f"({execution.timeout}s). "
             "Command terminated."
         )
 
@@ -205,7 +224,7 @@ def run_cmd(
             (
                 "[ScopeForgeX] "
                 f"Timeout reached "
-                f"({timeout}s). "
+                f"({execution.timeout}s). "
                 "Command terminated."
             ),
         )
@@ -260,6 +279,8 @@ def run_cmd(
         )
 
         return None
+
+
 ###############################################################################
 # Convenience Helpers
 ###############################################################################
@@ -271,11 +292,7 @@ def run_cmd_success(
     timeout: int = DEFAULT_TIMEOUT,
 ) -> bool:
     """
-    Execute a command and return only whether it succeeded.
-
-    This helper is intended for future use where callers only need
-    a success/failure indication rather than the full
-    CompletedProcess object.
+    Execute a command and return whether it completed successfully.
     """
 
     result = run_cmd(
