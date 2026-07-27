@@ -1,29 +1,14 @@
 """
 ScopeForgeX Tool Framework
-==========================
 
-Base classes shared by all ScopeForgeX tools.
+Base class shared by all ScopeForgeX tools.
 
-Every executable tool should inherit from ToolBase and return a
-ToolResult from its run() method.
-
-v0.4.0
+Every executable tool returns an ExecutionResult.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
 
-
-@dataclass(slots=True)
-class ToolResult:
-    """
-    Standard result returned by every tool.
-    """
-
-    name: str
-    ran: bool
-    output_files: list[str] = field(default_factory=list)
-    notes: str = ""
+from scopeforgex.models.execution_result import ExecutionResult
 
 
 class ToolBase(ABC):
@@ -31,27 +16,30 @@ class ToolBase(ABC):
     Abstract base class for every ScopeForgeX tool.
     """
 
-    # Human-readable tool name.
     name: str = "tool"
 
-    # Pipeline stage.
     stage: int = 0
 
-    # Short description shown to the user.
     description: str = ""
 
-    # low | medium | high
     risk: str = "low"
 
+
     @abstractmethod
-    def run(self, ctx: dict) -> ToolResult:
+    def run(
+        self,
+        ctx: dict,
+    ) -> ExecutionResult:
         """
         Execute the tool.
 
-        Args:
-            ctx: Shared execution context.
-
         Returns:
-            ToolResult describing the execution outcome.
+            ExecutionResult
         """
+
         raise NotImplementedError
+
+
+__all__ = [
+    "ToolBase",
+]
