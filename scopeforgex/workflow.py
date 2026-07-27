@@ -260,14 +260,42 @@ class WorkflowEngine:
                     self.ctx,
                 )
 
-                self.runtime.target = (
-                    self.ctx.get(
-                        "target",
-                        "",
-                    )
+                #######################################################################
+                # Preserve Stage-0 generated workflow context
+                #
+                # Stage 0 initializes:
+                # - target
+                # - target_type
+                # - outdir
+                # - pipeline paths
+                #
+                # Explicitly normalize these values so downstream stages
+                # receive the same execution context.
+                #######################################################################
+
+                self.ctx.update(
+                    {
+                        "target": self.ctx.get(
+                            "target",
+                        ),
+
+                        "target_type": self.ctx.get(
+                            "target_type",
+                        ),
+
+                        "outdir": self.ctx.get(
+                            "outdir",
+                        ),
+
+                        "pipeline": self.ctx.get(
+                            "pipeline",
+                            {},
+                        ),
+                    }
                 )
 
-            except Exception as exc:
+
+    except Exception as exc:
 
                 self.ctx[
                     "workflow_error"
