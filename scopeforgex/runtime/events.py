@@ -2,12 +2,13 @@
 ScopeForgeX Runtime Events
 ==========================
 
-Defines immutable runtime events emitted during workflow execution.
+Defines runtime events emitted during workflow execution.
 
 Events provide an audit trail for:
 - workflow lifecycle
 - stage execution
 - tool execution
+- artifact tracking
 - warnings
 - errors
 
@@ -42,15 +43,12 @@ def utc_now() -> datetime:
 ###############################################################################
 
 
-@dataclass(
-    slots=True
-)
+@dataclass(slots=True)
 class RuntimeEvent:
     """
     Base runtime event.
 
-    timestamp is keyword-only to prevent dataclass inheritance ordering
-    conflicts when child events define required fields.
+    Keyword-only defaults prevent dataclass inheritance ordering conflicts.
     """
 
     timestamp: datetime = field(
@@ -69,26 +67,16 @@ class RuntimeEvent:
 ###############################################################################
 
 
-@dataclass(
-    slots=True
-)
+@dataclass(slots=True)
 class WorkflowStartedEvent(RuntimeEvent):
-    """
-    Emitted when workflow execution starts.
-    """
 
     workflow_id: UUID
     target: str
     profile: str
 
 
-@dataclass(
-    slots=True
-)
+@dataclass(slots=True)
 class WorkflowFinishedEvent(RuntimeEvent):
-    """
-    Emitted when workflow execution finishes.
-    """
 
     workflow_id: UUID
     success: bool
@@ -99,25 +87,15 @@ class WorkflowFinishedEvent(RuntimeEvent):
 ###############################################################################
 
 
-@dataclass(
-    slots=True
-)
+@dataclass(slots=True)
 class StageStartedEvent(RuntimeEvent):
-    """
-    Emitted when a pipeline stage starts.
-    """
 
     stage: int
     name: str
 
 
-@dataclass(
-    slots=True
-)
+@dataclass(slots=True)
 class StageFinishedEvent(RuntimeEvent):
-    """
-    Emitted when a pipeline stage completes.
-    """
 
     stage: int
     name: str
@@ -129,25 +107,15 @@ class StageFinishedEvent(RuntimeEvent):
 ###############################################################################
 
 
-@dataclass(
-    slots=True
-)
+@dataclass(slots=True)
 class ToolStartedEvent(RuntimeEvent):
-    """
-    Emitted when a tool starts execution.
-    """
 
     tool: str
     capability: str
 
 
-@dataclass(
-    slots=True
-)
+@dataclass(slots=True)
 class ToolFinishedEvent(RuntimeEvent):
-    """
-    Emitted when a tool finishes execution.
-    """
 
     tool: str
     success: bool
@@ -155,28 +123,42 @@ class ToolFinishedEvent(RuntimeEvent):
 
 
 ###############################################################################
+# Artifact Events
+###############################################################################
+
+
+@dataclass(slots=True)
+class ArtifactCreatedEvent(RuntimeEvent):
+    """
+    Emitted when a new artifact is produced.
+    """
+
+    path: str
+    artifact_type: str = "file"
+
+
+@dataclass(slots=True)
+class ArtifactRemovedEvent(RuntimeEvent):
+    """
+    Emitted when an artifact is removed.
+    """
+
+    path: str
+
+
+###############################################################################
 # Diagnostic Events
 ###############################################################################
 
 
-@dataclass(
-    slots=True
-)
+@dataclass(slots=True)
 class WarningEvent(RuntimeEvent):
-    """
-    Runtime warning event.
-    """
 
     message: str
 
 
-@dataclass(
-    slots=True
-)
+@dataclass(slots=True)
 class ErrorEvent(RuntimeEvent):
-    """
-    Runtime error event.
-    """
 
     message: str
 
@@ -194,6 +176,8 @@ __all__ = [
     "StageFinishedEvent",
     "ToolStartedEvent",
     "ToolFinishedEvent",
+    "ArtifactCreatedEvent",
+    "ArtifactRemovedEvent",
     "WarningEvent",
     "ErrorEvent",
 ]
