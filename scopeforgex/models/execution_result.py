@@ -4,9 +4,6 @@ ScopeForgeX Execution Result Model
 
 Canonical execution result returned by every ScopeForgeX capability.
 
-Every tool, stage, and workflow component uses ExecutionResult as the
-standard structured output model.
-
 v0.5.0
 """
 
@@ -21,15 +18,10 @@ from typing import Any
 @dataclass(slots=True)
 class ExecutionResult:
     """
-    Canonical execution result for a ScopeForgeX capability.
+    Canonical execution result for ScopeForgeX capabilities.
 
-    Every executable capability should return exactly one ExecutionResult
-    instance.
-
-    Default collections are keyword-only to support inheritance by:
-    - Tool results
-    - Stage results
-    - Workflow results
+    Default fields are keyword-only so subclasses can safely add
+    required fields without dataclass inheritance conflicts.
     """
 
     # ------------------------------------------------------------------
@@ -52,7 +44,10 @@ class ExecutionResult:
 
     duration: float
 
-    exit_code: int | None = None
+    exit_code: int | None = field(
+        default=None,
+        kw_only=True,
+    )
 
     # ------------------------------------------------------------------
     # Outputs
@@ -92,36 +87,20 @@ class ExecutionResult:
     # ------------------------------------------------------------------
 
     @property
-    def artifact_count(
-        self,
-    ) -> int:
-        return len(
-            self.artifacts
-        )
+    def artifact_count(self) -> int:
+        return len(self.artifacts)
 
     @property
-    def finding_count(
-        self,
-    ) -> int:
-        return len(
-            self.findings
-        )
+    def finding_count(self) -> int:
+        return len(self.findings)
 
     @property
-    def has_warnings(
-        self,
-    ) -> bool:
-        return bool(
-            self.warnings
-        )
+    def has_warnings(self) -> bool:
+        return bool(self.warnings)
 
     @property
-    def has_errors(
-        self,
-    ) -> bool:
-        return bool(
-            self.errors
-        )
+    def has_errors(self) -> bool:
+        return bool(self.errors)
 
 
 __all__ = [
