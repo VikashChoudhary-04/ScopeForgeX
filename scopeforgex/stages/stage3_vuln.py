@@ -9,7 +9,7 @@ Responsibilities
 * Run Nuclei vulnerability scanning
 * Scan discovered hosts and URLs
 * Produce parser-ready JSONL output
-* Aggregate findings
+* Aggregate vulnerability results
 * Store vulnerability artifacts
 
 v0.6.1
@@ -17,8 +17,6 @@ v0.6.1
 
 from __future__ import annotations
 
-import os
-import shutil
 from pathlib import Path
 
 from scopeforgex.models.execution_result import ExecutionResult
@@ -32,67 +30,77 @@ from scopeforgex.toolcheck import is_tool_installed
 ###############################################################################
 
 
+def _count_lines(
+    path: Path,
+) -> int:
+    """
+    Count non-empty lines in a file.
+    """
+
+    if not path.exists():
+        return 0
+
+    with path.open(
+        "r",
+        encoding="utf-8",
+        errors="ignore",
+    ) as file:
+
+        return sum(
+            1
+            for line in file
+            if line.strip()
+        )
+
+
+
 def _merge_files(
-    files: list[Path],
-    output: Path,
+    sources: list[Path],
+    destination: Path,
 ) -> None:
     """
-    Merge nuclei outputs into a single file.
+    Merge scanner output files.
     """
 
-    with output.open(
+    with destination.open(
         "w",
         encoding="utf-8",
-    ) as outfile:
+    ) as output:
 
-        for file in files:
+        for source in sources:
 
-            if not file.exists():
+            if not source.exists():
                 continue
 
-            content = file.read_text(
+            content = source.read_text(
                 encoding="utf-8",
                 errors="ignore",
             )
 
             if content.strip():
 
-                outfile.write(
+                output.write(
                     content
                 )
 
-                if not content.endswith("\n"):
+                if not content.endswith(
+                    "\n"
+                ):
 
-                    outfile.write(
+                    output.write(
                         "\n"
                     )
 
 
 
-def _count_lines(
-    path: Path,
-) -> int:
-
-    if not path.exists():
-        return 0
-
-    return sum(
-        1
-        for line in path.open(
-            "r",
-            encoding="utf-8",
-            errors="ignore",
-        )
-        if line.strip()
-    )
-
-
 ###############################################################################
-# Nuclei Tool
+# Nuclei Scanner
 ###############################################################################
 
 
-class NucleiTool(ToolBase):
+class NucleiTool(
+    ToolBase
+):
 
     name = "nuclei"
 
@@ -110,7 +118,9 @@ class NucleiTool(ToolBase):
         self,
         ctx: dict,
     ) -> ExecutionResult:
-
+        """
+        Execute Nuclei scans.
+        """
 
         if ctx.get(
             "target_type"
@@ -121,7 +131,6 @@ class NucleiTool(ToolBase):
                 capability="vulnerability_scanning",
                 reason="Skipped (not web target)",
             )
-
 
 
         if not is_tool_installed(
@@ -135,17 +144,14 @@ class NucleiTool(ToolBase):
             )
 
 
-
         recon_dir = Path(
             ctx["outdir"]
         ) / "recon"
 
 
-
         vuln_dir = Path(
             ctx["outdir"]
         ) / "vuln"
-
 
 
         vuln_dir.mkdir(
@@ -154,25 +160,23 @@ class NucleiTool(ToolBase):
         )
 
 
-
-        hosts = (
+        hosts_file = (
             recon_dir /
             "hosts_final.txt"
         )
 
-        urls = (
+        urls_file = (
             recon_dir /
             "urls_final.txt"
         )
 
 
-
-        host_output = (
+        hosts_output = (
             vuln_dir /
             "nuclei_hosts.jsonl"
         )
 
-        url_output = (
+        urls_output = (
             vuln_dir /
             "nuclei_urls.jsonl"
         )
@@ -183,95 +187,95 @@ class NucleiTool(ToolBase):
         )
 
 
-
-        host_log = (
+        hosts_log = (
             vuln_dir /
             "nuclei_hosts.log"
         )
 
-        url_log = (
+        urls_log = (
             vuln_dir /
             "nuclei_urls.log"
         )
 
 
-
         artifacts = []
 
 
-
-        if hosts.exists() and _count_lines(hosts):
-
-            run_cmd(
-
-                (
-                    f"nuclei "
-                    f"-l {hosts} "
-                    f"-severity high,critical "
-                    f"-jsonl "
-                    f"-rate-limit 30 "
-                    f"-timeout 5 "
-                    f"-retries 1 "
-                    f"-o {host_output}"
-                ),
-
-                outfile=str(
-                    host_log
-                ),
-
-                timeout=900,
-            )
-
-
-            artifacts.extend(
-                [
-                    str(host_output),
-                    str(host_log),
-                ]
-            )
-
-
-
-        if urls.exists() and _count_lines(urls):
+        if _count_lines(
+            hosts_file
+        ):
 
             run_cmd(
 
                 (
                     f"nuclei "
-                    f"-l {urls} "
+                    f"-l {hosts_file} "
                     f"-severity high,critical "
                     f"-jsonl "
                     f"-rate-limit 30 "
                     f"-timeout 5 "
                     f"-retries 1 "
-                    f"-o {url_output}"
+                    f"-o {hosts_output}"
                 ),
 
                 outfile=str(
-                    url_log
+                    hosts_log
                 ),
 
                 timeout=900,
+
             )
 
 
             artifacts.extend(
                 [
-                    str(url_output),
-                    str(url_log),
+                    str(hosts_output),
+                    str(hosts_log),
                 ]
             )
 
+
+        if _count_lines(
+            urls_file
+        ):
+
+            run_cmd(
+
+                (
+                    f"nuclei "
+                    f"-l {urls_file} "
+                    f"-severity high,critical "
+                    f"-jsonl "
+                    f"-rate-limit 30 "
+                    f"-timeout 5 "
+                    f"-retries 1 "
+                    f"-o {urls_output}"
+                ),
+
+                outfile=str(
+                    urls_log
+                ),
+
+                timeout=900,
+
+            )
+
+
+            artifacts.extend(
+                [
+                    str(urls_output),
+                    str(urls_log),
+                ]
+            )
 
 
         _merge_files(
             [
-                host_output,
-                url_output,
+                hosts_output,
+                urls_output,
             ],
             merged_output,
         )
-
 
 
         artifacts.append(
@@ -281,37 +285,51 @@ class NucleiTool(ToolBase):
         )
 
 
-
         finding_count = _count_lines(
             merged_output
         )
 
 
-
         return ExecutionResult.success_result(
-
             tool=self.name,
-
             capability="vulnerability_scanning",
-
             artifacts=artifacts,
-
             metadata={
-
                 "scanned_sources": 2,
-
-                "finding_count":
-                    finding_count,
-
+                "finding_count": finding_count,
                 "message":
-                    (
-                        "Nuclei vulnerability "
-                        "assessment completed."
-                    ),
-
+                    "Nuclei vulnerability assessment completed.",
             },
-
         )
+
+
+
+###############################################################################
+# Stage Entry Point
+###############################################################################
+
+
+def stage3_vuln(
+    ctx: dict,
+) -> ExecutionResult:
+    """
+    Execute Stage 3 vulnerability assessment.
+    """
+
+    result = NucleiTool().run(
+        ctx
+    )
+
+
+    ctx.setdefault(
+        "tool_results",
+        [],
+    ).append(
+        result
+    )
+
+
+    return result
 
 
 
@@ -322,4 +340,5 @@ class NucleiTool(ToolBase):
 
 __all__ = [
     "NucleiTool",
+    "stage3_vuln",
 ]
