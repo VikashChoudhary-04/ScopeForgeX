@@ -1,85 +1,127 @@
 """
-ScopeForgeX Stage 2
-===================
+ScopeForgeX Stage 2 - Enumeration
+=================================
 
-Enumeration stage.
+Executes Stage 2 enumeration tools registered in the tool registry.
 
-Runs the appropriate enumeration tools depending on the
-selected target type.
-
-v0.4.0
+v0.5.0
 """
 
 from __future__ import annotations
 
 from scopeforgex.registry.tool_registry import build_registry
-from scopeforgex.ui import err, info, ok, stage, warn
-
-
-# ----------------------------------------------------------------------
-# Tool selection
-# ----------------------------------------------------------------------
-
-_TARGET_TOOLSETS = {
-    "web": {
-        "whatweb",
-        "wafw00f",
-        "ffuf",
-    },
-    "network": {
-        "enum4linux-ng",
-        "snmpwalk",
-    },
-}
+from scopeforgex.ui import stage, ok, warn, err, info
 
 
 def _print_tool_result(result):
     """
-    Display the outcome of a tool execution.
+    Display the outcome of a single Stage 2 tool.
+
+    Uses the canonical ExecutionResult model.
     """
 
-    if result.ran:
-        ok(f"Tool completed: {result.name}")
+    if result.success:
+        ok(
+            f"Tool completed: {result.tool}"
+        )
     else:
-        warn(f"Tool skipped/failed: {result.name}")
+        warn(
+            f"Tool failed/skipped: {result.tool}"
+        )
 
-    if result.notes:
-        info(f"Notes: {result.notes}")
+    if result.metadata:
+        info(
+            f"Metadata: {result.metadata}"
+        )
 
-    if result.output_files:
-        for output in result.output_files:
-            info(f"Output: {output}")
+    if result.errors:
+        for error in result.errors:
+            warn(
+                f"Error: {error}"
+            )
+
+    if result.warnings:
+        for warning in result.warnings:
+            warn(
+                f"Warning: {warning}"
+            )
+
+    if result.artifacts:
+        for artifact in result.artifacts:
+            info(
+                f"Artifact: {artifact}"
+            )
     else:
-        info("Output: (none)")
+        info(
+            "Artifacts: (none)"
+        )
 
 
 def stage2_enum(ctx: dict):
     """
-    Execute Stage 2 enumeration.
+    Execute all Stage 2 enumeration tools registered for
+    the current execution profile.
+
+    Supported profiles:
+        - full_safe (default)
+        - fast
     """
 
-    stage("STAGE 2 — ENUMERATION", "yellow")
+    stage(
+        "STAGE 2 — ENUMERATION",
+        "green",
+    )
 
-    target_type = ctx.get("target_type")
-
-    allowed_tools = _TARGET_TOOLSETS.get(target_type)
-
-    if allowed_tools is None:
-        err(f"Unsupported target type: {target_type}")
-        return
+    profile = ctx.get(
+        "profile",
+        "full_safe",
+    )
 
     tools = [
         tool
         for tool in build_registry()
-        if tool.stage == 2 and tool.name in allowed_tools
+        if tool.stage == 2
     ]
 
     if not tools:
-        err(f"No Stage 2 tools registered for target type: {target_type}")
+        err(
+            "No Stage 2 tools registered."
+        )
         return
 
-    for tool in tools:
-        result = tool.run(ctx)
-        _print_tool_result(result)
+    if profile == "fast":
 
-    ok("Stage 2 enumeration finished ✅")
+        allowed_tools = {
+            "whatweb",
+            "wafw00f",
+        }
+
+        warn(
+            "FAST mode: running lightweight "
+            "enumeration tools only."
+        )
+
+        tools = [
+            tool
+            for tool in tools
+            if tool.name in allowed_tools
+        ]
+
+    for tool in tools:
+
+        result = tool.run(
+            ctx
+        )
+
+        _print_tool_result(
+            result
+        )
+
+    ok(
+        "Stage 2 enumeration finished ✅"
+    )
+
+
+__all__ = [
+    "stage2_enum",
+]
