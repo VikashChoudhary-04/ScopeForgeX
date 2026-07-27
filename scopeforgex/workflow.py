@@ -260,7 +260,7 @@ class WorkflowEngine:
                     self.ctx,
                 )
 
-                #######################################################################
+                ################################################################
                 # Preserve Stage-0 generated workflow context
                 #
                 # Stage 0 initializes:
@@ -269,9 +269,8 @@ class WorkflowEngine:
                 # - outdir
                 # - pipeline paths
                 #
-                # Explicitly normalize these values so downstream stages
-                # receive the same execution context.
-                #######################################################################
+                # Normalize these values for downstream stages.
+                ################################################################
 
                 self.ctx.update(
                     {
@@ -294,8 +293,7 @@ class WorkflowEngine:
                     }
                 )
 
-
-    except Exception as exc:
+            except Exception as exc:
 
                 self.ctx[
                     "workflow_error"
@@ -308,7 +306,6 @@ class WorkflowEngine:
                 warn(
                     f"Stage 0 failed: {exc}"
                 )
-
 
             if not self.ctx.get(
                 "workflow_error",
