@@ -2,13 +2,10 @@
 ScopeForgeX Runtime Results
 ===========================
 
-Defines runtime execution result models used by ScopeForgeX.
+Runtime execution result models.
 
-Runtime results extend the canonical ExecutionResult model and provide
-specialized records for:
-- tools
-- stages
-- workflows
+Extends the canonical ExecutionResult model with
+tool, stage and workflow specific information.
 
 v0.5.0
 """
@@ -16,9 +13,6 @@ v0.5.0
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any
-from uuid import UUID, uuid4
 
 from scopeforgex.models.execution_result import ExecutionResult
 
@@ -32,18 +26,13 @@ from .events import RuntimeEvent
 ###############################################################################
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class ToolResult(ExecutionResult):
     """
     Result of a single tool execution.
     """
 
     command: str | None = field(
-        default=None,
-        kw_only=True,
-    )
-
-    exit_code: int | None = field(
         default=None,
         kw_only=True,
     )
@@ -74,7 +63,7 @@ class ToolResult(ExecutionResult):
 ###############################################################################
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class StageResult(ExecutionResult):
     """
     Result of a workflow stage.
@@ -101,12 +90,8 @@ class StageResult(ExecutionResult):
     )
 
     @property
-    def tool_count(
-        self,
-    ) -> int:
-        return len(
-            self.tools
-        )
+    def tool_count(self) -> int:
+        return len(self.tools)
 
 
 ###############################################################################
@@ -114,7 +99,7 @@ class StageResult(ExecutionResult):
 ###############################################################################
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class WorkflowResult(ExecutionResult):
     """
     Final workflow execution result.
@@ -147,28 +132,16 @@ class WorkflowResult(ExecutionResult):
     )
 
     @property
-    def stage_count(
-        self,
-    ) -> int:
-        return len(
-            self.stages
-        )
+    def stage_count(self) -> int:
+        return len(self.stages)
 
     @property
-    def artifact_count(
-        self,
-    ) -> int:
-        return len(
-            self.artifacts
-        )
+    def artifact_count(self) -> int:
+        return len(self.artifacts)
 
     @property
-    def event_count(
-        self,
-    ) -> int:
-        return len(
-            self.events
-        )
+    def event_count(self) -> int:
+        return len(self.events)
 
 
 __all__ = [
