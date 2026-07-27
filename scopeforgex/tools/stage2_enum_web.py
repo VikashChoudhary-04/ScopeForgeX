@@ -1,13 +1,12 @@
 """
-ScopeForgeX v0.4.0
+ScopeForgeX v0.5.0
 Stage 2 - Web Enumeration
 
 Features
 --------
 * Shared helper utilities
 * Multiple target support
-* Better logging
-* Consistent ToolResult handling
+* Structured ExecutionResult handling
 * Automatic output validation
 * Cleaner architecture
 * Easier future tool integration
@@ -17,13 +16,14 @@ from __future__ import annotations
 
 import os
 import shlex
+
 from pathlib import Path
-from typing import Iterable
 
 import questionary
 
-from scopeforgex.registry.tool_base import ToolBase, ToolResult
-from scopeforgex.runner import run_cmd
+from scopeforgex.models.execution_result import ExecutionResult
+from scopeforgex.registry.tool_base import ToolBase
+from scopeforgex.runner import run_command
 from scopeforgex.toolcheck import is_tool_installed
 from scopeforgex.utils import build_notes_from_log
 from scopeforgex.wordlists import (
@@ -31,69 +31,102 @@ from scopeforgex.wordlists import (
     is_valid_wordlist,
 )
 
+
 ###############################################################################
 # Helper Functions
 ###############################################################################
 
 
-def _enum_directory(ctx: dict) -> Path:
+def _enum_directory(
+    ctx: dict,
+) -> Path:
     """
     Return Stage-2 enum directory.
-
-    Creates it automatically if required.
     """
 
-    directory = Path(ctx["outdir"]) / "enum"
-    directory.mkdir(parents=True, exist_ok=True)
+    directory = (
+        Path(ctx["outdir"])
+        / "enum"
+    )
+
+    directory.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
     return directory
 
 
-def _safe_exists(path: Path) -> bool:
+def _safe_exists(
+    path: Path,
+) -> bool:
     """
     True if file exists and contains data.
     """
 
-    return path.exists() and path.stat().st_size > 0
+    return (
+        path.exists()
+        and path.stat().st_size > 0
+    )
 
 
-def _quote(value: str) -> str:
+def _quote(
+    value: str,
+) -> str:
     """
     Shell-safe quoting.
     """
 
-    return shlex.quote(value)
+    return shlex.quote(
+        value
+    )
 
 
-def _normalize_target(target: str) -> str:
+def _normalize_target(
+    target: str,
+) -> str:
     """
     Ensure targets always contain a scheme.
     """
 
     target = target.strip()
 
-    if target.startswith(("http://", "https://")):
+    if target.startswith(
+        (
+            "http://",
+            "https://",
+        )
+    ):
         return target
 
     return f"https://{target}"
 
 
-def _load_pipeline_targets(ctx: dict) -> list[str]:
+def _load_pipeline_targets(
+    ctx: dict,
+) -> list[str]:
     """
     Determine web enumeration targets.
 
-    Priority
-
-    1. hosts_final.txt
-    2. root target
+    Priority:
+        1. hosts_final
+        2. root target
     """
 
-    pipeline = ctx.get("pipeline", {})
+    pipeline = ctx.get(
+        "pipeline",
+        {},
+    )
 
-    hosts_file = pipeline.get("hosts_final")
+    hosts_file = pipeline.get(
+        "hosts_final"
+    )
 
     targets: list[str] = []
 
-    if hosts_file and os.path.exists(hosts_file):
+    if hosts_file and os.path.exists(
+        hosts_file
+    ):
 
         with open(
             hosts_file,
@@ -101,22 +134,32 @@ def _load_pipeline_targets(ctx: dict) -> list[str]:
         ) as handle:
 
             for line in handle:
+
                 host = line.strip()
 
                 if host:
+
                     targets.append(
                         _normalize_target(host)
                     )
 
     if not targets:
+
         targets.append(
-            _normalize_target(ctx["target"])
+            _normalize_target(
+                ctx["target"]
+            )
         )
 
-    return sorted(set(targets))
+    return sorted(
+        set(targets)
+    )
 
 
-def _build_notes(logfile: Path, message: str) -> str:
+def _build_notes(
+    logfile: Path,
+    message: str,
+) -> str:
     """
     Consistent report note generation.
     """
@@ -126,21 +169,24 @@ def _build_notes(logfile: Path, message: str) -> str:
         message,
     )
 
-    if not _safe_exists(logfile):
+    if not _safe_exists(
+        logfile
+    ):
+
         notes += " [Log file missing.]"
 
     return notes
 
 
-def _missing_tool(name: str) -> ToolResult:
-    return ToolResult(
-        name,
-        False,
-        [],
-        f"{name} not installed",
+def _missing_tool(
+    name: str,
+) -> ExecutionResult:
+
+    return ExecutionResult.failure(
+        tool=name,
+        capability="web_enumeration",
+        error=f"{name} not installed",
     )
-
-
 ###############################################################################
 # Base Class
 ###############################################################################
@@ -154,21 +200,34 @@ class WebEnumerationTool(ToolBase):
     risk = "low"
     stage = 2
 
-    def enum_dir(self, ctx: dict) -> Path:
-        return _enum_directory(ctx)
+    def enum_dir(
+        self,
+        ctx: dict,
+    ) -> Path:
+
+        return _enum_directory(
+            ctx
+        )
 
     def output_file(
         self,
         ctx: dict,
         filename: str,
     ) -> Path:
-        return self.enum_dir(ctx) / filename
+
+        return (
+            self.enum_dir(ctx)
+            / filename
+        )
 
     def targets(
         self,
         ctx: dict,
     ) -> list[str]:
-        return _load_pipeline_targets(ctx)
+
+        return _load_pipeline_targets(
+            ctx
+        )
 
     def verify_output(
         self,
@@ -177,8 +236,13 @@ class WebEnumerationTool(ToolBase):
         warning: str,
     ) -> str:
 
-        if not _safe_exists(output):
-            notes += f" [{warning}]"
+        if not _safe_exists(
+            output
+        ):
+
+            notes += (
+                f" [{warning}]"
+            )
 
         return notes
 
@@ -196,10 +260,15 @@ class WhatWebTool(WebEnumerationTool):
     def run(
         self,
         ctx: dict,
-    ) -> ToolResult:
+    ) -> ExecutionResult:
 
-        if not is_tool_installed("whatweb"):
-            return _missing_tool(self.name)
+        if not is_tool_installed(
+            "whatweb"
+        ):
+
+            return _missing_tool(
+                self.name
+            )
 
         output = self.output_file(
             ctx,
@@ -216,14 +285,19 @@ class WhatWebTool(WebEnumerationTool):
             encoding="utf-8",
         ) as report:
 
-            for target in self.targets(ctx):
+            for target in self.targets(
+                ctx
+            ):
 
                 command = (
-                    f"whatweb {_quote(target)}"
+                    f"whatweb "
+                    f"{_quote(target)}"
                 )
 
-                run_cmd(
-                    command,
+                run_command(
+                    tool=self.name,
+                    capability="technology_fingerprinting",
+                    cmd=command,
                     outfile=str(logfile),
                 )
 
@@ -242,14 +316,19 @@ class WhatWebTool(WebEnumerationTool):
             "No fingerprint data generated.",
         )
 
-        return ToolResult(
-            self.name,
-            True,
-            [
-                str(output),
-                str(logfile),
+        return ExecutionResult.success_result(
+            tool=self.name,
+            capability="technology_fingerprinting",
+            artifacts=[
+                output,
+                logfile,
             ],
-            notes,
+            metadata={
+                "notes": notes,
+                "targets": len(
+                    self.targets(ctx)
+                ),
+            },
         )
 
 
@@ -266,10 +345,15 @@ class Wafw00fTool(WebEnumerationTool):
     def run(
         self,
         ctx: dict,
-    ) -> ToolResult:
+    ) -> ExecutionResult:
 
-        if not is_tool_installed("wafw00f"):
-            return _missing_tool(self.name)
+        if not is_tool_installed(
+            "wafw00f"
+        ):
+
+            return _missing_tool(
+                self.name
+            )
 
         output = self.output_file(
             ctx,
@@ -286,14 +370,19 @@ class Wafw00fTool(WebEnumerationTool):
             encoding="utf-8",
         ) as report:
 
-            for target in self.targets(ctx):
+            for target in self.targets(
+                ctx
+            ):
 
                 command = (
-                    f"wafw00f {_quote(target)}"
+                    f"wafw00f "
+                    f"{_quote(target)}"
                 )
 
-                run_cmd(
-                    command,
+                run_command(
+                    tool=self.name,
+                    capability="waf_detection",
+                    cmd=command,
                     outfile=str(logfile),
                 )
 
@@ -312,15 +401,20 @@ class Wafw00fTool(WebEnumerationTool):
             "No WAF information collected.",
         )
 
-        return ToolResult(
-            self.name,
-            True,
-            [
-                str(output),
-                str(logfile),
+        return ExecutionResult.success_result(
+            tool=self.name,
+            capability="waf_detection",
+            artifacts=[
+                output,
+                logfile,
             ],
-            notes,
-        ) 
+            metadata={
+                "notes": notes,
+                "targets": len(
+                    self.targets(ctx)
+                ),
+            },
+        )
 ###############################################################################
 # FFUF Helpers
 ###############################################################################
@@ -330,10 +424,8 @@ def _select_wordlist() -> str | None:
     """
     Interactive FFUF wordlist selection.
 
-    Returns
-    -------
-    str | None
-        Valid wordlist path or None if invalid.
+    Returns:
+        Valid wordlist path or None.
     """
 
     mode = questionary.select(
@@ -345,13 +437,17 @@ def _select_wordlist() -> str | None:
     ).ask()
 
     if mode == "Auto-detect default":
+
         wordlist = find_default_web_fuzz_wordlist()
 
         if not wordlist:
+
             wordlist = questionary.text(
                 "Default wordlist not found. Enter path:"
             ).ask()
+
     else:
+
         wordlist = questionary.text(
             "Enter wordlist path:"
         ).ask()
@@ -359,7 +455,9 @@ def _select_wordlist() -> str | None:
     if not wordlist:
         return None
 
-    if not is_valid_wordlist(wordlist):
+    if not is_valid_wordlist(
+        wordlist
+    ):
         return None
 
     return wordlist
@@ -379,47 +477,70 @@ class FFUFTool(WebEnumerationTool):
     def run(
         self,
         ctx: dict,
-    ) -> ToolResult:
+    ) -> ExecutionResult:
 
-        if not is_tool_installed("ffuf"):
-            return _missing_tool(self.name)
+        if not is_tool_installed(
+            "ffuf"
+        ):
+
+            return _missing_tool(
+                self.name
+            )
 
         if not questionary.confirm(
             "Run FFUF directory enumeration?"
         ).ask():
-            return ToolResult(
-                self.name,
-                False,
-                [],
-                "Skipped by user",
+
+            return ExecutionResult.skipped(
+                tool=self.name,
+                capability="content_discovery",
+                reason="Skipped by user",
             )
 
         wordlist = _select_wordlist()
 
         if not wordlist:
-            return ToolResult(
-                self.name,
-                False,
-                [],
-                "Invalid wordlist selected.",
+
+            return ExecutionResult.failure(
+                tool=self.name,
+                capability="content_discovery",
+                error="Invalid wordlist selected.",
             )
 
-        enum_dir = self.enum_dir(ctx)
+        enum_dir = self.enum_dir(
+            ctx
+        )
 
-        logfile = enum_dir / "ffuf.log"
+        logfile = (
+            enum_dir
+            / "ffuf.log"
+        )
 
-        summary = enum_dir / "ffuf.md"
+        summary = (
+            enum_dir
+            / "ffuf.md"
+        )
 
         wordlist_file = (
-            enum_dir /
-            "wordlist_used.txt"
+            enum_dir
+            / "wordlist_used.txt"
         )
 
         with wordlist_file.open(
             "w",
             encoding="utf-8",
         ) as fp:
-            fp.write(wordlist + "\n")
+
+            fp.write(
+                wordlist
+                + "\n"
+            )
+
+        generated_outputs = [
+            summary,
+            logfile,
+            wordlist_file,
+        ]
 
         with summary.open(
             "w",
@@ -448,7 +569,8 @@ class FFUFTool(WebEnumerationTool):
                 )
 
                 outfile = (
-                    enum_dir /
+                    enum_dir
+                    /
                     f"ffuf_target_{index}.md"
                 )
 
@@ -461,12 +583,20 @@ class FFUFTool(WebEnumerationTool):
                     f"-o {_quote(str(outfile))}"
                 )
 
-                run_cmd(
-                    command,
+                run_command(
+                    tool=self.name,
+                    capability="content_discovery",
+                    cmd=command,
                     outfile=str(logfile),
                 )
 
-                if _safe_exists(outfile):
+                if _safe_exists(
+                    outfile
+                ):
+
+                    generated_outputs.append(
+                        outfile
+                    )
 
                     report.write(
                         f"Output: `{outfile.name}`\n\n"
@@ -489,33 +619,20 @@ class FFUFTool(WebEnumerationTool):
             "No FFUF results produced.",
         )
 
-        outputs = [
-            str(summary),
-            str(logfile),
-            str(wordlist_file),
-        ]
-
-        for index, _ in enumerate(
-            self.targets(ctx),
-            start=1,
-        ):
-
-            outfile = (
-                enum_dir /
-                f"ffuf_target_{index}.md"
-            )
-
-            if _safe_exists(outfile):
-                outputs.append(
-                    str(outfile)
-                )
-
-        return ToolResult(
-            self.name,
-            True,
-            outputs,
-            notes,
+        return ExecutionResult.success_result(
+            tool=self.name,
+            capability="content_discovery",
+            artifacts=generated_outputs,
+            metadata={
+                "notes": notes,
+                "targets": len(
+                    self.targets(ctx)
+                ),
+                "wordlist": wordlist,
+            },
         )
+
+
 ###############################################################################
 # Tool Registration
 ###############################################################################
@@ -531,6 +648,7 @@ ALL_STAGE2_WEB_ENUM_TOOLS = [
 ###############################################################################
 # Module Metadata
 ###############################################################################
+
 
 __all__ = [
     "WhatWebTool",
