@@ -1,28 +1,30 @@
 """
-ScopeForgeX v0.4.0
+ScopeForgeX v0.5.0
 Stage 3 - Vulnerability Assessment
 
 Features
 --------
 * Shared vulnerability scanner framework
-* Safe command construction
-* Output validation
+* Structured ExecutionResult handling
+* Finding collection
+* Artifact tracking
 * Multi-input support
 * Unified logging
 * Automatic result merging
-* Easier future scanner integration
 """
 
 from __future__ import annotations
 
-import os
 import shlex
+
 from pathlib import Path
 from typing import Iterable
 
-from scopeforgex.registry.tool_base import ToolBase, ToolResult
-from scopeforgex.runner import run_cmd
+from scopeforgex.models.execution_result import ExecutionResult
+from scopeforgex.registry.tool_base import ToolBase
+from scopeforgex.runner import run_command
 from scopeforgex.toolcheck import is_tool_installed
+
 
 ###############################################################################
 # Nuclei Profiles
@@ -35,25 +37,35 @@ NUCLEI_FAST_FLAGS = (
     "-retries 1"
 )
 
+
 ###############################################################################
 # Helper Functions
 ###############################################################################
 
 
-def _vuln_directory(ctx: dict) -> Path:
+def _vuln_directory(
+    ctx: dict,
+) -> Path:
     """
     Return vulnerability output directory.
     """
 
-    directory = Path(ctx["outdir"]) / "vuln"
+    directory = (
+        Path(ctx["outdir"])
+        / "vuln"
+    )
+
     directory.mkdir(
         parents=True,
         exist_ok=True,
     )
+
     return directory
 
 
-def _safe_exists(path: Path) -> bool:
+def _safe_exists(
+    path: Path,
+) -> bool:
     """
     True when a file exists and contains data.
     """
@@ -64,12 +76,16 @@ def _safe_exists(path: Path) -> bool:
     )
 
 
-def _quote(value: str) -> str:
+def _quote(
+    value: str,
+) -> str:
     """
     Safe shell quoting.
     """
 
-    return shlex.quote(value)
+    return shlex.quote(
+        value
+    )
 
 
 def _pipeline_file(
@@ -85,12 +101,16 @@ def _pipeline_file(
         {},
     )
 
-    filename = pipeline.get(key)
+    filename = pipeline.get(
+        key
+    )
 
     if not filename:
         return None
 
-    path = Path(filename)
+    path = Path(
+        filename
+    )
 
     if not path.exists():
         return None
@@ -102,23 +122,28 @@ def _pipeline_file(
 
 
 ###############################################################################
-# Result Helpers
+# Finding Helpers
 ###############################################################################
 
 
 def _merge_results(
     inputs: Iterable[Path],
     output: Path,
-) -> int:
+) -> list[str]:
     """
     Merge and deduplicate findings.
+
+    Returns:
+        List of unique findings.
     """
 
     findings: list[str] = []
 
     for path in inputs:
 
-        if not _safe_exists(path):
+        if not _safe_exists(
+            path
+        ):
             continue
 
         with path.open(
@@ -133,7 +158,9 @@ def _merge_results(
             )
 
     findings = list(
-        dict.fromkeys(findings)
+        dict.fromkeys(
+            findings
+        )
     )
 
     with output.open(
@@ -142,14 +169,18 @@ def _merge_results(
     ) as outfile:
 
         if findings:
+
             outfile.write(
-                "\n".join(findings)
+                "\n".join(
+                    findings
+                )
             )
-            outfile.write("\n")
 
-    return len(findings)
+            outfile.write(
+                "\n"
+            )
 
-
+    return findings
 ###############################################################################
 # Base Scanner
 ###############################################################################
@@ -167,20 +198,29 @@ class VulnerabilityScanner(ToolBase):
         self,
         ctx: dict,
     ) -> Path:
-        return _vuln_directory(ctx)
+
+        return _vuln_directory(
+            ctx
+        )
 
     def output(
         self,
         ctx: dict,
         filename: str,
     ) -> Path:
-        return self.vuln_dir(ctx) / filename
+
+        return (
+            self.vuln_dir(ctx)
+            /
+            filename
+        )
 
     def pipeline_input(
         self,
         ctx: dict,
         key: str,
     ) -> Path | None:
+
         return _pipeline_file(
             ctx,
             key,
@@ -188,13 +228,12 @@ class VulnerabilityScanner(ToolBase):
 
     def tool_missing(
         self,
-    ) -> ToolResult:
+    ) -> ExecutionResult:
 
-        return ToolResult(
-            self.name,
-            False,
-            [],
-            f"{self.name} not installed",
+        return ExecutionResult.failure(
+            tool=self.name,
+            capability="vulnerability_scanning",
+            error=f"{self.name} not installed",
         )
 
     def ensure_output(
@@ -207,6 +246,8 @@ class VulnerabilityScanner(ToolBase):
 
         if not path.exists():
             path.touch()
+
+
 ###############################################################################
 # Nuclei Scanner
 ###############################################################################
@@ -229,6 +270,7 @@ class NucleiTool(VulnerabilityScanner):
     """
 
     name = "nuclei"
+
     description = (
         "FAST: Scan alive hosts and discovered URLs using Nuclei"
     )
@@ -242,14 +284,16 @@ class NucleiTool(VulnerabilityScanner):
         """
         Execute a single Nuclei scan.
 
-        Returns
-        -------
-        bool
-            True if a scan was started.
+        Returns:
+            True if scan started.
         """
 
         if input_file is None:
-            self.ensure_output(output_file)
+
+            self.ensure_output(
+                output_file
+            )
+
             return False
 
         command = (
@@ -259,22 +303,30 @@ class NucleiTool(VulnerabilityScanner):
             f"-o {_quote(str(output_file))}"
         )
 
-        run_cmd(
-            command,
+        run_command(
+            tool=self.name,
+            capability="vulnerability_scanning",
+            cmd=command,
             outfile=str(logfile),
             timeout=600,
         )
 
-        self.ensure_output(output_file)
+        self.ensure_output(
+            output_file
+        )
 
         return True
+
 
     def run(
         self,
         ctx: dict,
-    ) -> ToolResult:
+    ) -> ExecutionResult:
 
-        if not is_tool_installed("nuclei"):
+        if not is_tool_installed(
+            "nuclei"
+        ):
+
             return self.tool_missing()
 
         hosts_input = self.pipeline_input(
@@ -319,16 +371,20 @@ class NucleiTool(VulnerabilityScanner):
             hosts_output,
             hosts_log,
         ):
+
             scanned_inputs += 1
+
 
         if self._scan(
             urls_input,
             urls_output,
             urls_log,
         ):
+
             scanned_inputs += 1
 
-        total_findings = _merge_results(
+
+        findings = _merge_results(
             [
                 hosts_output,
                 urls_output,
@@ -336,28 +392,28 @@ class NucleiTool(VulnerabilityScanner):
             merged_output,
         )
 
-        notes = (
-            f"Nuclei completed against "
-            f"{scanned_inputs} input source(s). "
-            f"{total_findings} unique finding(s)."
-        )
 
-        if not _safe_exists(merged_output):
-            notes += (
-                " No confirmed findings were produced."
-            )
+        artifacts = [
+            merged_output,
+            hosts_output,
+            urls_output,
+            hosts_log,
+            urls_log,
+        ]
 
-        return ToolResult(
-            self.name,
-            True,
-            [
-                str(merged_output),
-                str(hosts_output),
-                str(urls_output),
-                str(hosts_log),
-                str(urls_log),
-            ],
-            notes,
+
+        return ExecutionResult.success_result(
+            tool=self.name,
+            capability="vulnerability_scanning",
+            artifacts=artifacts,
+            findings=findings,
+            metadata={
+                "scanned_sources": scanned_inputs,
+                "finding_count": len(findings),
+                "message": (
+                    "Nuclei vulnerability assessment completed."
+                ),
+            },
         )
 ###############################################################################
 # Tool Registration
@@ -372,6 +428,7 @@ ALL_STAGE3_VULN_TOOLS = [
 ###############################################################################
 # Public Exports
 ###############################################################################
+
 
 __all__ = [
     "NUCLEI_FAST_FLAGS",
