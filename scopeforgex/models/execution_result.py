@@ -4,7 +4,7 @@ ScopeForgeX Execution Result Model
 
 Canonical execution result object used by all tools.
 
-v0.5.1
+v0.5.2
 """
 
 from __future__ import annotations
@@ -74,27 +74,16 @@ class ExecutionResult:
         default_factory=utc_now,
     )
 
+    # Runtime compatibility field.
+    #
+    # WorkflowEngine and runner update this value
+    # after command execution.
+    duration: float = 0.0
+
 
     ###########################################################################
-    # Runtime Compatibility Properties
+    # Runtime Properties
     ###########################################################################
-
-
-    @property
-    def duration(
-        self,
-    ) -> float:
-        """
-        Return execution duration in seconds.
-
-        Compatible with workflow runtime tracking.
-        """
-
-        return (
-            self.finished_at.timestamp()
-            -
-            self.started_at.timestamp()
-        )
 
 
     @property
@@ -156,6 +145,7 @@ class ExecutionResult:
             metadata=metadata or {},
             started_at=now,
             finished_at=utc_now(),
+            duration=0.0,
         )
 
 
@@ -189,6 +179,7 @@ class ExecutionResult:
             metadata=metadata or {},
             started_at=now,
             finished_at=utc_now(),
+            duration=0.0,
         )
 
 
@@ -220,6 +211,7 @@ class ExecutionResult:
             },
             started_at=now,
             finished_at=utc_now(),
+            duration=0.0,
         )
 
 
