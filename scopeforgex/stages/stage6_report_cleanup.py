@@ -6,28 +6,34 @@ Reporting & Cleanup Stage
 
 Responsibilities
 ----------------
+* Consume RuntimeState execution data
 * Collect workflow metadata
-* Discover generated artifacts
 * Build ReportData
 * Generate Markdown report
 
-v0.4.0
+Runtime execution data is the primary source.
+Filesystem discovery is used as a compatibility fallback.
+
+v0.5.0
 """
 
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from reporting.models import (
     ReportData,
     ScanStatistics,
     StageResult,
 )
+
 from reporting.report_generator import ReportGenerator
 
 from scopeforgex.ui import ok, stage
+
 
 ###############################################################################
 # Helpers
@@ -91,8 +97,15 @@ class ReportingStage:
 
         self.ctx = ctx
 
+        self.runtime = ctx.get(
+            "runtime_state",
+        )
+
         self.outdir = Path(
-            ctx["outdir"]
+            ctx.get(
+                "outdir",
+                ".",
+            )
         )
 
         self.recon_dir = (
@@ -106,6 +119,9 @@ class ReportingStage:
         self.report_path = (
             self.outdir / "report.md"
         )
+
+        self.artifacts: list[str] = []
+
 
     ###########################################################################
     # Artifact Discovery
@@ -138,6 +154,35 @@ class ReportingStage:
                 self.vuln_dir / "nuclei_urls.txt",
         }
 
+
+    def runtime_artifacts(
+        self,
+    ) -> list[str]:
+        """
+        Collect artifacts from RuntimeState.
+        """
+
+        if not self.runtime:
+            return []
+
+        artifacts = []
+
+        for artifact in self.runtime.artifacts:
+
+            path = getattr(
+                artifact,
+                "path",
+                None,
+            )
+
+            if path:
+                artifacts.append(
+                    str(path)
+                )
+
+        return artifacts
+
+
     ###########################################################################
     # Statistics
     ###########################################################################
@@ -148,15 +193,22 @@ class ReportingStage:
 
         files = self.artifact_paths()
 
-        artifacts = _existing_files(
+        discovered = _existing_files(
             list(
                 files.values()
             )
         )
 
-        self.artifacts = artifacts
+        runtime_files = self.runtime_artifacts()
+
+        self.artifacts = list(
+            dict.fromkeys(
+                runtime_files + discovered
+            )
+        )
 
         return ScanStatistics(
+
             subdomains_found=_count_lines(
                 files["hosts_raw"]
             ),
@@ -178,9 +230,27 @@ class ReportingStage:
             ),
 
             files_generated=len(
-                artifacts
+                self.artifacts
+            ),
+
+            stages_executed=(
+                len(
+                    self.runtime.stage_results
+                )
+                if self.runtime
+                else 0
+            ),
+
+            tools_executed=(
+                len(
+                    self.runtime.tool_results
+                )
+                if self.runtime
+                else 0
             ),
         )
+
+
     ###########################################################################
     # Report Construction
     ###########################################################################
@@ -188,9 +258,6 @@ class ReportingStage:
     def build_report(
         self,
     ) -> ReportData:
-        """
-        Build the ReportData object consumed by ReportGenerator.
-        """
 
         stats = self.statistics()
 
@@ -201,44 +268,54 @@ class ReportingStage:
 
         end = time.time()
 
+
         report = ReportData(
+
             target=self.ctx.get(
                 "target",
                 "-",
             ),
+
             profile=self.ctx.get(
                 "profile",
                 "-",
             ),
+
             target_type=self.ctx.get(
                 "target_type",
                 "-",
             ),
+
             start_time=datetime.fromtimestamp(
                 start,
+                tz=timezone.utc,
             ),
+
             end_time=datetime.fromtimestamp(
                 end,
+                tz=timezone.utc,
             ),
+
             statistics=stats,
+
             generated_files=self.artifacts,
         )
 
-        report.duration_seconds = end - start
 
-        report.stages = self._stage_results(
-            stats,
+        report.duration_seconds = (
+            end - start
         )
 
-        report.tool_results = self._tool_results(
-            stats,
-        )
 
-        report.warnings = self._warnings(
-            stats,
-        )
+        report.stages = self._stage_results()
+
+        report.tool_results = self._tool_results()
+
+        report.warnings = self._warnings()
+
 
         return report
+
 
     ###########################################################################
     # Stage Summary
@@ -246,11 +323,26 @@ class ReportingStage:
 
     def _stage_results(
         self,
-        stats: ScanStatistics,
     ) -> list[StageResult]:
-        """
-        Generate workflow stage summary.
-        """
+
+        if self.runtime:
+
+            return [
+                StageResult(
+                    name=(
+                        result.name
+                    ),
+                    status=(
+                        "Completed"
+                        if result.successful
+                        else "Failed"
+                    ),
+                )
+
+                for result
+                in self.runtime.stage_results
+            ]
+
 
         return [
             StageResult(
@@ -263,19 +355,7 @@ class ReportingStage:
             ),
             StageResult(
                 "Validation",
-                (
-                    "Completed"
-                    if stats.alive_hosts
-                    else "Skipped"
-                ),
-            ),
-            StageResult(
-                "Vulnerability Identification",
-                (
-                    "Completed"
-                    if stats.alive_hosts
-                    else "Skipped"
-                ),
+                "Completed",
             ),
             StageResult(
                 "Reporting",
@@ -283,45 +363,32 @@ class ReportingStage:
             ),
         ]
 
+
     ###########################################################################
     # Tool Summary
     ###########################################################################
 
     def _tool_results(
         self,
-        stats: ScanStatistics,
     ) -> dict[str, str]:
-        """
-        Generate tool execution summary.
-        """
 
-        live_hosts = stats.alive_hosts > 0
+        if self.runtime:
 
-        return {
-            "Subfinder":
-                "Completed",
+            return {
+                result.tool:
+                    (
+                        "Completed"
+                        if result.success
+                        else "Failed"
+                    )
 
-            "httpx":
-                (
-                    "Completed"
-                    if live_hosts
-                    else "No Live Hosts"
-                ),
+                for result
+                in self.runtime.tool_results
+            }
 
-            "Katana":
-                (
-                    "Completed"
-                    if live_hosts
-                    else "Skipped"
-                ),
 
-            "Nuclei":
-                (
-                    "Completed"
-                    if live_hosts
-                    else "Skipped"
-                ),
-        }
+        return {}
+
 
     ###########################################################################
     # Warning Collection
@@ -329,25 +396,23 @@ class ReportingStage:
 
     def _warnings(
         self,
-        stats: ScanStatistics,
     ) -> list[str]:
-        """
-        Collect report warnings.
-        """
 
         warnings: list[str] = []
 
-        if stats.alive_hosts == 0:
-            warnings.append(
-                "No live hosts were identified. Validation and vulnerability stages were skipped."
+        if self.runtime:
+
+            warnings.extend(
+                self.runtime.warnings
             )
 
-        if stats.nuclei_findings == 0:
-            warnings.append(
-                "No automated vulnerability findings were recorded."
+            warnings.extend(
+                self.runtime.errors
             )
 
         return warnings
+
+
     ###########################################################################
     # Report Generation
     ###########################################################################
@@ -355,9 +420,6 @@ class ReportingStage:
     def write_report(
         self,
     ) -> None:
-        """
-        Build and write the assessment report.
-        """
 
         report = self.build_report()
 
@@ -382,12 +444,6 @@ class ReportingStage:
 def stage6_reporting(
     ctx: dict,
 ) -> None:
-    """
-    Stage 6 – Reporting.
-
-    Collect workflow metadata, generate the assessment report,
-    and perform final reporting tasks.
-    """
 
     stage(
         "STAGE 6 — REPORTING",
@@ -398,10 +454,6 @@ def stage6_reporting(
         ctx,
     ).write_report()
 
-
-###############################################################################
-# Module Exports
-###############################################################################
 
 __all__ = [
     "ReportingStage",
