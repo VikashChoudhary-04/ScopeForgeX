@@ -8,10 +8,11 @@ Responsibilities
 ----------------
 * Collect workflow metadata
 * Discover generated artifacts
+* Normalize artifact paths
 * Build ReportData
 * Generate Markdown report
 
-v0.5.2
+v0.5.3
 """
 
 from __future__ import annotations
@@ -28,7 +29,10 @@ from reporting.models import (
 
 from reporting.report_generator import ReportGenerator
 
-from scopeforgex.ui import ok, stage
+from scopeforgex.ui import (
+    ok,
+    stage,
+)
 
 
 ###############################################################################
@@ -66,24 +70,30 @@ def _discover_artifacts(
     outdir: Path,
 ) -> list[str]:
     """
-    Recursively discover generated artifacts.
+    Discover artifacts and return
+    relative paths only.
     """
 
     if not outdir.exists():
         return []
 
-    artifacts = []
+    artifacts = set()
 
     for path in outdir.rglob("*"):
 
-        if (
-            path.is_file()
-            and ".gitkeep" not in str(path)
-        ):
+        if not path.is_file():
+            continue
 
-            artifacts.append(
-                str(path)
+        if ".gitkeep" in str(path):
+            continue
+
+        artifacts.add(
+            str(
+                path.relative_to(
+                    outdir
+                )
             )
+        )
 
     return sorted(
         artifacts
@@ -97,7 +107,7 @@ def _discover_artifacts(
 
 class ReportingStage:
     """
-    Builds the final assessment report.
+    Generates the final ScopeForgeX report.
     """
 
     def __init__(
@@ -108,18 +118,23 @@ class ReportingStage:
         self.ctx = ctx
 
         self.outdir = Path(
-            ctx["outdir"]
+            ctx.get(
+                "outdir",
+                "outputs",
+            )
         )
 
         self.report_path = (
-            self.outdir / "report.md"
+            self.outdir
+            /
+            "report.md"
         )
 
-        self.artifacts = []
+        self.artifacts: list[str] = []
 
 
     ###########################################################################
-    # Artifact Discovery
+    # Artifact Paths
     ###########################################################################
 
     def artifact_paths(
@@ -159,9 +174,11 @@ class ReportingStage:
 
         files = self.artifact_paths()
 
+
         self.artifacts = _discover_artifacts(
             self.outdir
         )
+
 
         return ScanStatistics(
 
@@ -188,37 +205,27 @@ class ReportingStage:
             files_generated=len(
                 self.artifacts
             ),
-
         )
 
 
     ###########################################################################
-    # Dynamic Stage Summary
+    # Stage Summary
     ###########################################################################
 
     def _stage_results(
         self,
     ) -> list[StageResult]:
 
-        runtime_results = self.ctx.get(
+        results = self.ctx.get(
             "stage_results",
             [],
         )
-
-        if not runtime_results:
-
-            return [
-                StageResult(
-                    "Reporting",
-                    "Completed",
-                )
-            ]
 
 
         output = []
 
 
-        for result in runtime_results:
+        for result in results:
 
             name = getattr(
                 result,
@@ -226,18 +233,9 @@ class ReportingStage:
                 None,
             )
 
+
             if not name:
                 continue
-
-
-            if name.startswith(
-                "stage"
-            ):
-
-                name = name.replace(
-                    "_",
-                    " ",
-                ).title()
 
 
             status = (
@@ -259,34 +257,36 @@ class ReportingStage:
             )
 
 
-        output.append(
-            StageResult(
-                "Reporting",
-                "Completed",
+        if not any(
+            item.name == "Reporting"
+            for item in output
+        ):
+
+            output.append(
+                StageResult(
+                    "Reporting",
+                    "Completed",
+                )
             )
-        )
 
 
         return output
 
 
     ###########################################################################
-    # Tool Summary
+    # Tool Results
     ###########################################################################
 
     def _tool_results(
         self,
     ) -> dict[str, str]:
 
-        tools = {}
+        output = {}
 
-        runtime = self.ctx.get(
+        for result in self.ctx.get(
             "tool_results",
             [],
-        )
-
-
-        for result in runtime:
+        ):
 
             tool = getattr(
                 result,
@@ -298,7 +298,7 @@ class ReportingStage:
                 continue
 
 
-            tools[tool] = (
+            output[tool] = (
                 "Completed"
                 if getattr(
                     result,
@@ -309,11 +309,11 @@ class ReportingStage:
             )
 
 
-        return tools
+        return output
 
 
     ###########################################################################
-    # Warning Collection
+    # Notes
     ###########################################################################
 
     def _warnings(
@@ -324,11 +324,20 @@ class ReportingStage:
         warnings = []
 
 
-        if stats.alive_hosts == 0:
+        for result in self.ctx.get(
+            "tool_results",
+            [],
+        ):
 
-            warnings.append(
-                "No live hosts were identified."
-            )
+            if not getattr(
+                result,
+                "success",
+                True,
+            ):
+
+                warnings.append(
+                    f"{getattr(result, 'tool', 'Unknown')} failed or skipped."
+                )
 
 
         if stats.nuclei_findings == 0:
@@ -342,7 +351,7 @@ class ReportingStage:
 
 
     ###########################################################################
-    # Report Construction
+    # Build Report
     ###########################################################################
 
     def build_report(
@@ -401,12 +410,20 @@ class ReportingStage:
         )
 
 
-        report.stages = self._stage_results()
+        report.stages = (
+            self._stage_results()
+        )
 
-        report.tool_results = self._tool_results()
 
-        report.warnings = self._warnings(
-            stats
+        report.tool_results = (
+            self._tool_results()
+        )
+
+
+        report.warnings = (
+            self._warnings(
+                stats
+            )
         )
 
 
@@ -414,7 +431,7 @@ class ReportingStage:
 
 
     ###########################################################################
-    # Report Generation
+    # Write Report
     ###########################################################################
 
     def write_report(
@@ -439,7 +456,7 @@ class ReportingStage:
 
 
 ###############################################################################
-# Public Entry Point
+# Public API
 ###############################################################################
 
 
@@ -458,9 +475,6 @@ def stage6_reporting(
     ).write_report()
 
 
-###############################################################################
-# Module Exports
-###############################################################################
 
 __all__ = [
     "ReportingStage",
