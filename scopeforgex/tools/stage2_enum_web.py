@@ -1,4 +1,24 @@
+"""
+ScopeForgeX v0.4.0
+Stage 2 - Web Enumeration
+
+Features
+--------
+* Shared helper utilities
+* Multiple target support
+* Better logging
+* Consistent ToolResult handling
+* Automatic output validation
+* Cleaner architecture
+* Easier future tool integration
+"""
+
+from __future__ import annotations
+
 import os
+import shlex
+from pathlib import Path
+from typing import Iterable
 
 import questionary
 
@@ -11,152 +31,361 @@ from scopeforgex.wordlists import (
     is_valid_wordlist,
 )
 
+###############################################################################
+# Helper Functions
+###############################################################################
 
-def _get_targets(ctx: dict):
+
+def _enum_directory(ctx: dict) -> Path:
     """
-    Return the list of web targets to enumerate.
+    Return Stage-2 enum directory.
 
-    Preference:
-        1. Stage 1 hosts_final
-        2. Root target
+    Creates it automatically if required.
     """
 
-    targets = [f"https://{ctx['target']}"]
+    directory = Path(ctx["outdir"]) / "enum"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _safe_exists(path: Path) -> bool:
+    """
+    True if file exists and contains data.
+    """
+
+    return path.exists() and path.stat().st_size > 0
+
+
+def _quote(value: str) -> str:
+    """
+    Shell-safe quoting.
+    """
+
+    return shlex.quote(value)
+
+
+def _normalize_target(target: str) -> str:
+    """
+    Ensure targets always contain a scheme.
+    """
+
+    target = target.strip()
+
+    if target.startswith(("http://", "https://")):
+        return target
+
+    return f"https://{target}"
+
+
+def _load_pipeline_targets(ctx: dict) -> list[str]:
+    """
+    Determine web enumeration targets.
+
+    Priority
+
+    1. hosts_final.txt
+    2. root target
+    """
 
     pipeline = ctx.get("pipeline", {})
-    hosts_final = pipeline.get("hosts_final")
 
-    if hosts_final and os.path.exists(hosts_final):
-        with open(hosts_final, encoding="utf-8") as f:
-            hosts = [line.strip() for line in f if line.strip()]
+    hosts_file = pipeline.get("hosts_final")
 
-        if hosts:
-            targets = hosts
+    targets: list[str] = []
 
-    return targets
+    if hosts_file and os.path.exists(hosts_file):
+
+        with open(
+            hosts_file,
+            encoding="utf-8",
+        ) as handle:
+
+            for line in handle:
+                host = line.strip()
+
+                if host:
+                    targets.append(
+                        _normalize_target(host)
+                    )
+
+    if not targets:
+        targets.append(
+            _normalize_target(ctx["target"])
+        )
+
+    return sorted(set(targets))
 
 
-class WhatwebTool(ToolBase):
-    name = "whatweb"
-    stage = 2
-    description = "Web fingerprinting"
+def _build_notes(logfile: Path, message: str) -> str:
+    """
+    Consistent report note generation.
+    """
+
+    notes = build_notes_from_log(
+        str(logfile),
+        message,
+    )
+
+    if not _safe_exists(logfile):
+        notes += " [Log file missing.]"
+
+    return notes
+
+
+def _missing_tool(name: str) -> ToolResult:
+    return ToolResult(
+        name,
+        False,
+        [],
+        f"{name} not installed",
+    )
+
+
+###############################################################################
+# Base Class
+###############################################################################
+
+
+class WebEnumerationTool(ToolBase):
+    """
+    Shared helper methods for all Stage-2 tools.
+    """
+
     risk = "low"
+    stage = 2
 
-    def run(self, ctx: dict) -> ToolResult:
-        enum_dir = os.path.join(ctx["outdir"], "enum")
+    def enum_dir(self, ctx: dict) -> Path:
+        return _enum_directory(ctx)
 
-        out_txt = os.path.join(enum_dir, "whatweb.txt")
-        out_log = os.path.join(enum_dir, "whatweb.log")
+    def output_file(
+        self,
+        ctx: dict,
+        filename: str,
+    ) -> Path:
+        return self.enum_dir(ctx) / filename
+
+    def targets(
+        self,
+        ctx: dict,
+    ) -> list[str]:
+        return _load_pipeline_targets(ctx)
+
+    def verify_output(
+        self,
+        output: Path,
+        notes: str,
+        warning: str,
+    ) -> str:
+
+        if not _safe_exists(output):
+            notes += f" [{warning}]"
+
+        return notes
+
+
+###############################################################################
+# WhatWeb
+###############################################################################
+
+
+class WhatWebTool(WebEnumerationTool):
+
+    name = "whatweb"
+    description = "Website fingerprinting"
+
+    def run(
+        self,
+        ctx: dict,
+    ) -> ToolResult:
 
         if not is_tool_installed("whatweb"):
-            return ToolResult(
-                self.name,
-                False,
-                [],
-                "whatweb not installed",
-            )
+            return _missing_tool(self.name)
 
-        with open(out_txt, "w", encoding="utf-8") as output:
-            for target in _get_targets(ctx):
-                run_cmd(
-                    f"whatweb {target}",
-                    outfile=out_log,
-                )
-                output.write(f"Scanned: {target}\n")
-
-        notes = build_notes_from_log(
-            out_log,
-            "WhatWeb finished.",
+        output = self.output_file(
+            ctx,
+            "whatweb.txt",
         )
 
-        if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
-            notes += " [No output produced. Target blocked/invalid?]"
+        logfile = self.output_file(
+            ctx,
+            "whatweb.log",
+        )
+
+        with output.open(
+            "w",
+            encoding="utf-8",
+        ) as report:
+
+            for target in self.targets(ctx):
+
+                command = (
+                    f"whatweb {_quote(target)}"
+                )
+
+                run_cmd(
+                    command,
+                    outfile=str(logfile),
+                )
+
+                report.write(
+                    f"{target}\n"
+                )
+
+        notes = _build_notes(
+            logfile,
+            "WhatWeb completed.",
+        )
+
+        notes = self.verify_output(
+            output,
+            notes,
+            "No fingerprint data generated.",
+        )
 
         return ToolResult(
             self.name,
             True,
             [
-                out_txt,
-                out_log,
+                str(output),
+                str(logfile),
             ],
             notes,
         )
 
 
-class Wafw00fTool(ToolBase):
+###############################################################################
+# WAF Detection
+###############################################################################
+
+
+class Wafw00fTool(WebEnumerationTool):
+
     name = "wafw00f"
-    stage = 2
-    description = "WAF detection"
-    risk = "low"
+    description = "Detect Web Application Firewalls"
 
-    def run(self, ctx: dict) -> ToolResult:
-        enum_dir = os.path.join(ctx["outdir"], "enum")
-
-        out_txt = os.path.join(enum_dir, "wafw00f.txt")
-        out_log = os.path.join(enum_dir, "wafw00f.log")
+    def run(
+        self,
+        ctx: dict,
+    ) -> ToolResult:
 
         if not is_tool_installed("wafw00f"):
-            return ToolResult(
-                self.name,
-                False,
-                [],
-                "wafw00f not installed",
-            )
+            return _missing_tool(self.name)
 
-        with open(out_txt, "w", encoding="utf-8") as output:
-            for target in _get_targets(ctx):
-                run_cmd(
-                    f"wafw00f {target}",
-                    outfile=out_log,
-                )
-                output.write(f"Scanned: {target}\n")
-
-        notes = build_notes_from_log(
-            out_log,
-            "wafw00f finished.",
+        output = self.output_file(
+            ctx,
+            "wafw00f.txt",
         )
 
-        if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
-            notes += " [No output produced. Target unreachable?]"
+        logfile = self.output_file(
+            ctx,
+            "wafw00f.log",
+        )
+
+        with output.open(
+            "w",
+            encoding="utf-8",
+        ) as report:
+
+            for target in self.targets(ctx):
+
+                command = (
+                    f"wafw00f {_quote(target)}"
+                )
+
+                run_cmd(
+                    command,
+                    outfile=str(logfile),
+                )
+
+                report.write(
+                    f"{target}\n"
+                )
+
+        notes = _build_notes(
+            logfile,
+            "WAF detection completed.",
+        )
+
+        notes = self.verify_output(
+            output,
+            notes,
+            "No WAF information collected.",
+        )
 
         return ToolResult(
             self.name,
             True,
             [
-                out_txt,
-                out_log,
+                str(output),
+                str(logfile),
             ],
             notes,
-        )
+        ) 
+###############################################################################
+# FFUF Helpers
+###############################################################################
 
 
-class FFUFTool(ToolBase):
+def _select_wordlist() -> str | None:
+    """
+    Interactive FFUF wordlist selection.
+
+    Returns
+    -------
+    str | None
+        Valid wordlist path or None if invalid.
+    """
+
+    mode = questionary.select(
+        "Choose FFUF wordlist:",
+        choices=[
+            "Auto-detect default",
+            "Specify custom path",
+        ],
+    ).ask()
+
+    if mode == "Auto-detect default":
+        wordlist = find_default_web_fuzz_wordlist()
+
+        if not wordlist:
+            wordlist = questionary.text(
+                "Default wordlist not found. Enter path:"
+            ).ask()
+    else:
+        wordlist = questionary.text(
+            "Enter wordlist path:"
+        ).ask()
+
+    if not wordlist:
+        return None
+
+    if not is_valid_wordlist(wordlist):
+        return None
+
+    return wordlist
+
+
+###############################################################################
+# FFUF
+###############################################################################
+
+
+class FFUFTool(WebEnumerationTool):
+
     name = "ffuf"
-    stage = 2
-    description = "Directory brute force"
+    description = "Directory and content discovery"
     risk = "medium"
 
-    def run(self, ctx: dict) -> ToolResult:
-        enum_dir = os.path.join(ctx["outdir"], "enum")
-
-        out_txt = os.path.join(enum_dir, "ffuf.md")
-        out_log = os.path.join(enum_dir, "ffuf.log")
-
-        wordlist_used = os.path.join(
-            enum_dir,
-            "wordlist_used.txt",
-        )
+    def run(
+        self,
+        ctx: dict,
+    ) -> ToolResult:
 
         if not is_tool_installed("ffuf"):
-            return ToolResult(
-                self.name,
-                False,
-                [],
-                "ffuf not installed",
-            )
+            return _missing_tool(self.name)
 
         if not questionary.confirm(
-            "Run ffuf directory bruteforce?"
+            "Run FFUF directory enumeration?"
         ).ask():
             return ToolResult(
                 self.name,
@@ -165,68 +394,147 @@ class FFUFTool(ToolBase):
                 "Skipped by user",
             )
 
-        mode = questionary.select(
-            "Choose FFUF wordlist mode:",
-            choices=[
-                "Use default web wordlist (auto-detect)",
-                "Use custom wordlist path",
-            ],
-        ).ask()
+        wordlist = _select_wordlist()
 
-        if mode == "Use default web wordlist (auto-detect)":
-            wordlist = find_default_web_fuzz_wordlist()
-
-            if not wordlist:
-                wordlist = questionary.text(
-                    "No default found. Enter custom wordlist path:"
-                ).ask()
-        else:
-            wordlist = questionary.text(
-                "Enter custom wordlist path:"
-            ).ask()
-
-        if not is_valid_wordlist(wordlist):
+        if not wordlist:
             return ToolResult(
                 self.name,
                 False,
                 [],
-                f"Invalid wordlist path: {wordlist}",
+                "Invalid wordlist selected.",
             )
 
-        with open(wordlist_used, "w", encoding="utf-8") as f:
-            f.write(wordlist + "\n")
+        enum_dir = self.enum_dir(ctx)
 
-        run_cmd(
-            f"ffuf -u https://{ctx['target']}/FUZZ "
-            f"-w {wordlist} "
-            f"-mc all "
-            f"-of md "
-            f"-o {out_txt}",
-            outfile=out_log,
+        logfile = enum_dir / "ffuf.log"
+
+        summary = enum_dir / "ffuf.md"
+
+        wordlist_file = (
+            enum_dir /
+            "wordlist_used.txt"
         )
 
-        notes = build_notes_from_log(
-            out_log,
-            "FFUF finished.",
+        with wordlist_file.open(
+            "w",
+            encoding="utf-8",
+        ) as fp:
+            fp.write(wordlist + "\n")
+
+        with summary.open(
+            "w",
+            encoding="utf-8",
+        ) as report:
+
+            report.write(
+                "# FFUF Enumeration Results\n\n"
+            )
+
+            report.write(
+                f"Wordlist: `{wordlist}`\n\n"
+            )
+
+            for index, target in enumerate(
+                self.targets(ctx),
+                start=1,
+            ):
+
+                report.write(
+                    f"## Target {index}\n\n"
+                )
+
+                report.write(
+                    f"{target}\n\n"
+                )
+
+                outfile = (
+                    enum_dir /
+                    f"ffuf_target_{index}.md"
+                )
+
+                command = (
+                    "ffuf "
+                    f"-u {_quote(target)}/FUZZ "
+                    f"-w {_quote(wordlist)} "
+                    "-mc all "
+                    "-of md "
+                    f"-o {_quote(str(outfile))}"
+                )
+
+                run_cmd(
+                    command,
+                    outfile=str(logfile),
+                )
+
+                if _safe_exists(outfile):
+
+                    report.write(
+                        f"Output: `{outfile.name}`\n\n"
+                    )
+
+                else:
+
+                    report.write(
+                        "No results generated.\n\n"
+                    )
+
+        notes = _build_notes(
+            logfile,
+            "FFUF completed.",
         )
 
-        if not os.path.exists(out_txt) or os.path.getsize(out_txt) == 0:
-            notes += " [No results or blocked/filtered target.]"
+        notes = self.verify_output(
+            summary,
+            notes,
+            "No FFUF results produced.",
+        )
+
+        outputs = [
+            str(summary),
+            str(logfile),
+            str(wordlist_file),
+        ]
+
+        for index, _ in enumerate(
+            self.targets(ctx),
+            start=1,
+        ):
+
+            outfile = (
+                enum_dir /
+                f"ffuf_target_{index}.md"
+            )
+
+            if _safe_exists(outfile):
+                outputs.append(
+                    str(outfile)
+                )
 
         return ToolResult(
             self.name,
             True,
-            [
-                out_txt,
-                out_log,
-                wordlist_used,
-            ],
+            outputs,
             notes,
         )
+###############################################################################
+# Tool Registration
+###############################################################################
 
 
 ALL_STAGE2_WEB_ENUM_TOOLS = [
-    WhatwebTool(),
+    WhatWebTool(),
     Wafw00fTool(),
     FFUFTool(),
+]
+
+
+###############################################################################
+# Module Metadata
+###############################################################################
+
+__all__ = [
+    "WhatWebTool",
+    "Wafw00fTool",
+    "FFUFTool",
+    "ALL_STAGE2_WEB_ENUM_TOOLS",
 ]
