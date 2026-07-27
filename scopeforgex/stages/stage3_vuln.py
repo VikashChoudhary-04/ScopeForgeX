@@ -1,46 +1,96 @@
 """
-ScopeForgeX Stage 3
-===================
+ScopeForgeX Stage 3 - Vulnerability Assessment
+==============================================
 
-Vulnerability Identification stage.
+Executes Stage 3 vulnerability assessment tools
+registered in the tool registry.
 
-Runs all registered Stage 3 vulnerability discovery tools.
+Uses the canonical ExecutionResult model.
 
-v0.4.0
+v0.5.0
 """
 
 from __future__ import annotations
 
 from scopeforgex.registry.tool_registry import build_registry
-from scopeforgex.ui import err, info, ok, stage, warn
+from scopeforgex.ui import stage, ok, warn, err, info
 
 
 def _print_tool_result(result):
     """
-    Display the outcome of a tool execution.
+    Display the outcome of a single Stage 3 tool.
+
+    Uses ExecutionResult fields:
+        success
+        tool
+        artifacts
+        findings
+        warnings
+        errors
+        metadata
     """
 
-    if result.ran:
-        ok(f"Tool completed: {result.name}")
+    if result.success:
+        ok(
+            f"Tool completed: {result.tool}"
+        )
     else:
-        warn(f"Tool skipped/failed: {result.name}")
+        warn(
+            f"Tool failed/skipped: {result.tool}"
+        )
 
-    if result.notes:
-        info(f"Notes: {result.notes}")
+    if result.metadata:
+        info(
+            f"Metadata: {result.metadata}"
+        )
 
-    if result.output_files:
-        for output in result.output_files:
-            info(f"Output: {output}")
+    if result.findings:
+        info(
+            f"Findings: {len(result.findings)}"
+        )
+
+    if result.errors:
+        for error in result.errors:
+            warn(
+                f"Error: {error}"
+            )
+
+    if result.warnings:
+        for warning in result.warnings:
+            warn(
+                f"Warning: {warning}"
+            )
+
+    if result.artifacts:
+        for artifact in result.artifacts:
+            info(
+                f"Artifact: {artifact}"
+            )
     else:
-        info("Output: (none)")
+        info(
+            "Artifacts: (none)"
+        )
 
 
 def stage3_vuln(ctx: dict):
     """
-    Execute Stage 3 vulnerability identification.
+    Execute all Stage 3 vulnerability assessment tools
+    registered for the current execution profile.
+
+    Supported profiles:
+        - full_safe (default)
+        - fast
     """
 
-    stage("STAGE 3 — VULNERABILITY IDENTIFICATION", "red")
+    stage(
+        "STAGE 3 — VULNERABILITY ASSESSMENT",
+        "green",
+    )
+
+    profile = ctx.get(
+        "profile",
+        "full_safe",
+    )
 
     tools = [
         tool
@@ -49,11 +99,43 @@ def stage3_vuln(ctx: dict):
     ]
 
     if not tools:
-        err("No Stage 3 tools registered.")
+        err(
+            "No Stage 3 tools registered."
+        )
         return
 
-    for tool in tools:
-        result = tool.run(ctx)
-        _print_tool_result(result)
+    if profile == "fast":
 
-    ok("Stage 3 vulnerability identification finished ✅")
+        allowed_tools = {
+            "nuclei",
+        }
+
+        warn(
+            "FAST mode: running vulnerability "
+            "scanner profile."
+        )
+
+        tools = [
+            tool
+            for tool in tools
+            if tool.name in allowed_tools
+        ]
+
+    for tool in tools:
+
+        result = tool.run(
+            ctx
+        )
+
+        _print_tool_result(
+            result
+        )
+
+    ok(
+        "Stage 3 vulnerability assessment finished ✅"
+    )
+
+
+__all__ = [
+    "stage3_vuln",
+]
