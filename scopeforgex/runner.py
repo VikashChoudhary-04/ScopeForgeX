@@ -10,21 +10,27 @@ Features
 * Consistent logging
 * Safe output handling
 * Timeout support
+* Structured execution results
 * Backward-compatible run_cmd() API
 
-v0.4.1
+v0.5.0
 """
 
 from __future__ import annotations
 
 import subprocess
+import time
+
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from typing import Mapping
 
+from scopeforgex.models.execution_result import ExecutionResult
 from scopeforgex.ui import info
 from scopeforgex.ui import warn
+
 
 ###############################################################################
 # Defaults
@@ -34,7 +40,7 @@ DEFAULT_TIMEOUT = 900
 
 
 ###############################################################################
-# Execution Result
+# Execution Metadata
 ###############################################################################
 
 
@@ -101,7 +107,7 @@ def _build_run_kwargs(
     execution: CommandExecution,
 ) -> dict[str, Any]:
     """
-    Build the common keyword arguments passed to subprocess.run().
+    Build subprocess keyword arguments.
     """
 
     return {
@@ -151,7 +157,133 @@ def _execute(
 
 
 ###############################################################################
-# Public API
+# Structured Command Execution
+###############################################################################
+
+
+def run_command(
+    *,
+    tool: str,
+    capability: str,
+    cmd: str,
+    outfile: str | None = None,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> ExecutionResult:
+    """
+    Execute a command and return a structured ExecutionResult.
+
+    This is the preferred API for new ScopeForgeX tools.
+
+    Existing tools should continue using run_cmd() until migrated.
+    """
+
+    started = datetime.now()
+    start_time = time.time()
+
+    output_file = _prepare_output(
+        outfile,
+    )
+
+    execution = CommandExecution(
+        command=cmd,
+        timeout=timeout,
+        outfile=output_file,
+    )
+
+    artifacts: list[str] = []
+
+    if output_file:
+        artifacts.append(
+            str(output_file)
+        )
+
+    try:
+
+        result = _execute(
+            execution,
+        )
+
+        finished = datetime.now()
+
+        duration = (
+            time.time()
+            - start_time
+        )
+
+        if result.returncode != 0:
+
+            return ExecutionResult.failure(
+                tool=tool,
+                capability=capability,
+                error=(
+                    f"Command exited with code "
+                    f"{result.returncode}"
+                ),
+                artifacts=artifacts,
+            )
+
+        structured = ExecutionResult.success_result(
+            tool=tool,
+            capability=capability,
+            artifacts=artifacts,
+        )
+
+        structured.started_at = started
+        structured.finished_at = finished
+        structured.duration = duration
+        structured.exit_code = result.returncode
+
+        return structured
+
+    except subprocess.TimeoutExpired:
+
+        finished = datetime.now()
+
+        structured = ExecutionResult.failure(
+            tool=tool,
+            capability=capability,
+            error=(
+                f"Timeout reached "
+                f"({timeout}s). "
+                "Command terminated."
+            ),
+            artifacts=artifacts,
+        )
+
+        structured.started_at = started
+        structured.finished_at = finished
+        structured.duration = (
+            time.time()
+            - start_time
+        )
+
+        return structured
+
+    except FileNotFoundError as exc:
+
+        return ExecutionResult.failure(
+            tool=tool,
+            capability=capability,
+            error=f"Executable not found: {exc}",
+            artifacts=artifacts,
+        )
+
+    except KeyboardInterrupt:
+
+        raise
+
+    except Exception as exc:
+
+        return ExecutionResult.failure(
+            tool=tool,
+            capability=capability,
+            error=f"Command failed: {exc}",
+            artifacts=artifacts,
+        )
+
+
+###############################################################################
+# Legacy Public API
 ###############################################################################
 
 
@@ -163,22 +295,7 @@ def run_cmd(
     """
     Execute a shell command.
 
-    Parameters
-    ----------
-    cmd:
-        Shell command to execute.
-
-    outfile:
-        Optional file receiving stdout/stderr.
-
-    timeout:
-        Maximum execution time in seconds.
-
-    Returns
-    -------
-    subprocess.CompletedProcess | None
-        CompletedProcess on success,
-        otherwise None.
+    Legacy API preserved for existing tools.
     """
 
     execution = CommandExecution(
@@ -188,6 +305,7 @@ def run_cmd(
             outfile,
         ),
     )
+
     try:
 
         result = _execute(
@@ -314,6 +432,7 @@ def run_cmd_success(
 __all__ = [
     "DEFAULT_TIMEOUT",
     "CommandExecution",
+    "run_command",
     "run_cmd",
     "run_cmd_success",
 ]
