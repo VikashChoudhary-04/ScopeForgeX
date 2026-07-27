@@ -5,7 +5,7 @@ ScopeForgeX Dashboard
 Interactive dashboard for launching workflows,
 installing tools, and viewing previous runs.
 
-v0.4.0
+v0.5.2
 """
 
 from __future__ import annotations
@@ -33,17 +33,45 @@ def _show_last_run():
     last = load_last_run()
 
     if not last:
-        warn("No previous run found.")
+        warn(
+            "No previous run found."
+        )
         return
 
-    ok("Loaded last run ✅")
+    ok(
+        "Loaded last run ✅"
+    )
 
     summary_table(
         "Last Run",
         [
-            ("Target Type", str(last.get("target_type", "-"))),
-            ("Target", str(last.get("target", "-"))),
-            ("Output Directory", str(last.get("outdir", "-"))),
+            (
+                "Target Type",
+                str(
+                    last.get(
+                        "target_type",
+                        "-",
+                    )
+                ),
+            ),
+            (
+                "Target",
+                str(
+                    last.get(
+                        "target",
+                        "-",
+                    )
+                ),
+            ),
+            (
+                "Output Directory",
+                str(
+                    last.get(
+                        "outdir",
+                        "-",
+                    )
+                ),
+            ),
         ],
     )
 
@@ -51,30 +79,52 @@ def _show_last_run():
 def dashboard():
     """
     Launch the interactive ScopeForgeX dashboard.
+
+    Executes one selected action and exits cleanly
+    after workflow completion.
     """
 
-    while True:
+    stage(
+        "ScopeForgeX Dashboard",
+        "green",
+    )
 
-        stage("ScopeForgeX Dashboard", "green")
+    choice = questionary.select(
+        "Choose an action:",
+        choices=[
+            *list(
+                _MENU_ACTIONS.keys()
+            ),
+            "View Last Run",
+            "Exit",
+        ],
+    ).ask()
 
-        choice = questionary.select(
-            "Choose an action:",
-            choices=[
-                *list(_MENU_ACTIONS.keys()),
-                "View Last Run",
-                "Exit",
-            ],
-        ).ask()
 
-        if choice == "Exit":
-            ok("Goodbye ✅")
-            break
+    if choice == "Exit":
 
-        if choice == "View Last Run":
-            _show_last_run()
-            continue
+        ok(
+            "Goodbye ✅"
+        )
 
-        action = _MENU_ACTIONS.get(choice)
+        return
 
-        if action is not None:
-            action()
+
+    if choice == "View Last Run":
+
+        _show_last_run()
+
+        return
+
+
+    action = _MENU_ACTIONS.get(
+        choice
+    )
+
+    if action is not None:
+
+        action()
+
+        ok(
+            "ScopeForgeX session finished ✅"
+        )
