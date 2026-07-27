@@ -14,14 +14,13 @@ Responsibilities
 * State persistence
 * Summary generation
 
-v0.5.0
+v0.5.2
 """
 
 from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from dataclasses import dataclass
 from typing import Callable
 
 from rich.progress import (
@@ -73,6 +72,16 @@ _STAGE_FUNCTIONS: dict[int, Callable[[dict], object]] = {
 }
 
 
+_STAGE_NAMES = {
+    1: "Reconnaissance",
+    2: "Enumeration",
+    3: "Vulnerability Assessment",
+    4: "Exploitation Preparation",
+    5: "Post Assessment",
+    6: "Reporting",
+}
+
+
 ###############################################################################
 # Workflow Engine
 ###############################################################################
@@ -108,6 +117,10 @@ class WorkflowEngine:
         )
 
         self.stage_results: list[StageResult] = []
+
+        self.ctx[
+            "stage_results"
+        ] = self.stage_results
 
 
     ###########################################################################
@@ -179,6 +192,10 @@ class WorkflowEngine:
         )
 
 
+        success = True
+        error_message = None
+
+
         try:
 
             stage_output = stage_function(
@@ -188,40 +205,22 @@ class WorkflowEngine:
 
             if stage_output:
 
-                if isinstance(
-                    stage_output,
-                    list,
-                ):
-
-                    self.runtime.metadata[
-                        f"stage_{stage_number}_results"
-                    ] = stage_output
-
-
-            finished = datetime.now(
-                timezone.utc
-            )
-
-
-            result = {
-                "stage": stage_number,
-                "name": stage_function.__name__,
-                "success": True,
-                "started": started.isoformat(),
-                "finished": finished.isoformat(),
-            }
-
-
-            self.runtime.metadata[
-                f"stage_{stage_number}"
-            ] = result
+                self.runtime.metadata[
+                    f"stage_{stage_number}_results"
+                ] = stage_output
 
 
         except Exception as exc:
 
+            success = False
+
+            error_message = str(
+                exc
+            )
+
             self.ctx[
                 "workflow_error"
-            ] = str(exc)
+            ] = error_message
 
             self.ctx[
                 "failed_stage"
@@ -233,8 +232,53 @@ class WorkflowEngine:
             )
 
             self.runtime.add_error(
-                str(exc)
+                error_message
             )
+
+
+        finished = datetime.now(
+            timezone.utc
+        )
+
+
+        result = StageResult(
+            tool=_STAGE_NAMES.get(
+                stage_number,
+                f"Stage {stage_number}",
+            ),
+            capability=f"stage_{stage_number}",
+            success=success,
+            started_at=started,
+            finished_at=finished,
+            errors=(
+                [error_message]
+                if error_message
+                else []
+            ),
+        )
+
+
+        self.stage_results.append(
+            result
+        )
+
+
+        self.ctx[
+            "stage_results"
+        ] = self.stage_results
+
+
+        self.runtime.metadata[
+            f"stage_{stage_number}"
+        ] = {
+            "name": _STAGE_NAMES.get(
+                stage_number,
+                f"Stage {stage_number}",
+            ),
+            "success": success,
+            "started": started.isoformat(),
+            "finished": finished.isoformat(),
+        }
 
 
     ###########################################################################
@@ -264,7 +308,6 @@ class WorkflowEngine:
                     "target",
                     "",
                 )
-
 
                 self.runtime.profile = self.profile_name
 
@@ -347,6 +390,11 @@ class WorkflowEngine:
         self.ctx[
             "workflow_end_time"
         ] = time.time()
+
+
+        self.ctx[
+            "stage_results"
+        ] = self.stage_results
 
 
         self.ctx[
