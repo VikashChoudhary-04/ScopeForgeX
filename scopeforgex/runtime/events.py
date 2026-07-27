@@ -2,25 +2,16 @@
 ScopeForgeX Runtime Events
 ==========================
 
-Defines immutable runtime event models used throughout the ScopeForgeX
-execution engine.
+Defines immutable runtime events emitted during workflow execution.
 
-Every meaningful action performed during workflow execution is represented
-as a structured RuntimeEvent. Events are emitted by the RuntimeState and
-consumed by subscribers such as loggers, dashboards, progress bars,
-reporters, or future remote execution services.
+Events provide an audit trail for:
+- workflow lifecycle
+- stage execution
+- tool execution
+- warnings
+- errors
 
-Design Principles
------------------
-- Immutable dataclasses.
-- Strong typing.
-- Standard-library only.
-- UTC timestamps.
-- UUID-based event identifiers.
-- JSON serialization friendly.
-- Thread-safe by design.
-
-This module intentionally contains no publish/subscribe logic.
+v0.5.0
 """
 
 from __future__ import annotations
@@ -28,158 +19,172 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from .enums import EventType, Severity, StageType
+
+###############################################################################
+# Helpers
+###############################################################################
 
 
 def utc_now() -> datetime:
-    """Return the current UTC timestamp."""
-    return datetime.now(timezone.utc)
+    """
+    Return current UTC timestamp.
+    """
+
+    return datetime.now(
+        timezone.utc
+    )
 
 
-# ============================================================================
+###############################################################################
 # Base Event
-# ============================================================================
+###############################################################################
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(
+    slots=True
+)
 class RuntimeEvent:
     """
-    Base class for all runtime events.
+    Base runtime event.
+
+    timestamp is keyword-only to prevent dataclass inheritance ordering
+    conflicts when child events define required fields.
     """
 
-    event_type: EventType
+    timestamp: datetime = field(
+        default_factory=utc_now,
+        kw_only=True,
+    )
+
+    metadata: dict[str, Any] = field(
+        default_factory=dict,
+        kw_only=True,
+    )
+
+
+###############################################################################
+# Workflow Events
+###############################################################################
+
+
+@dataclass(
+    slots=True
+)
+class WorkflowStartedEvent(RuntimeEvent):
+    """
+    Emitted when workflow execution starts.
+    """
+
+    workflow_id: UUID
+    target: str
+    profile: str
+
+
+@dataclass(
+    slots=True
+)
+class WorkflowFinishedEvent(RuntimeEvent):
+    """
+    Emitted when workflow execution finishes.
+    """
+
+    workflow_id: UUID
+    success: bool
+
+
+###############################################################################
+# Stage Events
+###############################################################################
+
+
+@dataclass(
+    slots=True
+)
+class StageStartedEvent(RuntimeEvent):
+    """
+    Emitted when a pipeline stage starts.
+    """
+
+    stage: int
+    name: str
+
+
+@dataclass(
+    slots=True
+)
+class StageFinishedEvent(RuntimeEvent):
+    """
+    Emitted when a pipeline stage completes.
+    """
+
+    stage: int
+    name: str
+    success: bool
+
+
+###############################################################################
+# Tool Events
+###############################################################################
+
+
+@dataclass(
+    slots=True
+)
+class ToolStartedEvent(RuntimeEvent):
+    """
+    Emitted when a tool starts execution.
+    """
+
+    tool: str
+    capability: str
+
+
+@dataclass(
+    slots=True
+)
+class ToolFinishedEvent(RuntimeEvent):
+    """
+    Emitted when a tool finishes execution.
+    """
+
+    tool: str
+    success: bool
+    duration: float
+
+
+###############################################################################
+# Diagnostic Events
+###############################################################################
+
+
+@dataclass(
+    slots=True
+)
+class WarningEvent(RuntimeEvent):
+    """
+    Runtime warning event.
+    """
 
     message: str
 
-    workflow_id: str | None = None
 
-    stage: StageType | None = None
+@dataclass(
+    slots=True
+)
+class ErrorEvent(RuntimeEvent):
+    """
+    Runtime error event.
+    """
 
-    tool: str | None = None
-
-    severity: Severity = Severity.INFO
-
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    timestamp: datetime = field(default_factory=utc_now)
-
-    event_id: UUID = field(default_factory=uuid4)
+    message: str
 
 
-# ============================================================================
-# Workflow Events
-# ============================================================================
+###############################################################################
+# Public Exports
+###############################################################################
 
-
-@dataclass(frozen=True, slots=True)
-class WorkflowStartedEvent(RuntimeEvent):
-    """Workflow execution started."""
-
-    event_type: EventType = EventType.WORKFLOW_STARTED
-
-
-@dataclass(frozen=True, slots=True)
-class WorkflowFinishedEvent(RuntimeEvent):
-    """Workflow execution finished."""
-
-    event_type: EventType = EventType.WORKFLOW_FINISHED
-
-
-# ============================================================================
-# Stage Events
-# ============================================================================
-
-
-@dataclass(frozen=True, slots=True)
-class StageStartedEvent(RuntimeEvent):
-    """Workflow stage started."""
-
-    event_type: EventType = EventType.STAGE_STARTED
-
-
-@dataclass(frozen=True, slots=True)
-class StageFinishedEvent(RuntimeEvent):
-    """Workflow stage finished."""
-
-    event_type: EventType = EventType.STAGE_FINISHED
-
-
-# ============================================================================
-# Tool Events
-# ============================================================================
-
-
-@dataclass(frozen=True, slots=True)
-class ToolStartedEvent(RuntimeEvent):
-    """Tool execution started."""
-
-    event_type: EventType = EventType.TOOL_STARTED
-
-
-@dataclass(frozen=True, slots=True)
-class ToolFinishedEvent(RuntimeEvent):
-    """Tool execution finished."""
-
-    event_type: EventType = EventType.TOOL_FINISHED
-
-
-# ============================================================================
-# Artifact Events
-# ============================================================================
-
-
-@dataclass(frozen=True, slots=True)
-class ArtifactCreatedEvent(RuntimeEvent):
-    """Artifact successfully created."""
-
-    event_type: EventType = EventType.ARTIFACT_CREATED
-
-
-# ============================================================================
-# Finding Events
-# ============================================================================
-
-
-@dataclass(frozen=True, slots=True)
-class FindingRecordedEvent(RuntimeEvent):
-    """Security finding recorded."""
-
-    event_type: EventType = EventType.FINDING_RECORDED
-
-
-# ============================================================================
-# Warning Events
-# ============================================================================
-
-
-@dataclass(frozen=True, slots=True)
-class WarningRecordedEvent(RuntimeEvent):
-    """Runtime warning recorded."""
-
-    event_type: EventType = EventType.WARNING_RECORDED
-
-    severity: Severity = Severity.MEDIUM
-
-
-# ============================================================================
-# Error Events
-# ============================================================================
-
-
-@dataclass(frozen=True, slots=True)
-class ErrorRecordedEvent(RuntimeEvent):
-    """Runtime error recorded."""
-
-    event_type: EventType = EventType.ERROR_RECORDED
-
-    severity: Severity = Severity.HIGH
-
-
-# ============================================================================
-# Public API
-# ============================================================================
 
 __all__ = [
     "RuntimeEvent",
@@ -189,9 +194,6 @@ __all__ = [
     "StageFinishedEvent",
     "ToolStartedEvent",
     "ToolFinishedEvent",
-    "ArtifactCreatedEvent",
-    "FindingRecordedEvent",
-    "WarningRecordedEvent",
-    "ErrorRecordedEvent",
-    "utc_now",
+    "WarningEvent",
+    "ErrorEvent",
 ]
