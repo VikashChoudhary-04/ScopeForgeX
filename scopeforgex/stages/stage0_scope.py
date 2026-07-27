@@ -1,146 +1,165 @@
 """
-ScopeForgeX Stage 0
-===================
+ScopeForgeX Stage 0 — Scope Validation
+======================================
 
-Scope definition and legal authorization.
+Responsible for:
+- Authorization confirmation
+- Target collection
+- Target classification
+- Pipeline initialization
 
-This stage:
-- Verifies authorization
-- Collects the target
-- Validates the target
-- Creates the output directory structure
-- Initializes the pipeline context
-
-v0.4.1
+v0.5.0
 """
 
 from __future__ import annotations
 
-from typing import NoReturn
+import ipaddress
+import re
 
-import questionary
-
-from scopeforgex.stages.shared import (
-    init_output_dirs,
-    pipeline_paths,
-)
-from scopeforgex.ui import err, ok, stage
-from scopeforgex.utils import load_yaml
-from scopeforgex.validators import (
-    is_valid_domain,
-    is_valid_ip_or_cidr,
+from scopeforgex.ui import (
+    stage,
+    ok,
+    warn,
 )
 
-###############################################################################
-# Constants
-###############################################################################
-
-TARGET_WEB = "web"
-TARGET_NETWORK = "network"
-
-WEB_LABEL = "Web / Domain"
-NETWORK_LABEL = "Network / IP Range"
+from scopeforgex.stages.shared import pipeline_paths
 
 
 ###############################################################################
-# Helpers
+# Target Detection
 ###############################################################################
 
 
-def _abort(message: str) -> NoReturn:
+def _is_cidr(value: str) -> bool:
     """
-    Display an error and terminate execution.
-    """
-
-    err(message)
-    raise SystemExit(1)
-
-
-def _get_web_target() -> tuple[str, str]:
-    """
-    Collect and validate a web target.
-
-    Returns
-    -------
-    tuple[str, str]
-        (target, output_directory_name)
+    Detect IPv4/IPv6 CIDR ranges.
     """
 
-    target = (
-        questionary.text(
-            "Enter domain (example.com):"
-        ).ask()
-        or ""
-    ).strip()
+    try:
+        ipaddress.ip_network(
+            value,
+            strict=False,
+        )
 
-    if not is_valid_domain(target):
-        _abort("Invalid domain format.")
+        return "/" in value
 
-    output_name = target.replace(".", "_")
+    except ValueError:
 
-    return target, output_name
+        return False
 
 
-def _get_network_target() -> tuple[str, str]:
+
+def _is_ip(value: str) -> bool:
     """
-    Collect and validate a network target.
-
-    Returns
-    -------
-    tuple[str, str]
-        (target, output_directory_name)
+    Detect plain IP address.
     """
 
-    target = (
-        questionary.text(
-            "Enter IP / range (e.g. 10.10.10.0/24):"
-        ).ask()
-        or ""
-    ).strip()
+    try:
 
-    if not is_valid_ip_or_cidr(target):
-        _abort("Invalid IP/range.")
+        ipaddress.ip_address(
+            value
+        )
 
-    output_name = (
-        target.replace("/", "_")
-        .replace(".", "_")
-        .replace(":", "_")
+        return True
+
+    except ValueError:
+
+        return False
+
+
+
+def _is_ip_port(value: str) -> bool:
+    """
+    Detect IP:PORT targets.
+    """
+
+    pattern = (
+        r"^\d{1,3}"
+        r"(\.\d{1,3}){3}"
+        r":\d+$"
     )
 
-    return target, output_name
+    return bool(
+        re.match(
+            pattern,
+            value,
+        )
+    )
+
+
+
+def _is_url(value: str) -> bool:
+    """
+    Detect HTTP/HTTPS URLs.
+    """
+
+    return value.startswith(
+        (
+            "http://",
+            "https://",
+        )
+    )
+
+
+
+def classify_target(
+    target: str,
+) -> str:
+    """
+    Classify target type.
+
+    Returns:
+        web
+        network
+    """
+
+    if _is_cidr(
+        target
+    ):
+
+        return "network"
+
+
+    if (
+        _is_url(target)
+        or _is_ip_port(target)
+        or _is_ip(target)
+    ):
+
+        return "web"
+
+
+    return "web"
+
+
+
+###############################################################################
+# Pipeline Initialization
+###############################################################################
 
 
 def _initialize_pipeline(
-    ctx: dict[str, object],
-    base_dir: str,
-    output_name: str,
+    ctx: dict,
 ) -> None:
-    """
-    Initialize the output directory structure and
-    pipeline paths.
-    """
 
-    outdir = init_output_dirs(
-        base_dir,
-        output_name,
+    ctx[
+        "pipeline"
+    ] = pipeline_paths(
+        ctx["outdir"]
     )
 
-    ctx["outdir"] = outdir
-    ctx["pipeline"] = pipeline_paths(
-        outdir,
-    )
 
 
 ###############################################################################
-# Stage
+# Stage Entry
 ###############################################################################
 
 
 def stage0_scope(
-    ctx: dict[str, object],
+    ctx: dict,
 ) -> None:
     """
-    Initialize workflow scope and execution context.
+    Validate scope and initialize workflow context.
     """
 
     stage(
@@ -148,61 +167,86 @@ def stage0_scope(
         "blue",
     )
 
-    authorized = questionary.confirm(
-        "Do you have written authorization?"
-    ).ask()
 
-    if not authorized:
-        _abort(
-            "STOP: Written authorization required."
+    authorized = input(
+        "Do you have written authorization? (yes/no): "
+    ).strip().lower()
+
+
+    if authorized not in (
+        "yes",
+        "y",
+    ):
+
+        raise RuntimeError(
+            "Authorization not confirmed."
         )
 
-    target_selection = questionary.select(
-        "Choose target type:",
-        choices=[
-            WEB_LABEL,
-            NETWORK_LABEL,
-        ],
-    ).ask()
 
-    config = load_yaml(
-        "config/default.yaml"
+    target = input(
+        "Enter target: "
+    ).strip()
+
+
+    if not target:
+
+        raise RuntimeError(
+            "Target cannot be empty."
+        )
+
+
+    target_type = classify_target(
+        target
     )
 
-    base_dir = config.get(
-        "output_base_dir",
-        "outputs",
+
+    ctx[
+        "target"
+    ] = target
+
+
+    ctx[
+        "target_type"
+    ] = target_type
+
+
+    safe_name = (
+        target
+        .replace(
+            "://",
+            "_",
+        )
+        .replace(
+            "/",
+            "_",
+        )
+        .replace(
+            ":",
+            "_",
+        )
     )
 
-    if target_selection == WEB_LABEL:
 
-        target, output_name = _get_web_target()
+    ctx[
+        "outdir"
+    ] = (
+        f"outputs/{safe_name}"
+    )
 
-        ctx["target_type"] = TARGET_WEB
-
-    else:
-
-        target, output_name = _get_network_target()
-
-        ctx["target_type"] = TARGET_NETWORK
-
-    ctx["target"] = target
 
     _initialize_pipeline(
-        ctx,
-        base_dir,
-        output_name,
+        ctx
     )
+
 
     ok(
         f"Target set: {target}"
     )
 
 
-###############################################################################
-# Public Exports
-###############################################################################
+    if target_type == "network":
 
-__all__ = [
-    "stage0_scope",
-]
+        warn(
+            "Network target detected. "
+            "Web application discovery will be skipped."
+        )
