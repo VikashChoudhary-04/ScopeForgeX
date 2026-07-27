@@ -26,6 +26,7 @@ from scopeforgex.models.execution_result import ExecutionResult
 from scopeforgex.registry.tool_base import ToolBase
 from scopeforgex.runner import run_cmd
 from scopeforgex.toolcheck import is_tool_installed
+from scopeforgex.ui import stage
 
 
 ###############################################################################
@@ -62,7 +63,7 @@ def _merge_files(
     destination: Path,
 ) -> None:
     """
-    Merge JSONL outputs.
+    Merge Nuclei JSONL outputs.
     """
 
     with destination.open(
@@ -156,21 +157,18 @@ def _analyse_findings(
             )
 
 
-            sev = info.get(
-                "severity",
-                "unknown",
-            )
-
-
             severity[
-                sev
+                info.get(
+                    "severity",
+                    "unknown",
+                )
             ] += 1
+
 
 
             template = data.get(
                 "template-id"
             )
-
 
             if template:
 
@@ -179,10 +177,10 @@ def _analyse_findings(
                 )
 
 
+
             host = data.get(
                 "host"
             )
-
 
             if host:
 
@@ -191,22 +189,12 @@ def _analyse_findings(
                 )
 
 
+
     return {
-
         "finding_count": findings,
-
-        "severity": dict(
-            severity
-        ),
-
-        "templates": sorted(
-            templates
-        ),
-
-        "hosts": sorted(
-            hosts
-        ),
-
+        "severity": dict(severity),
+        "templates": sorted(templates),
+        "hosts": sorted(hosts),
     }
 
 
@@ -237,7 +225,7 @@ class NucleiTool(
         ctx: dict,
     ) -> ExecutionResult:
         """
-        Execute vulnerability assessment.
+        Execute Nuclei scanning.
         """
 
         if not is_tool_installed(
@@ -257,16 +245,9 @@ class NucleiTool(
         )
 
 
-        recon = (
-            outdir /
-            "recon"
-        )
+        recon = outdir / "recon"
 
-
-        vuln = (
-            outdir /
-            "vuln"
-        )
+        vuln = outdir / "vuln"
 
 
         vuln.mkdir(
@@ -275,12 +256,10 @@ class NucleiTool(
         )
 
 
-
         hosts = (
             recon /
             "hosts_final.txt"
         )
-
 
         urls = (
             recon /
@@ -289,14 +268,9 @@ class NucleiTool(
 
 
 
-        profile = ctx.get(
-            "profile",
-            "fast",
-        )
-
-
-
-        if profile == "full_safe":
+        if ctx.get(
+            "profile"
+        ) == "full_safe":
 
             severity = (
                 "info,low,medium,high,critical"
@@ -310,29 +284,25 @@ class NucleiTool(
 
 
 
-        host_json = (
+        hosts_json = (
             vuln /
             "nuclei_hosts.jsonl"
         )
 
-
-        url_json = (
+        urls_json = (
             vuln /
             "nuclei_urls.jsonl"
         )
-
 
         all_json = (
             vuln /
             "nuclei_all.jsonl"
         )
 
-
         findings_file = (
             vuln /
             "nuclei_findings.txt"
         )
-
 
         summary_file = (
             vuln /
@@ -340,17 +310,13 @@ class NucleiTool(
         )
 
 
-
         artifacts = []
 
 
 
-        if _count_lines(
-            hosts
-        ):
+        if _count_lines(hosts):
 
             run_cmd(
-
                 (
                     f"nuclei "
                     f"-l {hosts} "
@@ -359,34 +325,27 @@ class NucleiTool(
                     f"-rate-limit 30 "
                     f"-timeout 5 "
                     f"-retries 1 "
-                    f"-o {host_json}"
+                    f"-o {hosts_json}"
                 ),
-
                 outfile=str(
                     vuln /
                     "nuclei_hosts.log"
                 ),
-
                 timeout=900,
-
             )
-
 
             artifacts.extend(
                 [
-                    str(host_json),
+                    str(hosts_json),
                     str(vuln / "nuclei_hosts.log"),
                 ]
             )
 
 
 
-        if _count_lines(
-            urls
-        ):
+        if _count_lines(urls):
 
             run_cmd(
-
                 (
                     f"nuclei "
                     f"-l {urls} "
@@ -395,22 +354,18 @@ class NucleiTool(
                     f"-rate-limit 30 "
                     f"-timeout 5 "
                     f"-retries 1 "
-                    f"-o {url_json}"
+                    f"-o {urls_json}"
                 ),
-
                 outfile=str(
                     vuln /
                     "nuclei_urls.log"
                 ),
-
                 timeout=900,
-
             )
-
 
             artifacts.extend(
                 [
-                    str(url_json),
+                    str(urls_json),
                     str(vuln / "nuclei_urls.log"),
                 ]
             )
@@ -419,8 +374,8 @@ class NucleiTool(
 
         _merge_files(
             [
-                host_json,
-                url_json,
+                hosts_json,
+                urls_json,
             ],
             all_json,
         )
@@ -435,14 +390,10 @@ class NucleiTool(
 
         findings_file.write_text(
             "\n".join(
-                [
-                    str(item)
-                    for item in analysis["templates"]
-                ]
+                analysis["templates"]
             ),
             encoding="utf-8",
         )
-
 
 
         summary_file.write_text(
@@ -466,32 +417,16 @@ class NucleiTool(
 
 
         return ExecutionResult.success_result(
-
             tool=self.name,
-
             capability="vulnerability_scanning",
-
             artifacts=artifacts,
-
             metadata={
-
-                "severity_profile":
-                    severity,
-
-                "finding_count":
-                    analysis["finding_count"],
-
-                "severity":
-                    analysis["severity"],
-
+                "severity_profile": severity,
+                "finding_count": analysis["finding_count"],
+                "severity": analysis["severity"],
                 "message":
-                    (
-                        "Nuclei vulnerability "
-                        "assessment completed."
-                    ),
-
+                    "Nuclei vulnerability assessment completed.",
             },
-
         )
 
 
@@ -505,8 +440,14 @@ def stage3_vuln(
     ctx: dict,
 ) -> ExecutionResult:
     """
-    Execute Stage 3.
+    Execute Stage 3 vulnerability assessment.
     """
+
+    stage(
+        "STAGE 3 — VULNERABILITY ASSESSMENT",
+        "red",
+    )
+
 
     result = NucleiTool().run(
         ctx
@@ -523,6 +464,11 @@ def stage3_vuln(
 
     return result
 
+
+
+###############################################################################
+# Public API
+###############################################################################
 
 
 __all__ = [
