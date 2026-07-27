@@ -1,15 +1,8 @@
 """
 ScopeForgeX Execution Result Model
-==================================
+===================================
 
-Canonical execution result returned by ScopeForgeX capabilities.
-
-Provides:
-- Standard execution metadata
-- Artifact tracking
-- Finding tracking
-- Warning/error collection
-- Backward-compatible result constructors
+Canonical execution result object used by all tools.
 
 v0.5.0
 """
@@ -17,54 +10,49 @@ v0.5.0
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
+
+
+###############################################################################
+# Helpers
+###############################################################################
+
+
+def utc_now() -> datetime:
+    """
+    Return current UTC timestamp.
+    """
+
+    return datetime.now(
+        timezone.utc
+    )
+
+
+###############################################################################
+# Execution Result
+###############################################################################
 
 
 @dataclass(slots=True)
 class ExecutionResult:
     """
-    Canonical execution result for every ScopeForgeX capability.
+    Standard result returned by every ScopeForgeX tool.
     """
-
-    # ------------------------------------------------------------------
-    # Identity
-    # ------------------------------------------------------------------
 
     tool: str
 
     capability: str
 
-    # ------------------------------------------------------------------
-    # Execution
-    # ------------------------------------------------------------------
-
     success: bool
 
-    started_at: datetime
-
-    finished_at: datetime
-
-    duration: float
-
-    exit_code: int | None = None
-
-    # ------------------------------------------------------------------
-    # Outputs
-    # ------------------------------------------------------------------
-
-    artifacts: list[Path] = field(
+    artifacts: list[str] = field(
         default_factory=list,
     )
 
     findings: list[Any] = field(
         default_factory=list,
     )
-
-    # ------------------------------------------------------------------
-    # Diagnostics
-    # ------------------------------------------------------------------
 
     warnings: list[str] = field(
         default_factory=list,
@@ -78,115 +66,137 @@ class ExecutionResult:
         default_factory=dict,
     )
 
-    # ------------------------------------------------------------------
-    # Convenience Properties
-    # ------------------------------------------------------------------
+    started_at: datetime = field(
+        default_factory=utc_now,
+    )
 
-    @property
-    def successful(self) -> bool:
-        """
-        Compatibility alias.
-        """
-
-        return self.success
+    finished_at: datetime = field(
+        default_factory=utc_now,
+    )
 
 
-    @property
-    def failed(self) -> bool:
-        """
-        Compatibility alias.
-        """
+    ###########################################################################
+    # Constructors
+    ###########################################################################
 
-        return not self.success
-
-
-    @property
-    def artifact_count(self) -> int:
-        return len(
-            self.artifacts
-        )
-
-
-    @property
-    def finding_count(self) -> int:
-        return len(
-            self.findings
-        )
-
-
-    @property
-    def has_warnings(self) -> bool:
-        return bool(
-            self.warnings
-        )
-
-
-    @property
-    def has_errors(self) -> bool:
-        return bool(
-            self.errors
-        )
-
-
-    # ------------------------------------------------------------------
-    # Backward Compatibility Constructors
-    # ------------------------------------------------------------------
 
     @classmethod
     def success_result(
         cls,
         tool: str,
-        capability: str = "",
-        artifacts: list[Path] | None = None,
-        findings: list[Any] | None = None,
-        metadata: dict[str, Any] | None = None,
+        capability: str,
+        artifacts=None,
+        findings=None,
+        metadata=None,
+        warnings=None,
     ) -> "ExecutionResult":
         """
-        Create a successful execution result.
-
-        Keeps existing tool implementations compatible
-        with the v0.5.0 runtime model.
+        Create successful execution result.
         """
-
-        now = datetime.now()
 
         return cls(
             tool=tool,
             capability=capability,
             success=True,
-            started_at=now,
-            finished_at=now,
-            duration=0.0,
-            artifacts=artifacts or [],
-            findings=findings or [],
+            artifacts=list(
+                artifacts or []
+            ),
+            findings=list(
+                findings or []
+            ),
+            warnings=list(
+                warnings or []
+            ),
+            errors=[],
             metadata=metadata or {},
         )
 
 
     @classmethod
-    def failure_result(
+    def failure(
         cls,
         tool: str,
+        capability: str,
         error: str,
-        capability: str = "",
+        artifacts=None,
+        metadata=None,
     ) -> "ExecutionResult":
         """
-        Create a failed execution result.
+        Create failed execution result.
         """
-
-        now = datetime.now()
 
         return cls(
             tool=tool,
             capability=capability,
             success=False,
-            started_at=now,
-            finished_at=now,
-            duration=0.0,
+            artifacts=list(
+                artifacts or []
+            ),
+            findings=[],
+            warnings=[],
             errors=[
-                error,
+                error
             ],
+            metadata=metadata or {},
         )
+
+
+    @classmethod
+    def skipped(
+        cls,
+        tool: str,
+        capability: str,
+        reason: str,
+    ) -> "ExecutionResult":
+        """
+        Create skipped execution result.
+        """
+
+        return cls(
+            tool=tool,
+            capability=capability,
+            success=False,
+            artifacts=[],
+            findings=[],
+            warnings=[
+                reason
+            ],
+            errors=[],
+            metadata={
+                "status": "skipped",
+            },
+        )
+
+
+    ###########################################################################
+    # Serialization
+    ###########################################################################
+
+
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
+        """
+        Convert result to dictionary.
+        """
+
+        return {
+            "tool": self.tool,
+            "capability": self.capability,
+            "success": self.success,
+            "artifacts": self.artifacts,
+            "findings": self.findings,
+            "warnings": self.warnings,
+            "errors": self.errors,
+            "metadata": self.metadata,
+            "started_at": self.started_at.isoformat(),
+            "finished_at": self.finished_at.isoformat(),
+        }
+
+
+###############################################################################
+# Public API
+###############################################################################
 
 
 __all__ = [
