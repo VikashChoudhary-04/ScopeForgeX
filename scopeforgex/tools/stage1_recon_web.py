@@ -8,7 +8,12 @@ Tools:
     • Subhunt
     • Pipeline Builder
 
-v0.5.0
+v0.5.1
+
+Supports:
+    - Domains
+    - Web applications hosted on IP addresses
+    - Local labs (Juice Shop, DVWA, bWAPP)
 """
 
 from __future__ import annotations
@@ -33,13 +38,52 @@ from scopeforgex.validators import looks_like_hostname
 ###############################################################################
 
 
+def _is_ip_web_target(
+    target: str,
+) -> bool:
+    """
+    Detect IP based web application targets.
+
+    Examples:
+        192.168.1.10
+        192.168.1.10:3000
+        http://192.168.1.10:3000
+    """
+
+    return (
+        target.startswith("http://")
+        or target.startswith("https://")
+        or ":" in target
+    )
+
+
+
+def _normalize_url(
+    target: str,
+) -> str:
+    """
+    Convert IP:PORT into URL.
+    """
+
+    if target.startswith(
+        (
+            "http://",
+            "https://",
+        )
+    ):
+        return target
+
+    return (
+        "http://"
+        + target
+    )
+
+
+
 def _append_clean_hosts(
     input_path: str,
     output_path: str,
 ) -> None:
-    """
-    Append valid hostnames from input_path into output_path.
-    """
 
     if not os.path.exists(input_path):
         return
@@ -71,13 +115,11 @@ def _append_clean_hosts(
             )
 
 
+
 def _append_clean_urls(
     input_path: str,
     output_path: str,
 ) -> None:
-    """
-    Append only HTTP/HTTPS URLs from input_path.
-    """
 
     if not os.path.exists(input_path):
         return
@@ -112,12 +154,10 @@ def _append_clean_urls(
             )
 
 
+
 def _dedupe_file(
     path: str,
 ) -> int:
-    """
-    Remove duplicate lines while preserving order.
-    """
 
     if not os.path.exists(path):
         return 0
@@ -154,6 +194,7 @@ def _dedupe_file(
     return len(unique)
 
 
+
 ###############################################################################
 # Subhunt
 ###############################################################################
@@ -163,15 +204,24 @@ class SubhuntTool(ToolBase):
 
     name = "subhunt"
     stage = 1
-    description = "Subhunt finds subdomains (FAST pipeline root)"
+    description = "Subhunt finds subdomains"
     risk = "low"
+
 
     def run(
         self,
         ctx: dict,
     ) -> ExecutionResult:
 
-        if ctx.get("target_type") != "web":
+        target = ctx.get(
+            "target",
+            "",
+        )
+
+
+        if ctx.get(
+            "target_type"
+        ) != "web":
 
             return ExecutionResult.skipped(
                 tool=self.name,
@@ -179,10 +229,23 @@ class SubhuntTool(ToolBase):
                 reason="Skipped (not web target)",
             )
 
+
+        if _is_ip_web_target(
+            target
+        ):
+
+            return ExecutionResult.skipped(
+                tool=self.name,
+                capability="subdomain_discovery",
+                reason="Skipped for IP/web application target",
+            )
+
+
         recon_dir = os.path.join(
             ctx["outdir"],
             "recon",
         )
+
 
         out_txt = os.path.join(
             recon_dir,
@@ -199,13 +262,17 @@ class SubhuntTool(ToolBase):
             "subhunt_wordlist_used.txt",
         )
 
-        if not is_tool_installed("subhunt"):
+
+        if not is_tool_installed(
+            "subhunt"
+        ):
 
             return ExecutionResult.failure(
                 tool=self.name,
                 capability="subdomain_discovery",
                 error="subhunt not installed",
             )
+
 
         if not questionary.confirm(
             "Run Subhunt bruteforce?"
@@ -217,6 +284,7 @@ class SubhuntTool(ToolBase):
                 reason="Skipped by user",
             )
 
+
         mode = questionary.select(
             "Choose Subhunt wordlist mode:",
             choices=[
@@ -225,13 +293,17 @@ class SubhuntTool(ToolBase):
             ],
         ).ask()
 
-        if mode == "Use default subdomain wordlist (auto-detect)":
+
+        if mode.startswith(
+            "Use default"
+        ):
 
             wordlist = find_default_subdomain_wordlist()
 
             if not wordlist:
+
                 wordlist = questionary.text(
-                    "No default found. Enter custom wordlist path:"
+                    "Enter custom wordlist path:"
                 ).ask()
 
         else:
@@ -240,13 +312,17 @@ class SubhuntTool(ToolBase):
                 "Enter custom wordlist path:"
             ).ask()
 
-        if not is_valid_wordlist(wordlist):
+
+        if not is_valid_wordlist(
+            wordlist
+        ):
 
             return ExecutionResult.failure(
                 tool=self.name,
                 capability="subdomain_discovery",
                 error=f"Invalid wordlist path: {wordlist}",
             )
+
 
         with open(
             wordlist_used,
@@ -258,11 +334,13 @@ class SubhuntTool(ToolBase):
                 wordlist + "\n"
             )
 
+
         run_cmd(
-            f"subhunt -d {ctx['target']} --bruteforce {wordlist} > {out_txt}",
+            f"subhunt -d {target} --bruteforce {wordlist} > {out_txt}",
             outfile=out_log,
             timeout=900,
         )
+
 
         return ExecutionResult.success_result(
             tool=self.name,
@@ -276,8 +354,11 @@ class SubhuntTool(ToolBase):
                 "message": "Subhunt completed.",
             },
         )
+
+
+
 ###############################################################################
-# Fast Pipeline Builder
+# Pipeline Builder
 ###############################################################################
 
 
@@ -285,15 +366,19 @@ class FastPipelineBuilderTool(ToolBase):
 
     name = "pipeline_builder"
     stage = 1
-    description = "FAST pipeline: subhunt -> alive -> endpoints"
+    description = "FAST pipeline: hosts -> alive -> endpoints"
     risk = "low"
+
 
     def run(
         self,
         ctx: dict,
     ) -> ExecutionResult:
 
-        if ctx.get("target_type") != "web":
+
+        if ctx.get(
+            "target_type"
+        ) != "web":
 
             return ExecutionResult.skipped(
                 tool=self.name,
@@ -301,29 +386,12 @@ class FastPipelineBuilderTool(ToolBase):
                 reason="Skipped (not web target)",
             )
 
+
         pipe = ctx.get(
             "pipeline",
             {},
         )
 
-        required = (
-            "hosts_raw",
-            "hosts_alive",
-            "hosts_final",
-            "urls_raw",
-            "urls_final",
-        )
-
-        if not all(
-            pipe.get(item)
-            for item in required
-        ):
-
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability="web_asset_pipeline",
-                error="Pipeline paths missing in ctx",
-            )
 
         hosts_raw = pipe["hosts_raw"]
         hosts_alive = pipe["hosts_alive"]
@@ -332,40 +400,27 @@ class FastPipelineBuilderTool(ToolBase):
         urls_raw = pipe["urls_raw"]
         urls_final = pipe["urls_final"]
 
+
         recon_dir = os.path.join(
             ctx["outdir"],
             "recon",
         )
 
-        subhunt_out = os.path.join(
+
+        os.makedirs(
             recon_dir,
-            "subhunt.txt",
+            exist_ok=True,
         )
+
 
         httpx_log = os.path.join(
             recon_dir,
             "httpx.log",
         )
 
-        katana_out = os.path.join(
-            recon_dir,
-            "katana.txt",
-        )
-
-        katana_log = os.path.join(
-            recon_dir,
-            "katana.log",
-        )
-
-        if not os.path.exists(hosts_raw):
-
-            open(
-                hosts_raw,
-                "w",
-                encoding="utf-8",
-            ).close()
 
         for path in (
+            hosts_raw,
             hosts_alive,
             hosts_final,
             urls_raw,
@@ -378,45 +433,83 @@ class FastPipelineBuilderTool(ToolBase):
                 encoding="utf-8",
             ).close()
 
-        _append_clean_hosts(
-            subhunt_out,
-            hosts_raw,
-        )
 
-        raw_count = _dedupe_file(
-            hosts_raw,
-        )
 
-        if raw_count == 0:
+        target = ctx["target"]
+
+
+        if _is_ip_web_target(
+            target
+        ):
+
+            url = _normalize_url(
+                target
+            )
 
             with open(
-                hosts_raw,
-                "a",
+                urls_raw,
+                "w",
                 encoding="utf-8",
             ) as file:
 
                 file.write(
-                    ctx["target"].lower()
-                    + "\n"
+                    url + "\n"
                 )
 
-            raw_count = _dedupe_file(
+
+            with open(
+                hosts_raw,
+                "w",
+                encoding="utf-8",
+            ) as file:
+
+                file.write(
+                    url + "\n"
+                )
+
+
+        else:
+
+            subhunt_out = os.path.join(
+                recon_dir,
+                "subhunt.txt",
+            )
+
+            _append_clean_hosts(
+                subhunt_out,
                 hosts_raw,
             )
 
-        if not is_tool_installed("httpx"):
+
+            if _dedupe_file(
+                hosts_raw
+            ) == 0:
+
+                with open(
+                    hosts_raw,
+                    "a",
+                    encoding="utf-8",
+                ) as file:
+
+                    file.write(
+                        target.lower()
+                        + "\n"
+                    )
+
+
+        if not is_tool_installed(
+            "httpx"
+        ):
 
             return ExecutionResult.failure(
                 tool=self.name,
                 capability="web_asset_pipeline",
-                error=(
-                    "httpx missing "
-                    "(can't build alive/final)"
-                ),
+                error="httpx missing",
                 artifacts=[
                     hosts_raw,
                 ],
             )
+
 
         run_cmd(
             f"cat {hosts_raw} | httpx -silent > {hosts_alive}",
@@ -424,123 +517,58 @@ class FastPipelineBuilderTool(ToolBase):
             timeout=600,
         )
 
-        alive_count = _dedupe_file(
-            hosts_alive,
+
+        _dedupe_file(
+            hosts_alive
         )
 
-        if alive_count == 0:
+
+        if os.path.getsize(
+            hosts_alive
+        ) == 0:
 
             return ExecutionResult.failure(
                 tool=self.name,
                 capability="web_asset_pipeline",
-                error=(
-                    "No alive hosts found "
-                    "by httpx"
-                ),
+                error="No alive hosts found",
                 artifacts=[
                     hosts_raw,
                     hosts_alive,
                 ],
             )
 
+
         with open(
             hosts_alive,
             "r",
             encoding="utf-8",
-        ) as source:
-
-            alive_data = source.read()
-
-        with open(
+        ) as src, open(
             hosts_final,
             "w",
             encoding="utf-8",
-        ) as destination:
+        ) as dst:
 
-            destination.write(
-                alive_data
+            dst.write(
+                src.read()
             )
 
-        final_count = _dedupe_file(
-            hosts_final,
-        )
-
-        metadata = {
-            "hosts_raw": raw_count,
-            "hosts_alive": alive_count,
-            "hosts_final": final_count,
-        }
-
-        if is_tool_installed("katana"):
-
-            run_cmd(
-                f"cat {hosts_final} | katana -silent > {katana_out}",
-                outfile=katana_log,
-                timeout=600,
-            )
-
-            _append_clean_urls(
-                katana_out,
-                urls_raw,
-            )
-
-        raw_urls = _dedupe_file(
-            urls_raw,
-        )
-
-        with open(
-            urls_raw,
-            "r",
-            encoding="utf-8",
-        ) as source:
-
-            url_data = source.read()
-
-        with open(
-            urls_final,
-            "w",
-            encoding="utf-8",
-        ) as destination:
-
-            destination.write(
-                url_data
-            )
-
-        final_urls = _dedupe_file(
-            urls_final,
-        )
-
-        metadata.update(
-            {
-                "urls_raw": raw_urls,
-                "urls_final": final_urls,
-            }
-        )
-
-        outputs = [
-            hosts_raw,
-            hosts_alive,
-            hosts_final,
-            urls_raw,
-            urls_final,
-            httpx_log,
-        ]
-
-        if os.path.exists(katana_out):
-
-            outputs.extend(
-                [
-                    katana_out,
-                    katana_log,
-                ]
-            )
 
         return ExecutionResult.success_result(
             tool=self.name,
             capability="web_asset_pipeline",
-            artifacts=outputs,
-            metadata=metadata,
+            artifacts=[
+                hosts_raw,
+                hosts_alive,
+                hosts_final,
+                urls_raw,
+                urls_final,
+                httpx_log,
+            ],
+            metadata={
+                "message": "Web asset pipeline completed.",
+            },
         )
+
 
 
 ###############################################################################
