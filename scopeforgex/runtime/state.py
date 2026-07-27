@@ -27,15 +27,22 @@ from threading import RLock
 from typing import Any
 from uuid import UUID, uuid4
 
+from scopeforgex.models.execution_result import ExecutionResult
+
 from .artifacts import Artifact
 from .events import RuntimeEvent
-from .results import StageResult, ToolResult, WorkflowResult
+from .results import StageResult, WorkflowResult
 from .statistics import WorkflowStatistics
 
 
 def utc_now() -> datetime:
-    """Return the current UTC timestamp."""
-    return datetime.now(timezone.utc)
+    """
+    Return the current UTC timestamp.
+    """
+
+    return datetime.now(
+        timezone.utc
+    )
 
 
 # ============================================================================
@@ -49,7 +56,9 @@ class RuntimeState:
     Central execution state for an entire ScopeForgeX workflow.
     """
 
-    workflow_id: UUID = field(default_factory=uuid4)
+    workflow_id: UUID = field(
+        default_factory=uuid4
+    )
 
     target: str = ""
 
@@ -57,31 +66,53 @@ class RuntimeState:
 
     schema_version: str = "1.0"
 
-    started_at: datetime = field(default_factory=utc_now)
+    started_at: datetime = field(
+        default_factory=utc_now
+    )
 
     finished_at: datetime | None = None
 
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(
+        default_factory=dict
+    )
 
-    statistics: WorkflowStatistics = field(default_factory=WorkflowStatistics)
+    statistics: WorkflowStatistics = field(
+        default_factory=WorkflowStatistics
+    )
 
-    events: list[RuntimeEvent] = field(default_factory=list)
+    events: list[RuntimeEvent] = field(
+        default_factory=list
+    )
 
-    artifacts: list[Artifact] = field(default_factory=list)
+    artifacts: list[Artifact] = field(
+        default_factory=list
+    )
 
-    stage_results: list[StageResult] = field(default_factory=list)
+    stage_results: list[StageResult] = field(
+        default_factory=list
+    )
 
-    tool_results: list[ToolResult] = field(default_factory=list)
+    tool_results: list[ExecutionResult] = field(
+        default_factory=list
+    )
 
     workflow_result: WorkflowResult | None = None
 
-    warnings: list[str] = field(default_factory=list)
+    warnings: list[str] = field(
+        default_factory=list
+    )
 
-    errors: list[str] = field(default_factory=list)
+    errors: list[str] = field(
+        default_factory=list
+    )
 
     frozen: bool = False
 
-    _lock: RLock = field(default_factory=RLock, init=False, repr=False)
+    _lock: RLock = field(
+        default_factory=RLock,
+        init=False,
+        repr=False,
+    )
 
     # ------------------------------------------------------------------
     # Internal
@@ -97,7 +128,11 @@ class RuntimeState:
     # Events
     # ------------------------------------------------------------------
 
-    def publish(self, event: RuntimeEvent) -> None:
+    def publish(
+        self,
+        event: RuntimeEvent,
+    ) -> None:
+
         with self._lock:
             self._ensure_mutable()
             self.events.append(event)
@@ -106,7 +141,11 @@ class RuntimeState:
     # Artifacts
     # ------------------------------------------------------------------
 
-    def add_artifact(self, artifact: Artifact) -> None:
+    def add_artifact(
+        self,
+        artifact: Artifact,
+    ) -> None:
+
         with self._lock:
             self._ensure_mutable()
             self.artifacts.append(artifact)
@@ -116,7 +155,11 @@ class RuntimeState:
     # Tool Results
     # ------------------------------------------------------------------
 
-    def add_tool_result(self, result: ToolResult) -> None:
+    def add_tool_result(
+        self,
+        result: ExecutionResult,
+    ) -> None:
+
         with self._lock:
             self._ensure_mutable()
             self.tool_results.append(result)
@@ -126,7 +169,11 @@ class RuntimeState:
     # Stage Results
     # ------------------------------------------------------------------
 
-    def add_stage_result(self, result: StageResult) -> None:
+    def add_stage_result(
+        self,
+        result: StageResult,
+    ) -> None:
+
         with self._lock:
             self._ensure_mutable()
             self.stage_results.append(result)
@@ -136,7 +183,11 @@ class RuntimeState:
     # Warnings
     # ------------------------------------------------------------------
 
-    def add_warning(self, warning: str) -> None:
+    def add_warning(
+        self,
+        warning: str,
+    ) -> None:
+
         with self._lock:
             self._ensure_mutable()
             self.warnings.append(warning)
@@ -146,7 +197,11 @@ class RuntimeState:
     # Errors
     # ------------------------------------------------------------------
 
-    def add_error(self, error: str) -> None:
+    def add_error(
+        self,
+        error: str,
+    ) -> None:
+
         with self._lock:
             self._ensure_mutable()
             self.errors.append(error)
@@ -156,7 +211,11 @@ class RuntimeState:
     # Workflow Result
     # ------------------------------------------------------------------
 
-    def set_workflow_result(self, result: WorkflowResult) -> None:
+    def set_workflow_result(
+        self,
+        result: WorkflowResult,
+    ) -> None:
+
         with self._lock:
             self._ensure_mutable()
             self.workflow_result = result
@@ -165,17 +224,23 @@ class RuntimeState:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def finish(self) -> None:
+    def finish(
+        self,
+    ) -> None:
         """
         Mark workflow execution complete.
         """
+
         with self._lock:
             self.finished_at = utc_now()
 
-    def freeze(self) -> None:
+    def freeze(
+        self,
+    ) -> None:
         """
         Prevent any further runtime mutations.
         """
+
         with self._lock:
             self.frozen = True
 
@@ -183,13 +248,20 @@ class RuntimeState:
     # Serialization
     # ------------------------------------------------------------------
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
+
         return {
-            "workflow_id": str(self.workflow_id),
+            "workflow_id": str(
+                self.workflow_id
+            ),
             "schema_version": self.schema_version,
             "target": self.target,
             "profile": self.profile,
-            "started_at": self.started_at.isoformat(),
+            "started_at": (
+                self.started_at.isoformat()
+            ),
             "finished_at": (
                 self.finished_at.isoformat()
                 if self.finished_at
