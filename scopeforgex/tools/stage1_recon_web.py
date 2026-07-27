@@ -8,7 +8,7 @@ Tools:
     • Subhunt
     • Pipeline Builder
 
-v0.5.1
+v0.5.2
 
 Supports:
     - Domains
@@ -84,6 +84,9 @@ def _append_clean_hosts(
     input_path: str,
     output_path: str,
 ) -> None:
+    """
+    Append valid hosts from a discovery file.
+    """
 
     if not os.path.exists(input_path):
         return
@@ -120,6 +123,9 @@ def _append_clean_urls(
     input_path: str,
     output_path: str,
 ) -> None:
+    """
+    Append HTTP/HTTPS URLs only.
+    """
 
     if not os.path.exists(input_path):
         return
@@ -158,6 +164,9 @@ def _append_clean_urls(
 def _dedupe_file(
     path: str,
 ) -> int:
+    """
+    Remove duplicate lines.
+    """
 
     if not os.path.exists(path):
         return 0
@@ -354,11 +363,8 @@ class SubhuntTool(ToolBase):
                 "message": "Subhunt completed.",
             },
         )
-
-
-
 ###############################################################################
-# Pipeline Builder
+# Fast Pipeline Builder
 ###############################################################################
 
 
@@ -374,7 +380,6 @@ class FastPipelineBuilderTool(ToolBase):
         self,
         ctx: dict,
     ) -> ExecutionResult:
-
 
         if ctx.get(
             "target_type"
@@ -434,9 +439,15 @@ class FastPipelineBuilderTool(ToolBase):
             ).close()
 
 
+        target = ctx.get(
+            "target",
+            "",
+        )
 
-        target = ctx["target"]
 
+        #######################################################################
+        # IP/Web Application Pipeline
+        #######################################################################
 
         if _is_ip_web_target(
             target
@@ -446,55 +457,84 @@ class FastPipelineBuilderTool(ToolBase):
                 target
             )
 
-            with open(
+            for path in (
+                hosts_raw,
+                hosts_alive,
+                hosts_final,
                 urls_raw,
-                "w",
-                encoding="utf-8",
-            ) as file:
-
-                file.write(
-                    url + "\n"
-                )
-
-
-            with open(
-                hosts_raw,
-                "w",
-                encoding="utf-8",
-            ) as file:
-
-                file.write(
-                    url + "\n"
-                )
-
-
-        else:
-
-            subhunt_out = os.path.join(
-                recon_dir,
-                "subhunt.txt",
-            )
-
-            _append_clean_hosts(
-                subhunt_out,
-                hosts_raw,
-            )
-
-
-            if _dedupe_file(
-                hosts_raw
-            ) == 0:
+                urls_final,
+            ):
 
                 with open(
-                    hosts_raw,
-                    "a",
+                    path,
+                    "w",
                     encoding="utf-8",
                 ) as file:
 
                     file.write(
-                        target.lower()
-                        + "\n"
+                        url + "\n"
                     )
+
+
+            return ExecutionResult.success_result(
+                tool=self.name,
+                capability="web_asset_pipeline",
+                artifacts=[
+                    hosts_raw,
+                    hosts_alive,
+                    hosts_final,
+                    urls_raw,
+                    urls_final,
+                ],
+                metadata={
+                    "message": (
+                        "IP/web application "
+                        "pipeline completed."
+                    ),
+                    "target": url,
+                    "mode": "direct_url",
+                },
+            )
+
+
+        #######################################################################
+        # Domain Pipeline
+        #######################################################################
+
+        subhunt_out = os.path.join(
+            recon_dir,
+            "subhunt.txt",
+        )
+
+
+        _append_clean_hosts(
+            subhunt_out,
+            hosts_raw,
+        )
+
+
+        raw_count = _dedupe_file(
+            hosts_raw,
+        )
+
+
+        if raw_count == 0:
+
+            with open(
+                hosts_raw,
+                "a",
+                encoding="utf-8",
+            ) as file:
+
+                file.write(
+                    target.lower()
+                    + "\n"
+                )
+
+
+            raw_count = _dedupe_file(
+                hosts_raw
+            )
 
 
         if not is_tool_installed(
@@ -518,19 +558,17 @@ class FastPipelineBuilderTool(ToolBase):
         )
 
 
-        _dedupe_file(
+        alive_count = _dedupe_file(
             hosts_alive
         )
 
 
-        if os.path.getsize(
-            hosts_alive
-        ) == 0:
+        if alive_count == 0:
 
             return ExecutionResult.failure(
                 tool=self.name,
                 capability="web_asset_pipeline",
-                error="No alive hosts found",
+                error="No alive hosts found by httpx",
                 artifacts=[
                     hosts_raw,
                     hosts_alive,
@@ -542,15 +580,73 @@ class FastPipelineBuilderTool(ToolBase):
             hosts_alive,
             "r",
             encoding="utf-8",
-        ) as src, open(
+        ) as source, open(
             hosts_final,
             "w",
             encoding="utf-8",
-        ) as dst:
+        ) as destination:
 
-            dst.write(
-                src.read()
+            destination.write(
+                source.read()
             )
+
+
+        final_count = _dedupe_file(
+            hosts_final
+        )
+
+
+        if is_tool_installed(
+            "katana"
+        ):
+
+            katana_out = os.path.join(
+                recon_dir,
+                "katana.txt",
+            )
+
+            katana_log = os.path.join(
+                recon_dir,
+                "katana.log",
+            )
+
+
+            run_cmd(
+                f"cat {hosts_final} | katana -silent > {katana_out}",
+                outfile=katana_log,
+                timeout=600,
+            )
+
+
+            _append_clean_urls(
+                katana_out,
+                urls_raw,
+            )
+
+
+        raw_urls = _dedupe_file(
+            urls_raw
+        )
+
+
+        with open(
+            urls_raw,
+            "r",
+            encoding="utf-8",
+        ) as source, open(
+            urls_final,
+            "w",
+            encoding="utf-8",
+        ) as destination:
+
+            destination.write(
+                source.read()
+            )
+
+
+        final_urls = _dedupe_file(
+            urls_final
+        )
 
 
         return ExecutionResult.success_result(
@@ -565,10 +661,16 @@ class FastPipelineBuilderTool(ToolBase):
                 httpx_log,
             ],
             metadata={
-                "message": "Web asset pipeline completed.",
+                "message": (
+                    "Web asset pipeline completed."
+                ),
+                "hosts_raw": raw_count,
+                "hosts_alive": alive_count,
+                "hosts_final": final_count,
+                "urls_raw": raw_urls,
+                "urls_final": final_urls,
             },
         )
-
 
 
 ###############################################################################
