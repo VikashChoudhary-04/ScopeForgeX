@@ -13,7 +13,7 @@ Responsibilities
 * Generate vulnerability summaries
 * Preserve ExecutionResult compatibility
 
-v0.6.2
+v0.6.3
 """
 
 from __future__ import annotations
@@ -26,7 +26,80 @@ from scopeforgex.models.execution_result import ExecutionResult
 from scopeforgex.registry.tool_base import ToolBase
 from scopeforgex.runner import run_cmd
 from scopeforgex.toolcheck import is_tool_installed
-from scopeforgex.ui import stage
+
+from scopeforgex.ui import (
+    stage,
+    ok,
+    warn,
+    info,
+)
+
+
+###############################################################################
+# Result Display
+###############################################################################
+
+
+def _print_tool_result(
+    result,
+) -> None:
+    """
+    Display Stage 3 execution result.
+    """
+
+    if result.success:
+
+        ok(
+            f"Tool completed: {result.tool}"
+        )
+
+    else:
+
+        warn(
+            f"Tool failed/skipped: {result.tool}"
+        )
+
+
+    if result.metadata:
+
+        for key, value in result.metadata.items():
+
+            info(
+                f"{key}: {value}"
+            )
+
+
+    if result.errors:
+
+        for error in result.errors:
+
+            warn(
+                f"Error: {error}"
+            )
+
+
+    if result.warnings:
+
+        for warning in result.warnings:
+
+            warn(
+                f"Warning: {warning}"
+            )
+
+
+    if result.artifacts:
+
+        for artifact in result.artifacts:
+
+            info(
+                f"Artifact: {artifact}"
+            )
+
+    else:
+
+        info(
+            "Artifact: (none)"
+        )
 
 
 ###############################################################################
@@ -74,18 +147,22 @@ def _merge_files(
         for source in sources:
 
             if not source.exists():
+
                 continue
+
 
             content = source.read_text(
                 encoding="utf-8",
                 errors="ignore",
             )
 
+
             if content.strip():
 
                 output.write(
                     content
                 )
+
 
                 if not content.endswith(
                     "\n"
@@ -133,6 +210,7 @@ def _analyse_findings(
         for line in handle:
 
             if not line.strip():
+
                 continue
 
 
@@ -147,23 +225,21 @@ def _analyse_findings(
                 continue
 
 
-
             findings += 1
 
 
-            info = data.get(
+            info_data = data.get(
                 "info",
                 {},
             )
 
 
             severity[
-                info.get(
+                info_data.get(
                     "severity",
                     "unknown",
                 )
             ] += 1
-
 
 
             template = data.get(
@@ -177,7 +253,6 @@ def _analyse_findings(
                 )
 
 
-
             host = data.get(
                 "host"
             )
@@ -189,14 +264,12 @@ def _analyse_findings(
                 )
 
 
-
     return {
         "finding_count": findings,
         "severity": dict(severity),
         "templates": sorted(templates),
         "hosts": sorted(hosts),
     }
-
 
 
 ###############################################################################
@@ -239,7 +312,6 @@ class NucleiTool(
             )
 
 
-
         outdir = Path(
             ctx["outdir"]
         )
@@ -261,11 +333,11 @@ class NucleiTool(
             "hosts_final.txt"
         )
 
+
         urls = (
             recon /
             "urls_final.txt"
         )
-
 
 
         if ctx.get(
@@ -281,7 +353,9 @@ class NucleiTool(
             severity = (
                 "high,critical"
             )
-
+###############################################################################
+# Nuclei Execution
+###############################################################################
 
 
         hosts_json = (
@@ -313,8 +387,9 @@ class NucleiTool(
         artifacts = []
 
 
-
-        if _count_lines(hosts):
+        if _count_lines(
+            hosts
+        ):
 
             run_cmd(
                 (
@@ -334,16 +409,21 @@ class NucleiTool(
                 timeout=900,
             )
 
+
             artifacts.extend(
                 [
                     str(hosts_json),
-                    str(vuln / "nuclei_hosts.log"),
+                    str(
+                        vuln /
+                        "nuclei_hosts.log"
+                    ),
                 ]
             )
 
 
-
-        if _count_lines(urls):
+        if _count_lines(
+            urls
+        ):
 
             run_cmd(
                 (
@@ -363,13 +443,16 @@ class NucleiTool(
                 timeout=900,
             )
 
+
             artifacts.extend(
                 [
                     str(urls_json),
-                    str(vuln / "nuclei_urls.log"),
+                    str(
+                        vuln /
+                        "nuclei_urls.log"
+                    ),
                 ]
             )
-
 
 
         _merge_files(
@@ -381,11 +464,9 @@ class NucleiTool(
         )
 
 
-
         analysis = _analyse_findings(
             all_json
         )
-
 
 
         findings_file.write_text(
@@ -405,7 +486,6 @@ class NucleiTool(
         )
 
 
-
         artifacts.extend(
             [
                 str(all_json),
@@ -413,7 +493,6 @@ class NucleiTool(
                 str(summary_file),
             ]
         )
-
 
 
         return ExecutionResult.success_result(
@@ -443,6 +522,7 @@ def stage3_vuln(
     Execute Stage 3 vulnerability assessment.
     """
 
+
     stage(
         "STAGE 3 — VULNERABILITY ASSESSMENT",
         "red",
@@ -454,11 +534,21 @@ def stage3_vuln(
     )
 
 
+    _print_tool_result(
+        result
+    )
+
+
     ctx.setdefault(
         "tool_results",
         [],
     ).append(
         result
+    )
+
+
+    ok(
+        "Stage 3 vulnerability assessment finished ✅"
     )
 
 
