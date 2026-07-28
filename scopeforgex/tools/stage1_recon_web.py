@@ -1,36 +1,37 @@
 """
-ScopeForgeX Stage 1 - Web Recon Tools
-=====================================
+ScopeForgeX Stage 1 Web Recon Tools
+===================================
 
-Web reconnaissance implementations.
+Reconnaissance tools for web targets.
 
-Tools:
-    • Subhunt
-    • Pipeline Builder
+Includes:
+    - Subhunt integration
+    - FAST pipeline builder
 
-v0.5.2
-
-Supports:
-    - Domains
-    - Web applications hosted on IP addresses
-    - Local labs (Juice Shop, DVWA, bWAPP)
+v0.5.1
 """
 
 from __future__ import annotations
 
 import os
 
-import questionary
+from scopeforgex.execution import ExecutionResult
+from scopeforgex.tools.base import ToolBase
+from scopeforgex.tools.utils import (
+    is_tool_installed,
+    run_cmd,
+)
 
-from scopeforgex.models.execution_result import ExecutionResult
-from scopeforgex.registry.tool_base import ToolBase
-from scopeforgex.runner import run_cmd
-from scopeforgex.toolcheck import is_tool_installed
-from scopeforgex.wordlists import (
+from scopeforgex.utils.wordlists import (
     find_default_subdomain_wordlist,
     is_valid_wordlist,
 )
-from scopeforgex.validators import looks_like_hostname
+
+from scopeforgex.utils.target import (
+    _is_ip_web_target,
+)
+
+import questionary
 
 
 ###############################################################################
@@ -38,134 +39,9 @@ from scopeforgex.validators import looks_like_hostname
 ###############################################################################
 
 
-def _is_ip_web_target(
-    target: str,
-) -> bool:
+def _count_lines(path: str) -> int:
     """
-    Detect IP based web application targets.
-
-    Examples:
-        192.168.1.10
-        192.168.1.10:3000
-        http://192.168.1.10:3000
-    """
-
-    return (
-        target.startswith("http://")
-        or target.startswith("https://")
-        or ":" in target
-    )
-
-
-
-def _normalize_url(
-    target: str,
-) -> str:
-    """
-    Convert IP:PORT into URL.
-    """
-
-    if target.startswith(
-        (
-            "http://",
-            "https://",
-        )
-    ):
-        return target
-
-    return (
-        "http://"
-        + target
-    )
-
-
-
-def _append_clean_hosts(
-    input_path: str,
-    output_path: str,
-) -> None:
-    """
-    Append valid hosts from a discovery file.
-    """
-
-    if not os.path.exists(input_path):
-        return
-
-    with open(
-        input_path,
-        "r",
-        encoding="utf-8",
-        errors="ignore",
-    ) as infile:
-
-        hosts = [
-            line.strip().lower()
-            for line in infile
-            if looks_like_hostname(
-                line.strip()
-            )
-        ]
-
-    with open(
-        output_path,
-        "a",
-        encoding="utf-8",
-    ) as outfile:
-
-        for host in hosts:
-            outfile.write(
-                host + "\n"
-            )
-
-
-
-def _append_clean_urls(
-    input_path: str,
-    output_path: str,
-) -> None:
-    """
-    Append HTTP/HTTPS URLs only.
-    """
-
-    if not os.path.exists(input_path):
-        return
-
-    with open(
-        input_path,
-        "r",
-        encoding="utf-8",
-        errors="ignore",
-    ) as infile:
-
-        urls = [
-            line.strip()
-            for line in infile
-            if line.strip().startswith(
-                (
-                    "http://",
-                    "https://",
-                )
-            )
-        ]
-
-    with open(
-        output_path,
-        "a",
-        encoding="utf-8",
-    ) as outfile:
-
-        for url in urls:
-            outfile.write(
-                url + "\n"
-            )
-
-
-
-def _dedupe_file(
-    path: str,
-) -> int:
-    """
-    Remove duplicate lines.
+    Count non-empty lines.
     """
 
     if not os.path.exists(path):
@@ -176,32 +52,13 @@ def _dedupe_file(
         "r",
         encoding="utf-8",
         errors="ignore",
-    ) as infile:
+    ) as file:
 
-        lines = [
-            line.strip()
-            for line in infile
+        return sum(
+            1
+            for line in file
             if line.strip()
-        ]
-
-    unique = list(
-        dict.fromkeys(lines)
-    )
-
-    with open(
-        path,
-        "w",
-        encoding="utf-8",
-    ) as outfile:
-
-        if unique:
-            outfile.write(
-                "\n".join(unique)
-                + "\n"
-            )
-
-    return len(unique)
-
+        )
 
 
 ###############################################################################
@@ -253,6 +110,12 @@ class SubhuntTool(ToolBase):
         recon_dir = os.path.join(
             ctx["outdir"],
             "recon",
+        )
+
+
+        os.makedirs(
+            recon_dir,
+            exist_ok=True,
         )
 
 
@@ -333,14 +196,24 @@ class SubhuntTool(ToolBase):
             )
 
 
-        with open(
-            wordlist_used,
-            "w",
-            encoding="utf-8",
-        ) as file:
+        try:
 
-            file.write(
-                wordlist + "\n"
+            with open(
+                wordlist_used,
+                "w",
+                encoding="utf-8",
+            ) as file:
+
+                file.write(
+                    wordlist + "\n"
+                )
+
+        except Exception as exc:
+
+            return ExecutionResult.failure(
+                tool=self.name,
+                capability="subdomain_discovery",
+                error=f"Unable to save wordlist artifact: {exc}",
             )
 
 
@@ -351,20 +224,32 @@ class SubhuntTool(ToolBase):
         )
 
 
-        return ExecutionResult.success_result(
-            tool=self.name,
-            capability="subdomain_discovery",
-            artifacts=[
+        artifacts = [
+            path
+            for path in (
                 out_txt,
                 out_log,
                 wordlist_used,
-            ],
+            )
+            if os.path.exists(path)
+        ]
+
+
+        return ExecutionResult.success_result(
+            tool=self.name,
+            capability="subdomain_discovery",
+            artifacts=artifacts,
             metadata={
                 "message": "Subhunt completed.",
+                "subdomains_found": _count_lines(
+                    out_txt
+                ),
             },
         )
+
+
 ###############################################################################
-# Fast Pipeline Builder
+# FAST Pipeline Builder
 ###############################################################################
 
 
@@ -380,6 +265,7 @@ class FastPipelineBuilderTool(ToolBase):
         self,
         ctx: dict,
     ) -> ExecutionResult:
+
 
         if ctx.get(
             "target_type"
@@ -418,12 +304,6 @@ class FastPipelineBuilderTool(ToolBase):
         )
 
 
-        httpx_log = os.path.join(
-            recon_dir,
-            "httpx.log",
-        )
-
-
         for path in (
             hosts_raw,
             hosts_alive,
@@ -445,35 +325,69 @@ class FastPipelineBuilderTool(ToolBase):
         )
 
 
-        #######################################################################
-        # IP/Web Application Pipeline
-        #######################################################################
-
         if _is_ip_web_target(
             target
         ):
 
-            url = _normalize_url(
+            url = (
                 target
+                if target.startswith("http")
+                else f"http://{target}"
             )
 
-            for path in (
+            with open(
                 hosts_raw,
+                "w",
+                encoding="utf-8",
+            ) as file:
+
+                file.write(
+                    target + "\n"
+                )
+
+
+            with open(
                 hosts_alive,
+                "w",
+                encoding="utf-8",
+            ) as file:
+
+                file.write(
+                    target + "\n"
+                )
+
+
+            with open(
                 hosts_final,
+                "w",
+                encoding="utf-8",
+            ) as file:
+
+                file.write(
+                    target + "\n"
+                )
+
+
+            with open(
                 urls_raw,
+                "w",
+                encoding="utf-8",
+            ) as file:
+
+                file.write(
+                    url + "\n"
+                )
+
+
+            with open(
                 urls_final,
-            ):
+                "w",
+                encoding="utf-8",
+            ) as file:
 
-                with open(
-                    path,
-                    "w",
-                    encoding="utf-8",
-                ) as file:
-
-                    file.write(
-                        url + "\n"
-                    )
+                file.write(
+                    url + "\n"
+                )
 
 
             return ExecutionResult.success_result(
@@ -487,166 +401,11 @@ class FastPipelineBuilderTool(ToolBase):
                     urls_final,
                 ],
                 metadata={
-                    "message": (
-                        "IP/web application "
-                        "pipeline completed."
-                    ),
-                    "target": url,
+                    "message": "IP/web application pipeline completed.",
                     "mode": "direct_url",
+                    "target": url,
                 },
             )
-
-
-        #######################################################################
-        # Domain Pipeline
-        #######################################################################
-
-        subhunt_out = os.path.join(
-            recon_dir,
-            "subhunt.txt",
-        )
-
-
-        _append_clean_hosts(
-            subhunt_out,
-            hosts_raw,
-        )
-
-
-        raw_count = _dedupe_file(
-            hosts_raw,
-        )
-
-
-        if raw_count == 0:
-
-            with open(
-                hosts_raw,
-                "a",
-                encoding="utf-8",
-            ) as file:
-
-                file.write(
-                    target.lower()
-                    + "\n"
-                )
-
-
-            raw_count = _dedupe_file(
-                hosts_raw
-            )
-
-
-        if not is_tool_installed(
-            "httpx"
-        ):
-
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability="web_asset_pipeline",
-                error="httpx missing",
-                artifacts=[
-                    hosts_raw,
-                ],
-            )
-
-
-        run_cmd(
-            f"cat {hosts_raw} | httpx -silent > {hosts_alive}",
-            outfile=httpx_log,
-            timeout=600,
-        )
-
-
-        alive_count = _dedupe_file(
-            hosts_alive
-        )
-
-
-        if alive_count == 0:
-
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability="web_asset_pipeline",
-                error="No alive hosts found by httpx",
-                artifacts=[
-                    hosts_raw,
-                    hosts_alive,
-                ],
-            )
-
-
-        with open(
-            hosts_alive,
-            "r",
-            encoding="utf-8",
-        ) as source, open(
-            hosts_final,
-            "w",
-            encoding="utf-8",
-        ) as destination:
-
-            destination.write(
-                source.read()
-            )
-
-
-        final_count = _dedupe_file(
-            hosts_final
-        )
-
-
-        if is_tool_installed(
-            "katana"
-        ):
-
-            katana_out = os.path.join(
-                recon_dir,
-                "katana.txt",
-            )
-
-            katana_log = os.path.join(
-                recon_dir,
-                "katana.log",
-            )
-
-
-            run_cmd(
-                f"cat {hosts_final} | katana -silent > {katana_out}",
-                outfile=katana_log,
-                timeout=600,
-            )
-
-
-            _append_clean_urls(
-                katana_out,
-                urls_raw,
-            )
-
-
-        raw_urls = _dedupe_file(
-            urls_raw
-        )
-
-
-        with open(
-            urls_raw,
-            "r",
-            encoding="utf-8",
-        ) as source, open(
-            urls_final,
-            "w",
-            encoding="utf-8",
-        ) as destination:
-
-            destination.write(
-                source.read()
-            )
-
-
-        final_urls = _dedupe_file(
-            urls_final
-        )
 
 
         return ExecutionResult.success_result(
@@ -658,27 +417,16 @@ class FastPipelineBuilderTool(ToolBase):
                 hosts_final,
                 urls_raw,
                 urls_final,
-                httpx_log,
             ],
             metadata={
-                "message": (
-                    "Web asset pipeline completed."
-                ),
-                "hosts_raw": raw_count,
-                "hosts_alive": alive_count,
-                "hosts_final": final_count,
-                "urls_raw": raw_urls,
-                "urls_final": final_urls,
+                "message": "Domain pipeline completed.",
+                "mode": "domain",
+                "target": target,
             },
         )
 
 
-###############################################################################
-# Registry Export
-###############################################################################
-
-
-ALL_STAGE1_WEB_TOOLS = [
-    SubhuntTool(),
-    FastPipelineBuilderTool(),
+__all__ = [
+    "SubhuntTool",
+    "FastPipelineBuilderTool",
 ]
