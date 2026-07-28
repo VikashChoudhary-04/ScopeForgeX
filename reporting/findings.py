@@ -4,7 +4,7 @@ ScopeForgeX Findings Engine
 
 Vulnerability finding normalization layer.
 
-v0.6.0
+v1.0.0
 
 Responsibilities:
     - Parse scanner outputs
