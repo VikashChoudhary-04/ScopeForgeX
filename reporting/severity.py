@@ -4,7 +4,7 @@ ScopeForgeX Severity Engine
 
 Severity classification and risk calculation engine.
 
-v0.6.0
+v1.0.0
 
 Responsibilities:
     - Normalize severity values
