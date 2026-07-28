@@ -8,15 +8,19 @@ Includes:
     - Subhunt integration
     - FAST pipeline builder
 
-v0.5.1
+v0.5.2
 """
 
 from __future__ import annotations
 
 import os
 
-from scopeforgex.execution import ExecutionResult
+import questionary
+
+from scopeforgex.models.execution_result import ExecutionResult
+
 from scopeforgex.tools.base import ToolBase
+
 from scopeforgex.tools.utils import (
     is_tool_installed,
     run_cmd,
@@ -31,17 +35,17 @@ from scopeforgex.utils.target import (
     _is_ip_web_target,
 )
 
-import questionary
-
 
 ###############################################################################
 # Helpers
 ###############################################################################
 
 
-def _count_lines(path: str) -> int:
+def _count_lines(
+    path: str,
+) -> int:
     """
-    Count non-empty lines.
+    Count non-empty lines in a file.
     """
 
     if not os.path.exists(path):
@@ -225,13 +229,15 @@ class SubhuntTool(ToolBase):
 
 
         artifacts = [
-            path
-            for path in (
+            artifact
+            for artifact in (
                 out_txt,
                 out_log,
                 wordlist_used,
             )
-            if os.path.exists(path)
+            if os.path.exists(
+                artifact
+            )
         ]
 
 
@@ -331,63 +337,30 @@ class FastPipelineBuilderTool(ToolBase):
 
             url = (
                 target
-                if target.startswith("http")
+                if target.startswith(
+                    "http"
+                )
                 else f"http://{target}"
             )
 
-            with open(
-                hosts_raw,
-                "w",
-                encoding="utf-8",
-            ) as file:
 
-                file.write(
-                    target + "\n"
-                )
+            for path, value in (
+                (hosts_raw, target),
+                (hosts_alive, target),
+                (hosts_final, target),
+                (urls_raw, url),
+                (urls_final, url),
+            ):
 
+                with open(
+                    path,
+                    "w",
+                    encoding="utf-8",
+                ) as file:
 
-            with open(
-                hosts_alive,
-                "w",
-                encoding="utf-8",
-            ) as file:
-
-                file.write(
-                    target + "\n"
-                )
-
-
-            with open(
-                hosts_final,
-                "w",
-                encoding="utf-8",
-            ) as file:
-
-                file.write(
-                    target + "\n"
-                )
-
-
-            with open(
-                urls_raw,
-                "w",
-                encoding="utf-8",
-            ) as file:
-
-                file.write(
-                    url + "\n"
-                )
-
-
-            with open(
-                urls_final,
-                "w",
-                encoding="utf-8",
-            ) as file:
-
-                file.write(
-                    url + "\n"
-                )
+                    file.write(
+                        value + "\n"
+                    )
 
 
             return ExecutionResult.success_result(
