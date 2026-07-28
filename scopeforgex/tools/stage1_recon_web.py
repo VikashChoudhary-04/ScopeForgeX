@@ -13,6 +13,7 @@ v0.5.3
 
 from __future__ import annotations
 
+import ipaddress
 import os
 
 import questionary
@@ -27,9 +28,47 @@ from scopeforgex.wordlists import (
     is_valid_wordlist,
 )
 
-from scopeforgex.utils.target import (
-    _is_ip_web_target,
-)
+
+###############################################################################
+# Target Helpers
+###############################################################################
+
+
+def _is_ip_web_target(
+    target: str,
+) -> bool:
+    """
+    Check whether target is an IP based web application.
+    """
+
+    value = (
+        target
+        .replace(
+            "http://",
+            "",
+        )
+        .replace(
+            "https://",
+            "",
+        )
+        .split(
+            ":"
+        )[0]
+        .strip()
+    )
+
+    try:
+
+        ipaddress.ip_address(
+            value
+        )
+
+        return True
+
+    except ValueError:
+
+        return False
+
 
 
 ###############################################################################
@@ -41,10 +80,12 @@ def _count_lines(
     path: str,
 ) -> int:
     """
-    Count non-empty lines in a file.
+    Count non-empty lines.
     """
 
-    if not os.path.exists(path):
+    if not os.path.exists(
+        path
+    ):
         return 0
 
     with open(
@@ -59,6 +100,7 @@ def _count_lines(
             for line in file
             if line.strip()
         )
+
 
 
 ###############################################################################
@@ -315,6 +357,10 @@ class FastPipelineBuilderTool(ToolBase):
         )
 
 
+        #######################################################################
+        # IP/Web Application Pipeline
+        #######################################################################
+
         if _is_ip_web_target(
             target
         ):
@@ -364,6 +410,10 @@ class FastPipelineBuilderTool(ToolBase):
                 },
             )
 
+
+        #######################################################################
+        # Domain Pipeline
+        #######################################################################
 
         return ExecutionResult.success_result(
             tool=self.name,
