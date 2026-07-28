@@ -250,7 +250,9 @@ class SubhuntTool(ToolBase):
 
 
         run_command(
-            f"subhunt -d {target} --bruteforce {wordlist} > {out_txt}",
+            tool=self.name,
+            capability="subdomain_discovery",
+            cmd=f"subhunt -d {target} --bruteforce {wordlist} > {out_txt}",
             outfile=out_log,
             timeout=900,
         )
