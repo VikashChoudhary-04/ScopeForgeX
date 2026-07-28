@@ -8,7 +8,7 @@ Includes:
     - Subhunt integration
     - FAST pipeline builder
 
-v0.5.2
+v0.5.3
 """
 
 from __future__ import annotations
@@ -18,15 +18,11 @@ import os
 import questionary
 
 from scopeforgex.models.execution_result import ExecutionResult
-
 from scopeforgex.registry.tool_base import ToolBase
+from scopeforgex.runner import run_command
+from scopeforgex.toolcheck import is_tool_installed
 
-from scopeforgex.tools.utils import (
-    is_tool_installed,
-    run_cmd,
-)
-
-from scopeforgex.utils.wordlists import (
+from scopeforgex.wordlists import (
     find_default_subdomain_wordlist,
     is_valid_wordlist,
 )
@@ -200,28 +196,18 @@ class SubhuntTool(ToolBase):
             )
 
 
-        try:
+        with open(
+            wordlist_used,
+            "w",
+            encoding="utf-8",
+        ) as file:
 
-            with open(
-                wordlist_used,
-                "w",
-                encoding="utf-8",
-            ) as file:
-
-                file.write(
-                    wordlist + "\n"
-                )
-
-        except Exception as exc:
-
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability="subdomain_discovery",
-                error=f"Unable to save wordlist artifact: {exc}",
+            file.write(
+                wordlist + "\n"
             )
 
 
-        run_cmd(
+        run_command(
             f"subhunt -d {target} --bruteforce {wordlist} > {out_txt}",
             outfile=out_log,
             timeout=900,
@@ -252,8 +238,6 @@ class SubhuntTool(ToolBase):
                 ),
             },
         )
-
-
 ###############################################################################
 # FAST Pipeline Builder
 ###############################################################################
@@ -399,7 +383,19 @@ class FastPipelineBuilderTool(ToolBase):
         )
 
 
+###############################################################################
+# Registry Export
+###############################################################################
+
+
+ALL_STAGE1_WEB_TOOLS = [
+    SubhuntTool(),
+    FastPipelineBuilderTool(),
+]
+
+
 __all__ = [
     "SubhuntTool",
     "FastPipelineBuilderTool",
+    "ALL_STAGE1_WEB_TOOLS",
 ]
