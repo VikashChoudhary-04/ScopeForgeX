@@ -4,7 +4,7 @@ ScopeForgeX Reporting Models
 
 Canonical reporting data structures.
 
-v0.6.0
+v1.0.0
 
 Supports:
     - Professional pentest reports
@@ -226,7 +226,7 @@ class ReportMetadata:
 
     generator: str = "ScopeForgeX"
 
-    version: str = "v0.6.0"
+    version: str = "v1.0.0"
 
     generated_by: str = "ScopeForgeX Reporting Engine"
 
