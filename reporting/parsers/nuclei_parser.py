@@ -4,7 +4,7 @@ ScopeForgeX Nuclei Parser
 
 Converts Nuclei output into ScopeForgeX Finding objects.
 
-v0.6.1
+v1.0.0
 
 Input:
     nuclei.txt
