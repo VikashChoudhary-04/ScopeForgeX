@@ -13,7 +13,7 @@ Responsibilities
 * Generate vulnerability summaries
 * Preserve ExecutionResult compatibility
 
-v0.6.3
+v1.0.0
 """
 
 from __future__ import annotations
