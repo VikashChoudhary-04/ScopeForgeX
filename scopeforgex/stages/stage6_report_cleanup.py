@@ -12,7 +12,7 @@ Responsibilities
 * Build ReportData
 * Generate Markdown + JSON reports
 
-v0.6.1
+v1.0.0
 """
 
 from __future__ import annotations
