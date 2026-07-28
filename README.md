@@ -18,29 +18,29 @@
 
 ---
 
-# Overview
+## Overview
 
-ScopeForgeX is a **stage-driven cybersecurity workflow automation framework** designed to organize penetration testing activities into a controlled, repeatable assessment pipeline.
+- ScopeForgeX is a **stage-driven cybersecurity workflow automation framework** designed to organize penetration testing activities into a controlled, repeatable assessment pipeline.
 
-Instead of manually running individual security tools and collecting scattered outputs, ScopeForgeX provides a unified workflow engine that manages:
+- Instead of manually running individual security tools and collecting scattered outputs, ScopeForgeX provides a unified workflow engine that manages:
 
-* Scope validation
-* Reconnaissance
-* Enumeration
-* Vulnerability identification
-* Analyst-assisted validation preparation
-* Artifact collection
-* Automated reporting
+  * Scope validation
+  * Reconnaissance
+  * Enumeration
+  * Vulnerability identification
+  * Analyst-assisted validation preparation
+  * Artifact collection
+  * Automated reporting
 
-The goal is not to replace penetration testers.
+- The goal is not to replace penetration testers.
 
-The goal is to **reduce repetitive operational work and provide a structured assessment workflow while keeping security decisions under analyst control.**
+- The goal is to **reduce repetitive operational work and provide a structured assessment workflow while keeping security decisions under analyst control.**
 
 ---
 
-# Why ScopeForgeX?
+## Why ScopeForgeX?
 
-Traditional penetration testing workflows often involve:
+- Traditional penetration testing workflows often involve:
 
 | Traditional Workflow         | ScopeForgeX Approach            |
 | ---------------------------- | ------------------------------- |
@@ -50,17 +50,17 @@ Traditional penetration testing workflows often involve:
 | Manual report preparation    | Automated reporting             |
 | No execution history         | Runtime tracking and metadata   |
 
-ScopeForgeX brings software engineering principles into offensive security workflows:
+- ScopeForgeX brings software engineering principles into offensive security workflows:
 
-* Modularity
-* Separation of responsibilities
-* Repeatability
-* Structured results
-* Automation safety
+  * Modularity
+  * Separation of responsibilities
+  * Repeatability
+  * Structured results
+  * Automation safety
 
 ---
 
-# Architecture
+## Architecture
 
 ```text
                          User
@@ -109,9 +109,9 @@ ScopeForgeX brings software engineering principles into offensive security workf
 
 ---
 
-# Workflow Pipeline
+## Workflow Pipeline
 
-ScopeForgeX follows a professional assessment structure:
+- ScopeForgeX follows a professional assessment structure:
 
 ```text
 STAGE 0
@@ -144,11 +144,11 @@ Reporting
 
 ---
 
-# Features
+## Features
 
-## Stage-Based Execution
+### Stage-Based Execution
 
-Each security activity is isolated into independent stages:
+- Each security activity is isolated into independent stages:
 
 | Stage   | Function                             |
 | ------- | ------------------------------------ |
@@ -162,63 +162,63 @@ Each security activity is isolated into independent stages:
 
 ---
 
-# Execution Profiles
+## Execution Profiles
 
-## FAST Profile
+### FAST Profile
 
-Designed for quick assessments.
+- Designed for quick assessments.
 
-Workflow:
+- Workflow:
 
-```text
-Scope
- |
-Recon
- |
-Vulnerability Assessment
- |
-Reporting
-```
+  ```text
+  Scope
+   |
+  Recon
+   |
+  Vulnerability Assessment
+   |
+  Reporting
+  ```
 
-Suitable for:
+- Suitable for:
 
-* Initial reconnaissance
-* Bug bounty preparation
-* Rapid attack surface analysis
-
----
-
-## FULL_SAFE Profile
-
-Designed for broader assessments.
-
-Workflow:
-
-```text
-Scope
- |
-Recon
- |
-Enumeration
- |
-Vulnerability Assessment
- |
-Exploit Preparation
- |
-Post Assessment Preparation
- |
-Reporting
-```
-
-Higher-risk activities are prepared for manual review.
+  * Initial reconnaissance
+  * Bug bounty preparation
+  * Rapid attack surface analysis
 
 ---
 
-# Security Model
+### FULL_SAFE Profile
 
-ScopeForgeX follows a controlled automation approach.
+- Designed for broader assessments.
 
-## Automatically Executed
+- Workflow:
+
+  ```text
+  Scope
+   |
+  Recon
+   |
+  Enumeration
+   |
+  Vulnerability Assessment
+   |
+  Exploit Preparation
+   |
+  Post Assessment Preparation
+   |  
+  Reporting
+  ```
+
+- Higher-risk activities are prepared for manual review.
+
+---
+
+## Security Model
+
+- ScopeForgeX follows a controlled automation approach.
+
+### Automatically Executed
 
 * Scope processing
 * Recon workflows
@@ -227,7 +227,7 @@ ScopeForgeX follows a controlled automation approach.
 * Artifact collection
 * Report generation
 
-## Analyst-Controlled
+### Analyst-Controlled
 
 * Exploitation
 * Credential attacks
@@ -241,9 +241,9 @@ They do not represent successful exploitation.
 
 ---
 
-# Supported Integrations
+## Supported Integrations
 
-## Reconnaissance
+### Reconnaissance
 
 | Tool    | Purpose                     |
 | ------- | --------------------------- |
@@ -253,7 +253,7 @@ They do not represent successful exploitation.
 
 ---
 
-## Enumeration
+### Enumeration
 
 | Tool          | Purpose                   |
 | ------------- | ------------------------- |
@@ -265,24 +265,24 @@ They do not represent successful exploitation.
 
 ---
 
-## Vulnerability Identification
+### Vulnerability Identification
 
 | Tool   | Purpose                                     |
 | ------ | ------------------------------------------- |
 | Nuclei | Template-based vulnerability identification |
 
-Nuclei results are processed into:
+- Nuclei results are processed into:
 
-* JSONL vulnerability data
-* Finding summaries
-* Severity statistics
-* Reporting artifacts
+  * JSONL vulnerability data
+  * Finding summaries
+  * Severity statistics
+  * Reporting artifacts
 
 ---
 
-# Analyst-Assisted Preparation
+## Analyst-Assisted Preparation
 
-ScopeForgeX prepares analyst-reviewed workflows for:
+- ScopeForgeX prepares analyst-reviewed workflows for:
 
 | Tool         | Purpose                           |
 | ------------ | --------------------------------- |
@@ -299,53 +299,53 @@ ScopeForgeX prepares analyst-reviewed workflows for:
 
 ---
 
-# Reporting Engine
+## Reporting Engine
 
-ScopeForgeX automatically generates professional assessment reports.
+- ScopeForgeX automatically generates professional assessment reports.
 
-Generated outputs:
+- Generated outputs:
 
 ```text
 report.md
 report.json
 ```
 
-Reports contain:
+- Reports contain:
 
-* Assessment information
-* Workflow execution summary
-* Stage results
-* Tool results
-* Vulnerability summaries
-* Severity overview
-* Generated artifacts
-* Analyst guidance
+  * Assessment information
+  * Workflow execution summary
+  * Stage results
+  * Tool results
+  * Vulnerability summaries
+  * Severity overview
+  * Generated artifacts
+  * Analyst guidance
 
-Example:
+- Example:
 
-```text
-outputs/
+  ```text
+  outputs/
 
-└── target/
+  └── target/
 
-    ├── recon/
+      ├── recon/
 
-    ├── enum/
+      ├── enum/
 
-    ├── vuln/
+      ├── vuln/
 
-    ├── exploit/
+      ├── exploit/
 
-    ├── post/
+      ├── post/
 
-    ├── report.md
+      ├── report.md
 
-    └── report.json
-```
+      └── report.json
+  ```
 
 ---
 
-# Example Execution
+## Example Execution
 
 ```text
 $ python3 scopeforgex.py
@@ -370,9 +370,9 @@ STAGE 6 — REPORTING
 
 ---
 
-# Installation
+## Installation
 
-## Requirements
+### Requirements
 
 * Python 3.10+
 * Linux environment
@@ -380,7 +380,7 @@ STAGE 6 — REPORTING
 
 ---
 
-## Clone Repository
+### Clone Repository
 
 ```bash
 git clone https://github.com/VikashChoudhary-04/ScopeForgeX.git
@@ -390,7 +390,7 @@ cd ScopeForgeX
 
 ---
 
-## Create Environment
+### Create Environment
 
 ```bash
 python3 -m venv .venv
@@ -400,7 +400,7 @@ source .venv/bin/activate
 
 ---
 
-## Install Dependencies
+### Install Dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -408,27 +408,27 @@ pip install -r requirements.txt
 
 ---
 
-# Usage
+## Usage
 
-Start ScopeForgeX:
+- Start ScopeForgeX:
 
-```bash
-python3 scopeforgex.py
-```
+  ```bash
+  python3 scopeforgex.py
+  ```
 
-Select:
+- Select:
 
-```text
-1. Run FAST Profile
-2. Run FULL_SAFE Profile
-3. Install Tools
-4. View Last Run
-5. Exit
-```
+  ```text
+  1. Run FAST Profile
+  2. Run FULL_SAFE Profile
+  3. Install Tools
+  4. View Last Run
+  5. Exit
+  ```
 
 ---
 
-# Repository Structure
+## Repository Structure
 
 ```text
 ScopeForgeX/
@@ -459,64 +459,64 @@ ScopeForgeX/
 
 ---
 
-# Engineering Highlights
+## Engineering Highlights
 
-ScopeForgeX demonstrates:
+- ScopeForgeX demonstrates:
 
-* Python software architecture
-* CLI application development
-* Offensive security workflow design
-* Security tool orchestration
-* Modular stage systems
-* Runtime state management
-* Automated report generation
-* Machine-readable security output
-
----
-
-# Current Limitations
-
-ScopeForgeX intentionally does not:
-
-* Automatically exploit vulnerabilities
-* Claim compromise of systems
-* Replace professional penetration testing
-* Replace manual validation
-
-Automated results require analyst review.
+  * Python software architecture
+  * CLI application development
+  * Offensive security workflow design
+  * Security tool orchestration
+  * Modular stage systems
+  * Runtime state management
+  * Automated report generation
+  * Machine-readable security output
 
 ---
 
-# Future Roadmap
+## Current Limitations
 
-Potential improvements:
+- ScopeForgeX intentionally does not:
 
-* CVSS scoring automation
-* Evidence management
-* Advanced report templates
-* Plugin-based architecture
-* Additional export formats
-* Workflow checkpoints
-* Dashboard analytics
+  * Automatically exploit vulnerabilities
+  * Claim compromise of systems
+  * Replace professional penetration testing
+  * Replace manual validation
 
----
-
-# Ethical Use
-
-ScopeForgeX must only be used against:
-
-* Systems you own
-* Authorized penetration testing targets
-* Security laboratories
-* CTF environments
-
-Always obtain proper authorization before security testing.
+- Automated results require analyst review.
 
 ---
 
-# License
+## Future Roadmap
 
-MIT License
+- Potential improvements:
+
+  * CVSS scoring automation
+  * Evidence management
+  * Advanced report templates
+  * Plugin-based architecture
+  * Additional export formats
+  * Workflow checkpoints
+  * Dashboard analytics
+
+---
+
+## Ethical Use
+
+- ScopeForgeX must only be used against:
+
+  * Systems you own
+  * Authorized penetration testing targets
+  * Security laboratories
+  * CTF environments
+
+- Always obtain proper authorization before security testing.
+
+---
+
+## License
+
+- MIT License
 
 ---
 
