@@ -4,7 +4,7 @@ ScopeForgeX Professional Report Generator
 
 Generates professional Markdown assessment reports.
 
-v0.6.1
+v1.0.0
 
 Features:
     - Executive summary
