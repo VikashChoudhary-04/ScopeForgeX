@@ -19,7 +19,7 @@ import questionary
 
 from scopeforgex.models.execution_result import ExecutionResult
 
-from scopeforgex.tools.base import ToolBase
+from scopeforgex.registry.tool_base import ToolBase
 
 from scopeforgex.tools.utils import (
     is_tool_installed,
