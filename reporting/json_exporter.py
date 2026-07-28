@@ -4,7 +4,7 @@ ScopeForgeX JSON Report Exporter
 
 Machine-readable report exporter.
 
-v0.6.1
+v1.0.0
 
 Responsibilities:
     - Export ReportData to JSON
