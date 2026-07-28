@@ -1,0 +1,92 @@
+{
+    "target": "192.168.13.128:3000",
+    "profile": "fast",
+    "target_type": "web",
+    "start_time": "2026-07-28T04:04:50.705227",
+    "end_time": "2026-07-28T04:15:20.569920",
+    "duration_seconds": 629.8646931648254,
+    "statistics": {
+        "subdomains_found": 1,
+        "alive_hosts": 1,
+        "final_hosts": 1,
+        "urls_discovered": 1,
+        "nuclei_findings": 0,
+        "files_generated": 12
+    },
+    "generated_files": [
+        "recon/hosts_alive.txt",
+        "recon/hosts_final.txt",
+        "recon/hosts_raw.txt",
+        "recon/urls_final.txt",
+        "recon/urls_raw.txt",
+        "vuln/nuclei_all.jsonl",
+        "vuln/nuclei_findings.txt",
+        "vuln/nuclei_hosts.jsonl",
+        "vuln/nuclei_hosts.log",
+        "vuln/nuclei_summary.json",
+        "vuln/nuclei_urls.jsonl",
+        "vuln/nuclei_urls.log"
+    ],
+    "stages": [
+        {
+            "name": "Scope",
+            "status": "Completed"
+        },
+        {
+            "name": "Reconnaissance",
+            "status": "Completed"
+        },
+        {
+            "name": "Vulnerability Assessment",
+            "status": "Completed"
+        },
+        {
+            "name": "Reporting",
+            "status": "Completed"
+        }
+    ],
+    "tool_results": [
+        {
+            "tool": "nuclei",
+            "capability": "vulnerability_scanning",
+            "success": true,
+            "artifacts": [
+                "outputs/192.168.13.128_3000/vuln/nuclei_hosts.jsonl",
+                "outputs/192.168.13.128_3000/vuln/nuclei_hosts.log",
+                "outputs/192.168.13.128_3000/vuln/nuclei_urls.jsonl",
+                "outputs/192.168.13.128_3000/vuln/nuclei_urls.log",
+                "outputs/192.168.13.128_3000/vuln/nuclei_all.jsonl",
+                "outputs/192.168.13.128_3000/vuln/nuclei_findings.txt",
+                "outputs/192.168.13.128_3000/vuln/nuclei_summary.json"
+            ],
+            "findings": [],
+            "warnings": [],
+            "errors": [],
+            "metadata": {
+                "severity_profile": "high,critical",
+                "finding_count": 0,
+                "severity": {},
+                "message": "Nuclei vulnerability assessment completed."
+            },
+            "started_at": "2026-07-28T08:15:20.525299+00:00",
+            "finished_at": "2026-07-28T08:15:20.526615+00:00",
+            "duration": 0.0
+        }
+    ],
+    "warnings": [
+        "No automated vulnerability findings were recorded."
+    ],
+    "findings": [],
+    "severity_summary": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "informational": 0
+    },
+    "metadata": {
+        "generator": "ScopeForgeX",
+        "version": "v1.0.0",
+        "generated_by": "ScopeForgeX Reporting Engine"
+    }
+}
