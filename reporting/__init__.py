@@ -4,7 +4,7 @@ ScopeForgeX Reporting Package
 
 Central exports for the reporting subsystem.
 
-v0.6.0
+v1.0.0
 """
 
 from .models import (
