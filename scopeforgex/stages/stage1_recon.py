@@ -2,23 +2,19 @@
 ScopeForgeX Stage 1 — Reconnaissance
 ====================================
 
-Executes all registered Stage 1 reconnaissance tools.
+Executes reconnaissance tools selected from the canonical tool registry.
 
-Supports:
-    - full_safe profile
-    - fast profile
+Tool selection is capability/phase-oriented. The stage orchestrator does not
+construct tool-specific commands or maintain a second list of integrations.
 
-v0.5.0
+v1.1.0
 """
 
+from __future__ import annotations
+
 from scopeforgex.registry.tool_registry import build_registry
-from scopeforgex.ui import (
-    stage,
-    ok,
-    warn,
-    err,
-    info,
-)
+from scopeforgex.runtime.enums import AssessmentPhase
+from scopeforgex.ui import err, info, ok, stage, warn
 
 
 ###############################################################################
@@ -30,59 +26,45 @@ def _print_tool_result(
     result,
 ) -> None:
     """
-    Display the outcome of a single Stage 1 tool.
+    Display the outcome of a single reconnaissance tool.
 
-    Supports the new ExecutionResult model.
+    Uses the canonical ExecutionResult model.
     """
 
     if result.success:
-
         ok(
             f"Tool completed: {result.tool}"
         )
-
     else:
-
         warn(
-            f"Tool skipped/failed: {result.tool}"
+            f"Tool failed/skipped: {result.tool}"
         )
 
     if result.metadata:
-
-        for key, value in result.metadata.items():
-
-            info(
-                f"{key}: {value}"
-            )
+        info(
+            f"Metadata: {result.metadata}"
+        )
 
     if result.errors:
-
         for error in result.errors:
-
             warn(
                 f"Error: {error}"
             )
 
     if result.warnings:
-
         for warning in result.warnings:
-
             warn(
                 f"Warning: {warning}"
             )
 
     if result.artifacts:
-
         for artifact in result.artifacts:
-
             info(
-                f"Output: {artifact}"
+                f"Artifact: {artifact}"
             )
-
     else:
-
         info(
-            "Output: (none)"
+            "Artifacts: (none)"
         )
 
 
@@ -95,12 +77,16 @@ def stage1_recon(
     ctx: dict,
 ) -> None:
     """
-    Execute all Stage 1 reconnaissance tools registered for the
-    current execution profile.
+    Execute reconnaissance tools registered for the current profile.
 
     Supported profiles:
-        - full_safe (default)
+
+        - full_safe
         - fast
+
+    The registry remains the single source of truth for reconnaissance
+    integrations. Profile filtering only controls which registered tools are
+    selected for execution.
     """
 
     stage(
@@ -116,55 +102,81 @@ def stage1_recon(
     tools = [
         tool
         for tool in build_registry()
-        if tool.stage == 1
+        if tool.phase
+        == AssessmentPhase.RECONNAISSANCE
     ]
 
     if not tools:
-
         err(
-            "No Stage 1 tools registered."
+            "No reconnaissance tools registered."
         )
-
         return
+
+    ###########################################################################
+    # Fast Profile
+    ###########################################################################
 
     if profile == "fast":
 
-        allowed = {
+        allowed_tools = {
             "subhunt",
-            "pipeline_builder",
+            "amass",
         }
 
         warn(
-            "FAST mode: running Subhunt + pipeline builder "
-            "(hosts + endpoints)."
+            "FAST mode: running focused "
+            "attack-surface discovery tools."
         )
 
         tools = [
             tool
             for tool in tools
-            if tool.name in allowed
+            if tool.name in allowed_tools
         ]
+
+    ###########################################################################
+    # Unknown Profile
+    ###########################################################################
+
+    elif profile != "full_safe":
+
+        warn(
+            f"Unknown profile '{profile}'; "
+            "using full_safe reconnaissance selection."
+        )
+
+    ###########################################################################
+    # Execution
+    ###########################################################################
 
     for tool in tools:
 
-        result = tool.run(
-            ctx
-        )
+        try:
+            result = tool.run(
+                ctx
+            )
+
+        except Exception as exc:
+            warn(
+                f"Tool execution error: "
+                f"{tool.name}: {exc}"
+            )
+            continue
 
         _print_tool_result(
             result
         )
 
     ok(
-        "Stage 1 recon finished ✅"
+        "Stage 1 reconnaissance finished ✅"
     )
 
 
 ###############################################################################
-# Notes
+# Public API
 ###############################################################################
 
-# Stage 1 supports multiple discovery producers.
-#
-# Pipeline builders should preserve existing hosts_raw.txt so that
-# network and web discoveries can be merged before downstream stages.
+
+__all__ = [
+    "stage1_recon",
+]

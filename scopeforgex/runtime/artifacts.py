@@ -2,123 +2,128 @@
 ScopeForgeX Runtime Artifacts
 =============================
 
-Defines immutable models representing artifacts generated during workflow
-execution.
+Defines the canonical artifact representation used throughout ScopeForgeX.
 
-Artifacts are the authoritative description of files and other outputs
-produced by executors. The runtime records artifact metadata as soon as it is
-created, allowing reporters to consume structured data instead of scanning the
-filesystem.
+Artifacts represent files and other persistent outputs produced during an
+assessment. They provide a consistent interface for execution, workflow and
+reporting layers.
 
-Design Principles
------------------
-- Immutable dataclasses.
-- Strong typing.
-- Standard-library only.
-- JSON serialization friendly.
-- Filesystem agnostic.
-- Thread-safe.
-
-This module intentionally contains no filesystem operations.
+v1.1.0
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4
-
-from .enums import ArtifactType
 
 
-def utc_now() -> datetime:
-    """Return the current UTC timestamp."""
-    return datetime.now(timezone.utc)
-
-
-# ============================================================================
-# Artifact Model
-# ============================================================================
+###############################################################################
+# Artifact
+###############################################################################
 
 
 @dataclass(frozen=True, slots=True)
 class Artifact:
     """
-    Represents a single runtime artifact produced during execution.
+    Canonical representation of an assessment artifact.
+
+    An artifact identifies a generated file together with optional metadata
+    describing its role in the ScopeForgeX workflow.
     """
 
-    name: str
+    path: str
+    artifact_type: str = "file"
+    description: str = ""
+    tool: str | None = None
+    stage: int | None = None
+    exists: bool = True
 
-    path: Path
+    ###########################################################################
+    # Construction
+    ###########################################################################
 
-    artifact_type: ArtifactType
-
-    producer: str
-
-    stage: str
-
-    created_at: datetime = field(default_factory=utc_now)
-
-    artifact_id: UUID = field(default_factory=uuid4)
-
-    size: int | None = None
-
-    entries: int | None = None
-
-    checksum: str | None = None
-
-    mime_type: str | None = None
-
-    description: str | None = None
-
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def filename(self) -> str:
-        """Return the filename component."""
-        return self.path.name
-
-    @property
-    def extension(self) -> str:
-        """Return the lowercase file extension."""
-        return self.path.suffix.lower()
-
-    @property
-    def exists(self) -> bool:
+    @classmethod
+    def from_path(
+        cls,
+        path: str | Path,
+        *,
+        artifact_type: str = "file",
+        description: str = "",
+        tool: str | None = None,
+        stage: int | None = None,
+    ) -> "Artifact":
         """
-        Indicates whether the artifact currently exists.
-
-        This is informational only and is never used to determine runtime
-        execution state.
+        Create an Artifact from a filesystem path.
         """
-        return self.path.exists()
 
-    def as_dict(self) -> dict[str, Any]:
-        """Return a JSON-serializable representation."""
+        resolved = Path(path)
+
+        return cls(
+            path=str(resolved),
+            artifact_type=artifact_type,
+            description=description,
+            tool=tool,
+            stage=stage,
+            exists=resolved.exists(),
+        )
+
+    ###########################################################################
+    # Filesystem Helpers
+    ###########################################################################
+
+    def as_path(
+        self,
+    ) -> Path:
+        """
+        Return the artifact path as a Path object.
+        """
+
+        return Path(
+            self.path
+        )
+
+    def refresh(
+        self,
+    ) -> "Artifact":
+        """
+        Return a copy with the current filesystem existence state.
+        """
+
+        return Artifact(
+            path=self.path,
+            artifact_type=self.artifact_type,
+            description=self.description,
+            tool=self.tool,
+            stage=self.stage,
+            exists=self.as_path().exists(),
+        )
+
+    ###########################################################################
+    # Serialization
+    ###########################################################################
+
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
+        """
+        Return a serialization-friendly artifact representation.
+        """
+
         return {
-            "artifact_id": str(self.artifact_id),
-            "name": self.name,
-            "path": str(self.path),
-            "artifact_type": self.artifact_type.value,
-            "producer": self.producer,
-            "stage": self.stage,
-            "created_at": self.created_at.isoformat(),
-            "size": self.size,
-            "entries": self.entries,
-            "checksum": self.checksum,
-            "mime_type": self.mime_type,
+            "path": self.path,
+            "artifact_type": self.artifact_type,
             "description": self.description,
-            "metadata": self.metadata,
+            "tool": self.tool,
+            "stage": self.stage,
+            "exists": self.exists,
         }
 
+    def __str__(
+        self,
+    ) -> str:
+        """
+        Return the artifact filesystem path.
+        """
 
-# ============================================================================
-# Public API
-# ============================================================================
-
-__all__ = [
-    "Artifact",
-    "utc_now",
-]
+        return self.path

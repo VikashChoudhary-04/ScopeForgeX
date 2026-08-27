@@ -1,163 +1,41 @@
 """
-ScopeForgeX Command Runner
-==========================
+ScopeForgeX — Command Runner
+============================
 
-Shared command execution framework.
+Shared command execution wrapper used by executable ScopeForgeX tools.
 
-Features
---------
-* Centralized process execution
-* Consistent logging
-* Safe output handling
-* Timeout support
-* Structured execution results
-* Backward-compatible run_cmd() API
+Responsibilities:
 
-v0.5.0
+- Execute external commands
+- Capture stdout/stderr
+- Persist combined execution logs
+- Handle timeouts
+- Handle missing executables
+- Return canonical ExecutionResult objects
+- Record execution metadata
+- Resolve executables consistently from PATH
+
+Tool adapters remain responsible for constructing their commands.
+
+v1.1.0
 """
 
 from __future__ import annotations
 
+import os
+import shlex
+import shutil
 import subprocess
 import time
-
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
-from typing import Mapping
 
 from scopeforgex.models.execution_result import ExecutionResult
-from scopeforgex.ui import info
-from scopeforgex.ui import warn
+from scopeforgex.ui import info, warn
 
 
 ###############################################################################
-# Defaults
-###############################################################################
-
-DEFAULT_TIMEOUT = 900
-
-
-###############################################################################
-# Execution Metadata
-###############################################################################
-
-
-@dataclass(slots=True)
-class CommandExecution:
-    """
-    Internal execution metadata.
-    """
-
-    command: str
-    timeout: int
-    outfile: Path | None = None
-    cwd: Path | None = None
-    environment: Mapping[str, str] | None = None
-
-
-###############################################################################
-# Helper Functions
-###############################################################################
-
-
-def _prepare_output(
-    outfile: str | None,
-) -> Path | None:
-    """
-    Create the output file and its parent directory if required.
-    """
-
-    if outfile is None:
-        return None
-
-    output = Path(outfile)
-
-    output.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    return output
-
-
-def _append_log(
-    outfile: Path | None,
-    message: str,
-) -> None:
-    """
-    Append a message to the output log.
-    """
-
-    if outfile is None:
-        return
-
-    with outfile.open(
-        "a",
-        encoding="utf-8",
-    ) as stream:
-
-        stream.write("\n")
-        stream.write(message.rstrip())
-        stream.write("\n")
-
-
-def _build_run_kwargs(
-    execution: CommandExecution,
-) -> dict[str, Any]:
-    """
-    Build subprocess keyword arguments.
-    """
-
-    return {
-        "shell": True,
-        "text": True,
-        "check": False,
-        "timeout": execution.timeout,
-        "cwd": execution.cwd,
-        "env": execution.environment,
-    }
-
-
-def _execute(
-    execution: CommandExecution,
-) -> subprocess.CompletedProcess:
-    """
-    Execute a shell command.
-    """
-
-    info(
-        f"Running: {execution.command}"
-    )
-
-    kwargs = _build_run_kwargs(
-        execution,
-    )
-
-    if execution.outfile is not None:
-
-        with execution.outfile.open(
-            "w",
-            encoding="utf-8",
-        ) as stream:
-
-            kwargs["stdout"] = stream
-            kwargs["stderr"] = subprocess.STDOUT
-
-            return subprocess.run(
-                execution.command,
-                **kwargs,
-            )
-
-    return subprocess.run(
-        execution.command,
-        **kwargs,
-    )
-
-
-###############################################################################
-# Structured Command Execution
+# Command Execution
 ###############################################################################
 
 
@@ -167,272 +45,681 @@ def run_command(
     capability: str,
     cmd: str,
     outfile: str | None = None,
-    timeout: int = DEFAULT_TIMEOUT,
+    timeout: int = 900,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> ExecutionResult:
     """
-    Execute a command and return a structured ExecutionResult.
+    Execute an external command and return a canonical ExecutionResult.
 
-    This is the preferred API for new ScopeForgeX tools.
+    Args:
+        tool:
+            Registered ScopeForgeX tool name.
 
-    Existing tools should continue using run_cmd() until migrated.
+        capability:
+            Capability being exercised by the command.
+
+        cmd:
+            Fully constructed shell command.
+
+        outfile:
+            Optional file receiving combined stdout/stderr.
+
+        timeout:
+            Maximum execution time in seconds.
+
+        cwd:
+            Optional working directory.
+
+        env:
+            Optional environment overrides.
+
+    Returns:
+        ExecutionResult describing the execution.
     """
 
-    started = datetime.now()
-    start_time = time.time()
-
-    output_file = _prepare_output(
-        outfile,
+    info(
+        f"Running {tool}: {cmd}"
     )
 
-    execution = CommandExecution(
-        command=cmd,
-        timeout=timeout,
-        outfile=output_file,
+    started_at = time.monotonic()
+
+    result = ExecutionResult(
+        tool=tool,
+        capability=capability,
+        success=False,
     )
 
-    artifacts: list[str] = []
+    output_path: Path | None = None
 
-    if output_file:
-        artifacts.append(
-            str(output_file)
+    if outfile:
+        output_path = Path(
+            outfile
         )
+
+        output_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+    ###########################################################################
+    # Environment
+    ###########################################################################
+
+    merged_env: dict[str, str]
+
+    if env is not None:
+        merged_env = os.environ.copy()
+        merged_env.update(
+            env
+        )
+    else:
+        merged_env = os.environ.copy()
+
+    ###########################################################################
+    # Executable Resolution
+    ###########################################################################
+
+    resolved_command = _resolve_command(
+        cmd,
+        env=merged_env,
+    )
+
+    ###########################################################################
+    # Execute
+    ###########################################################################
 
     try:
-
-        result = _execute(
-            execution,
+        completed = subprocess.run(
+            resolved_command,
+            shell=True,
+            cwd=cwd,
+            env=merged_env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
         )
 
-        finished = datetime.now()
-
+    except subprocess.TimeoutExpired as exc:
         duration = (
-            time.time()
-            - start_time
+            time.monotonic()
+            - started_at
         )
 
-        if result.returncode != 0:
+        stdout = _decode_output(
+            exc.stdout
+        )
 
-            return ExecutionResult.failure(
-                tool=tool,
-                capability=capability,
-                error=(
-                    f"Command exited with code "
-                    f"{result.returncode}"
-                ),
-                artifacts=artifacts,
+        stderr = _decode_output(
+            exc.stderr
+        )
+
+        message = (
+            f"Command timed out after {timeout}s."
+        )
+
+        warn(
+            f"{tool}: {message}"
+        )
+
+        _write_execution_output(
+            output_path,
+            stdout=stdout,
+            stderr=stderr,
+            suffix=(
+                "\n\n"
+                f"[ScopeForgeX] {message}\n"
+            ),
+        )
+
+        result.success = False
+        result.stdout = stdout
+        result.stderr = stderr
+
+        result.add_error(
+            message
+        )
+
+        result.metadata.update(
+            {
+                "exit_code": None,
+                "timed_out": True,
+                "timeout": timeout,
+                "command": cmd,
+                "resolved_command": resolved_command,
+            }
+        )
+
+        result.duration = duration
+
+        if output_path:
+            result.add_artifact(
+                str(output_path)
             )
 
-        structured = ExecutionResult.success_result(
-            tool=tool,
-            capability=capability,
-            artifacts=artifacts,
+        return result
+
+    except OSError as exc:
+        duration = (
+            time.monotonic()
+            - started_at
         )
 
-        structured.started_at = started
-        structured.finished_at = finished
-        structured.duration = duration
-        structured.exit_code = result.returncode
+        message = (
+            f"Execution failed: {exc}"
+        )
 
-        return structured
+        warn(
+            f"{tool}: {message}"
+        )
 
-    except subprocess.TimeoutExpired:
-
-        finished = datetime.now()
-
-        structured = ExecutionResult.failure(
-            tool=tool,
-            capability=capability,
-            error=(
-                f"Timeout reached "
-                f"({timeout}s). "
-                "Command terminated."
+        _write_execution_output(
+            output_path,
+            suffix=(
+                "\n\n"
+                f"[ScopeForgeX] {message}\n"
             ),
-            artifacts=artifacts,
         )
 
-        structured.started_at = started
-        structured.finished_at = finished
-        structured.duration = (
-            time.time()
-            - start_time
+        result.success = False
+
+        result.add_error(
+            message
         )
 
-        return structured
-
-    except FileNotFoundError as exc:
-
-        return ExecutionResult.failure(
-            tool=tool,
-            capability=capability,
-            error=f"Executable not found: {exc}",
-            artifacts=artifacts,
+        result.metadata.update(
+            {
+                "exit_code": None,
+                "timed_out": False,
+                "timeout": timeout,
+                "command": cmd,
+                "resolved_command": resolved_command,
+            }
         )
 
-    except KeyboardInterrupt:
+        result.duration = duration
 
-        raise
+        if output_path:
+            result.add_artifact(
+                str(output_path)
+            )
+
+        return result
 
     except Exception as exc:
-
-        return ExecutionResult.failure(
-            tool=tool,
-            capability=capability,
-            error=f"Command failed: {exc}",
-            artifacts=artifacts,
+        duration = (
+            time.monotonic()
+            - started_at
         )
+
+        message = (
+            f"Unexpected execution error: {exc}"
+        )
+
+        warn(
+            f"{tool}: {message}"
+        )
+
+        _write_execution_output(
+            output_path,
+            suffix=(
+                "\n\n"
+                f"[ScopeForgeX] {message}\n"
+            ),
+        )
+
+        result.success = False
+
+        result.add_error(
+            message
+        )
+
+        result.metadata.update(
+            {
+                "exit_code": None,
+                "timed_out": False,
+                "timeout": timeout,
+                "command": cmd,
+                "resolved_command": resolved_command,
+            }
+        )
+
+        result.duration = duration
+
+        if output_path:
+            result.add_artifact(
+                str(output_path)
+            )
+
+        return result
+
+    ###########################################################################
+    # Process Output
+    ###########################################################################
+
+    stdout = completed.stdout or ""
+    stderr = completed.stderr or ""
+
+    _write_execution_output(
+        output_path,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    result.stdout = stdout
+    result.stderr = stderr
+
+    ###########################################################################
+    # Exit Status
+    ###########################################################################
+
+    if completed.returncode == 0:
+        result.success = True
+
+    else:
+        result.success = False
+
+        result.add_error(
+            (
+                f"Command exited with status "
+                f"{completed.returncode}."
+            )
+        )
+
+    ###########################################################################
+    # Warnings
+    ###########################################################################
+
+    if stderr.strip():
+        result.add_warning(
+            stderr.strip()
+        )
+
+    ###########################################################################
+    # Metadata
+    ###########################################################################
+
+    result.metadata.update(
+        {
+            "exit_code": completed.returncode,
+            "timed_out": False,
+            "timeout": timeout,
+            "command": cmd,
+            "resolved_command": resolved_command,
+        }
+    )
+
+    result.duration = (
+        time.monotonic()
+        - started_at
+    )
+
+    if output_path:
+        result.add_artifact(
+            str(output_path)
+        )
+
+    return result
 
 
 ###############################################################################
-# Legacy Public API
+# Backward-Compatible Runner
 ###############################################################################
 
 
 def run_cmd(
     cmd: str,
     outfile: str | None = None,
-    timeout: int = DEFAULT_TIMEOUT,
+    timeout: int = 900,
 ) -> subprocess.CompletedProcess | None:
     """
-    Execute a shell command.
+    Backward-compatible command runner.
 
-    Legacy API preserved for existing tools.
+    Older ScopeForgeX adapters use this function directly.
+
+    Returns:
+        subprocess.CompletedProcess on execution,
+        or None when execution fails or times out.
     """
 
-    execution = CommandExecution(
-        command=cmd,
-        timeout=timeout,
-        outfile=_prepare_output(
-            outfile,
-        ),
+    info(
+        f"Running: {cmd}"
     )
 
     try:
-
-        result = _execute(
-            execution,
+        resolved_command = _resolve_command(
+            cmd
         )
 
-        if result.returncode != 0:
-
-            warn(
-                f"Command exited with code "
-                f"{result.returncode}"
+        if outfile:
+            output_path = Path(
+                outfile
             )
 
-            _append_log(
-                execution.outfile,
-                (
-                    "[ScopeForgeX] "
-                    f"Exit code: {result.returncode}"
-                ),
+            output_path.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            with output_path.open(
+                "w",
+                encoding="utf-8",
+            ) as output:
+
+                result = subprocess.run(
+                    resolved_command,
+                    shell=True,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False,
+                    timeout=timeout,
+                )
+
+        else:
+            result = subprocess.run(
+                resolved_command,
+                shell=True,
+                text=True,
+                check=False,
+                timeout=timeout,
             )
 
         return result
 
     except subprocess.TimeoutExpired:
-
         warn(
-            f"Timeout reached "
-            f"({execution.timeout}s). "
-            "Command terminated."
+            f"Timeout reached ({timeout}s). "
+            "Command stopped."
         )
 
-        _append_log(
-            execution.outfile,
-            (
-                "[ScopeForgeX] "
-                f"Timeout reached "
-                f"({execution.timeout}s). "
-                "Command terminated."
-            ),
-        )
+        if outfile:
+            with open(
+                outfile,
+                "a",
+                encoding="utf-8",
+            ) as output:
+                output.write(
+                    "\n\n"
+                    f"[ScopeForgeX] Timeout reached ({timeout}s). "
+                    "Command stopped.\n"
+                )
 
         return None
 
     except FileNotFoundError as exc:
-
         warn(
             f"Executable not found: {exc}"
         )
 
-        _append_log(
-            execution.outfile,
-            (
-                "[ScopeForgeX] "
-                f"Executable not found: {exc}"
-            ),
-        )
-
         return None
 
-    except KeyboardInterrupt:
-
-        warn(
-            "Execution interrupted by user."
-        )
-
-        _append_log(
-            execution.outfile,
-            (
-                "[ScopeForgeX] "
-                "Execution interrupted "
-                "by user."
-            ),
-        )
-
-        raise
-
     except Exception as exc:
-
         warn(
             f"Command failed: {exc}"
         )
 
-        _append_log(
-            execution.outfile,
-            (
-                "[ScopeForgeX] "
-                f"ERROR: {exc}"
-            ),
-        )
+        if outfile:
+            with open(
+                outfile,
+                "a",
+                encoding="utf-8",
+            ) as output:
+                output.write(
+                    "\n\n"
+                    f"[ScopeForgeX] ERROR: {exc}\n"
+                )
 
         return None
 
 
 ###############################################################################
-# Convenience Helpers
+# Executable Availability
 ###############################################################################
 
 
-def run_cmd_success(
-    cmd: str,
-    outfile: str | None = None,
-    timeout: int = DEFAULT_TIMEOUT,
+def is_command_available(
+    command: str,
 ) -> bool:
     """
-    Execute a command and return whether it completed successfully.
+    Return whether an executable is available on PATH.
+
+    The command may contain arguments; only the executable portion
+    is checked.
     """
 
-    result = run_cmd(
-        cmd=cmd,
-        outfile=outfile,
-        timeout=timeout,
-    )
+    try:
+        executable = shlex.split(
+            command
+        )[0]
+
+    except (IndexError, ValueError):
+        return False
 
     return (
-        result is not None
-        and result.returncode == 0
+        shutil.which(
+            executable
+        )
+        is not None
     )
 
 
 ###############################################################################
-# Public Exports
+# Command Resolution
 ###############################################################################
 
-__all__ = [
-    "DEFAULT_TIMEOUT",
-    "CommandExecution",
-    "run_command",
-    "run_cmd",
-    "run_cmd_success",
-]
+
+def _resolve_command(
+    cmd: str,
+    env: dict[str, str] | None = None,
+) -> str:
+    """
+    Resolve the executable at the beginning of a shell command.
+
+    ScopeForgeX commonly uses Go-based security tools installed under:
+
+        ~/go/bin
+
+    Some Python environments can expose unrelated executables with the
+    same names. For example, the Python package `httpx` can shadow
+    ProjectDiscovery's Go-based `httpx`.
+
+    Therefore, when ~/go/bin/<executable> exists and is executable,
+    it is preferred for command resolution.
+
+    Explicit executable paths are never modified.
+    """
+
+    try:
+        parts = shlex.split(
+            cmd
+        )
+
+    except ValueError:
+        return cmd
+
+    if not parts:
+        return cmd
+
+    executable = parts[0]
+
+    ###########################################################################
+    # Explicit Path
+    ###########################################################################
+
+    if (
+        os.path.isabs(
+            executable
+        )
+        or "/" in executable
+    ):
+        return cmd
+
+    ###########################################################################
+    # Build Candidate Paths
+    ###########################################################################
+
+    candidates: list[str] = []
+
+    home = os.path.expanduser(
+        "~"
+    )
+
+    go_binary = os.path.join(
+        home,
+        "go",
+        "bin",
+        executable,
+    )
+
+    candidates.append(
+        go_binary
+    )
+
+    ###########################################################################
+    # PATH Resolution
+    ###########################################################################
+
+    path = None
+
+    if env is not None:
+        path = env.get(
+            "PATH"
+        )
+
+    if path is None:
+        path = os.environ.get(
+            "PATH"
+        )
+
+    resolved_from_path = shutil.which(
+        executable,
+        path=path,
+    )
+
+    if resolved_from_path:
+        candidates.append(
+            resolved_from_path
+        )
+
+    ###########################################################################
+    # Select First Valid Executable
+    ###########################################################################
+
+    resolved: str | None = None
+
+    for candidate in candidates:
+
+        if (
+            os.path.isfile(candidate)
+            and os.access(
+                candidate,
+                os.X_OK,
+            )
+        ):
+            resolved = candidate
+            break
+
+    if resolved is None:
+        return cmd
+
+    ###########################################################################
+    # Replace Only Executable Token
+    ###########################################################################
+
+    remainder = cmd[
+        len(executable):
+    ]
+
+    return (
+        shlex.quote(
+            resolved
+        )
+        + remainder
+    )
+
+
+###############################################################################
+# Output Handling
+###############################################################################
+
+
+def _write_execution_output(
+    output_path: Path | None,
+    *,
+    stdout: str = "",
+    stderr: str = "",
+    suffix: str = "",
+) -> None:
+    """
+    Persist command output when an output file was requested.
+
+    stdout and stderr remain separately available through ExecutionResult,
+    while the artifact receives a combined human-readable execution log.
+    """
+
+    if output_path is None:
+        return
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with output_path.open(
+        "w",
+        encoding="utf-8",
+        errors="replace",
+    ) as output:
+
+        if stdout:
+            output.write(
+                stdout
+            )
+
+        if stderr:
+            if stdout and not stdout.endswith(
+                "\n"
+            ):
+                output.write(
+                    "\n"
+                )
+
+            output.write(
+                stderr
+            )
+
+        if suffix:
+            output.write(
+                suffix
+            )
+
+
+###############################################################################
+# Output Normalization
+###############################################################################
+
+
+def _decode_output(
+    value: Any,
+) -> str:
+    """
+    Normalize subprocess output into text.
+    """
+
+    if value is None:
+        return ""
+
+    if isinstance(
+        value,
+        bytes,
+    ):
+        return value.decode(
+            "utf-8",
+            errors="replace",
+        )
+
+    return str(
+        value
+    )

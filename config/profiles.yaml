@@ -1,8 +1,71 @@
 profiles:
   fast:
-    description: "FAST: Subhunt discovery -> httpx validation -> optional Katana endpoint discovery -> Nuclei"
-    enabled_stages: [1, 3, 6]
+    description: >
+      Fast, low-volume assessment focused on high-value attack-surface
+      discovery, web enumeration and critical/high vulnerability detection.
 
-  full_safe:
-    description: "Full safe workflow automation (CLI-only)"
-    enabled_stages: [1, 2, 3, 4, 5, 6]
+    tools:
+      - subhunt
+      - nmap
+      - httpx
+      - katana
+      - nuclei
+
+    tool_options:
+      nuclei:
+        severity:
+          - critical
+          - high
+
+
+  standard:
+    description: >
+      Standard professional assessment covering attack-surface discovery,
+      service enumeration, web/API enumeration, technology fingerprinting,
+      vulnerability assessment and TLS assessment.
+
+    tools:
+      - amass
+      - subhunt
+      - nmap
+      - dig
+
+      - httpx
+      - katana
+      - ffuf
+      - whatweb
+      - kiterunner
+      - jsluice
+
+      - nuclei
+      - nikto
+      - testssl.sh
+
+
+  full:
+    description: >
+      Full configured assessment covering reconnaissance, enumeration,
+      vulnerability assessment and specialized vulnerability validation.
+      Credential assessment remains opt-in and is not executed automatically.
+
+    tools:
+      - amass
+      - subhunt
+      - nmap
+      - dig
+
+      - httpx
+      - katana
+      - ffuf
+      - whatweb
+      - kiterunner
+      - jsluice
+
+      - nuclei
+      - nikto
+      - testssl.sh
+
+      - sqlmap
+      - dalfox
+      - jwt_tool
+      - sstimap

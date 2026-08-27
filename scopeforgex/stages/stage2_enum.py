@@ -1,21 +1,32 @@
 """
-ScopeForgeX Stage 2 - Enumeration
+ScopeForgeX Stage 2 — Enumeration
 =================================
 
-Executes Stage 2 enumeration tools registered in the tool registry.
+Executes enumeration tools selected from the canonical tool registry.
 
-v0.5.0
+Tool selection is phase-oriented. The stage orchestrator does not construct
+tool-specific commands or maintain a second integration registry.
+
+v1.1.0
 """
 
 from __future__ import annotations
 
 from scopeforgex.registry.tool_registry import build_registry
-from scopeforgex.ui import stage, ok, warn, err, info
+from scopeforgex.runtime.enums import AssessmentPhase
+from scopeforgex.ui import err, info, ok, stage, warn
 
 
-def _print_tool_result(result):
+###############################################################################
+# Result Display
+###############################################################################
+
+
+def _print_tool_result(
+    result,
+) -> None:
     """
-    Display the outcome of a single Stage 2 tool.
+    Display the outcome of a single enumeration tool.
 
     Uses the canonical ExecutionResult model.
     """
@@ -57,14 +68,24 @@ def _print_tool_result(result):
         )
 
 
-def stage2_enum(ctx: dict):
+###############################################################################
+# Stage Execution
+###############################################################################
+
+
+def stage2_enum(
+    ctx: dict,
+) -> None:
     """
-    Execute all Stage 2 enumeration tools registered for
-    the current execution profile.
+    Execute enumeration tools registered for the current profile.
 
     Supported profiles:
-        - full_safe (default)
+
+        - full_safe
         - fast
+
+    The canonical tool registry remains the single source of truth for
+    enumeration integrations.
     """
 
     stage(
@@ -77,28 +98,37 @@ def stage2_enum(ctx: dict):
         "full_safe",
     )
 
+    ###########################################################################
+    # Registry Selection
+    ###########################################################################
+
     tools = [
         tool
         for tool in build_registry()
-        if tool.stage == 2
+        if tool.phase
+        == AssessmentPhase.ENUMERATION
     ]
 
     if not tools:
         err(
-            "No Stage 2 tools registered."
+            "No enumeration tools registered."
         )
         return
+
+    ###########################################################################
+    # Fast Profile
+    ###########################################################################
 
     if profile == "fast":
 
         allowed_tools = {
+            "httpx",
             "whatweb",
-            "wafw00f",
         }
 
         warn(
             "FAST mode: running lightweight "
-            "enumeration tools only."
+            "web enumeration tools only."
         )
 
         tools = [
@@ -107,11 +137,34 @@ def stage2_enum(ctx: dict):
             if tool.name in allowed_tools
         ]
 
+    ###########################################################################
+    # Unknown Profile
+    ###########################################################################
+
+    elif profile != "full_safe":
+
+        warn(
+            f"Unknown profile '{profile}'; "
+            "using full_safe enumeration selection."
+        )
+
+    ###########################################################################
+    # Execution
+    ###########################################################################
+
     for tool in tools:
 
-        result = tool.run(
-            ctx
-        )
+        try:
+            result = tool.run(
+                ctx
+            )
+
+        except Exception as exc:
+            warn(
+                f"Tool execution error: "
+                f"{tool.name}: {exc}"
+            )
+            continue
 
         _print_tool_result(
             result
@@ -120,6 +173,11 @@ def stage2_enum(ctx: dict):
     ok(
         "Stage 2 enumeration finished ✅"
     )
+
+
+###############################################################################
+# Public API
+###############################################################################
 
 
 __all__ = [

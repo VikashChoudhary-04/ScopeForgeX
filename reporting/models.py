@@ -4,7 +4,7 @@ ScopeForgeX Reporting Models
 
 Canonical reporting data structures.
 
-v1.0.0
+v1.1.0
 
 Supports:
     - Professional pentest reports
@@ -12,6 +12,8 @@ Supports:
     - Evidence tracking
     - Tool execution summaries
     - Severity aggregation
+    - Assessment-phase reporting
+    - Runtime execution statistics
     - JSON serialization
 """
 
@@ -24,6 +26,8 @@ from dataclasses import (
 )
 from datetime import datetime
 from typing import Any
+
+from scopeforgex.runtime import AssessmentPhase
 
 
 ###############################################################################
@@ -47,11 +51,13 @@ class FindingEvidence:
 
     file_path: str = ""
 
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
 
-    def as_dict(self) -> dict[str, Any]:
-
-        return asdict(self)
-
+        return asdict(
+            self
+        )
 
 
 @dataclass
@@ -89,17 +95,19 @@ class Finding:
         default_factory=list,
     )
 
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
 
-    def as_dict(self) -> dict[str, Any]:
-
-        data = asdict(self)
+        data = asdict(
+            self
+        )
 
         data["evidence"] = (
             self.evidence.as_dict()
         )
 
         return data
-
 
 
 ###############################################################################
@@ -123,26 +131,25 @@ class SeveritySummary:
 
     informational: int = 0
 
-
-    def total(self) -> int:
+    def total(
+        self,
+    ) -> int:
 
         return (
             self.critical
-            +
-            self.high
-            +
-            self.medium
-            +
-            self.low
-            +
-            self.informational
+            + self.high
+            + self.medium
+            + self.low
+            + self.informational
         )
 
+    def as_dict(
+        self,
+    ) -> dict[str, int]:
 
-    def as_dict(self) -> dict[str, int]:
-
-        return asdict(self)
-
+        return asdict(
+            self
+        )
 
 
 ###############################################################################
@@ -174,22 +181,56 @@ class ToolExecutionResult:
         default_factory=list,
     )
 
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
 
-    def as_dict(self) -> dict[str, Any]:
-
-        return asdict(self)
-
+        return asdict(
+            self
+        )
 
 
 ###############################################################################
-# Existing Report Models
+# Assessment Phase Models
+###############################################################################
+
+
+@dataclass
+class StageResult:
+    """
+    Assessment-phase result.
+
+    The class name is retained for compatibility with existing
+    reporting callers. The canonical lifecycle identifier is
+    AssessmentPhase.
+    """
+
+    phase: AssessmentPhase
+
+    status: str
+
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
+
+        return {
+            "phase": self.phase.value,
+            "status": self.status,
+        }
+
+
+###############################################################################
+# Workflow Statistics
 ###############################################################################
 
 
 @dataclass
 class ScanStatistics:
     """
-    Workflow statistics.
+    Workflow and assessment statistics.
+
+    RuntimeState is the authoritative source for execution history.
+    These fields expose the relevant execution totals to reporting.
     """
 
     subdomains_found: int = 0
@@ -204,18 +245,16 @@ class ScanStatistics:
 
     files_generated: int = 0
 
+    tools_executed: int = 0
+
+    stages_executed: int = 0
+
+    stages_skipped: int = 0
 
 
-@dataclass
-class StageResult:
-    """
-    Workflow stage result.
-    """
-
-    name: str
-
-    status: str
-
+###############################################################################
+# Report Metadata
+###############################################################################
 
 
 @dataclass
@@ -226,10 +265,14 @@ class ReportMetadata:
 
     generator: str = "ScopeForgeX"
 
-    version: str = "v1.0.0"
+    version: str = "v1.1.0"
 
     generated_by: str = "ScopeForgeX Reporting Engine"
 
+
+###############################################################################
+# Complete Report
+###############################################################################
 
 
 @dataclass
@@ -250,104 +293,96 @@ class ReportData:
 
     statistics: ScanStatistics
 
-
     generated_files: list[str] = field(
         default_factory=list,
     )
-
 
     stages: list[StageResult] = field(
         default_factory=list,
     )
 
+    findings: list[Finding] = field(
+        default_factory=list,
+    )
 
     tool_results: dict[str, str] = field(
         default_factory=dict,
     )
 
+    metadata: ReportMetadata = field(
+        default_factory=ReportMetadata,
+    )
 
     warnings: list[str] = field(
         default_factory=list,
     )
 
-
-    findings: list[Finding] = field(
+    errors: list[str] = field(
         default_factory=list,
     )
 
-
-    severity_summary: SeveritySummary = field(
-        default_factory=SeveritySummary,
-    )
-
-
-    metadata: ReportMetadata = field(
-        default_factory=ReportMetadata,
-    )
-
-
     duration_seconds: float = 0.0
 
-
-
-    ###########################################################################
-    # Serialization
-    ###########################################################################
-
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
+        """
+        Serialize the complete report into JSON-compatible data.
+        """
 
         return {
-
             "target": self.target,
 
             "profile": self.profile,
 
             "target_type": self.target_type,
 
-            "start_time":
-                self.start_time.isoformat(),
+            "start_time": (
+                self.start_time.isoformat()
+            ),
 
-            "end_time":
-                self.end_time.isoformat(),
+            "end_time": (
+                self.end_time.isoformat()
+            ),
 
-            "duration_seconds":
-                self.duration_seconds,
+            "duration_seconds": (
+                self.duration_seconds
+            ),
 
-            "statistics":
-                asdict(
-                    self.statistics
-                ),
+            "statistics": asdict(
+                self.statistics
+            ),
 
-            "generated_files":
-                self.generated_files,
+            "generated_files": list(
+                self.generated_files
+            ),
 
-            "stages":
-                [
-                    asdict(stage)
-                    for stage in self.stages
-                ],
+            "stages": [
+                stage.as_dict()
+                for stage in self.stages
+            ],
 
-            "tool_results":
-                self.tool_results,
+            "findings": [
+                finding.as_dict()
+                for finding in self.findings
+            ],
 
-            "warnings":
-                self.warnings,
+            "tool_results": dict(
+                self.tool_results
+            ),
 
-            "findings":
-                [
-                    finding.as_dict()
-                    for finding in self.findings
-                ],
+            "metadata": asdict(
+                self.metadata
+            ),
 
-            "severity_summary":
-                self.severity_summary.as_dict(),
+            "warnings": list(
+                self.warnings
+            ),
 
-            "metadata":
-                asdict(
-                    self.metadata
-                ),
+            "errors": list(
+                self.errors
+            ),
         }
-
 
 
 ###############################################################################
@@ -356,21 +391,12 @@ class ReportData:
 
 
 __all__ = [
-
     "FindingEvidence",
-
     "Finding",
-
     "SeveritySummary",
-
     "ToolExecutionResult",
-
-    "ScanStatistics",
-
     "StageResult",
-
+    "ScanStatistics",
     "ReportMetadata",
-
     "ReportData",
-
 ]

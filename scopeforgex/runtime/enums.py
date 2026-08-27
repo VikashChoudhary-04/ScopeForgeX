@@ -2,168 +2,186 @@
 ScopeForgeX Runtime Enums
 =========================
 
-Defines the core enumerations used throughout the ScopeForgeX runtime
-execution engine.
+Canonical enumerations used by the ScopeForgeX runtime.
 
-These enums provide a strongly typed vocabulary for describing workflow
-execution, tool status, severity levels, runtime events, execution stages,
-and generated artifacts.
+These enums provide stable values for:
 
-Design Principles
------------------
-- Human-readable string values.
-- JSON serialization friendly.
-- No project dependencies.
-- Safe to import from anywhere.
-- Stable public API.
+- Assessment workflow phases
+- Execution status
+- Finding severity
+- Finding confidence
 
-This module intentionally contains no business logic.
+Keeping these values centralized prevents individual stages, tools,
+collectors, analyzers and reporting components from defining incompatible
+phase, status, severity or confidence names.
+
+v1.1.0
 """
 
 from __future__ import annotations
 
 from enum import Enum
 
-try:
-    # Python 3.11+
-    from enum import StrEnum
-except ImportError:  # pragma: no cover
-    class StrEnum(str, Enum):
-        """Compatibility implementation for Python < 3.11."""
-        pass
+
+###############################################################################
+# Assessment Phase
+###############################################################################
 
 
-# ============================================================================
-# Execution Status
-# ============================================================================
-
-class Status(StrEnum):
+class AssessmentPhase(
+    str,
+    Enum,
+):
     """
-    Represents the lifecycle state of an executable component.
+    Canonical ScopeForgeX assessment phases.
+
+    The ordering represents the normal assessment lifecycle.
+    """
+
+    RECONNAISSANCE = "reconnaissance"
+
+    ENUMERATION = "enumeration"
+
+    VULNERABILITY_ASSESSMENT = (
+        "vulnerability_assessment"
+    )
+
+    EXPLOITATION = "exploitation"
+
+    POST_EXPLOITATION = (
+        "post_exploitation"
+    )
+
+    REPORTING = "reporting"
+
+
+def get_phase_order(
+    phase: AssessmentPhase,
+) -> int:
+    """
+    Return the canonical execution order for an assessment phase.
+
+    Lower values execute earlier in the workflow.
+    """
+
+    order = {
+        AssessmentPhase.RECONNAISSANCE: 1,
+        AssessmentPhase.ENUMERATION: 2,
+        AssessmentPhase.VULNERABILITY_ASSESSMENT: 3,
+        AssessmentPhase.EXPLOITATION: 4,
+        AssessmentPhase.POST_EXPLOITATION: 5,
+        AssessmentPhase.REPORTING: 6,
+    }
+
+    return order[phase]
+
+
+def get_phase_order_map() -> dict[AssessmentPhase, int]:
+    """
+    Return the complete canonical assessment phase ordering.
+    """
+
+    return {
+        AssessmentPhase.RECONNAISSANCE: 1,
+        AssessmentPhase.ENUMERATION: 2,
+        AssessmentPhase.VULNERABILITY_ASSESSMENT: 3,
+        AssessmentPhase.EXPLOITATION: 4,
+        AssessmentPhase.POST_EXPLOITATION: 5,
+        AssessmentPhase.REPORTING: 6,
+    }
+
+
+###############################################################################
+# Execution Status
+###############################################################################
+
+
+class ExecutionStatus(
+    str,
+    Enum,
+):
+    """
+    Canonical status values for tool and stage execution.
     """
 
     PENDING = "pending"
+
     RUNNING = "running"
-    COMPLETED = "completed"
+
+    SUCCESS = "success"
+
     FAILED = "failed"
+
     SKIPPED = "skipped"
-    CANCELLED = "cancelled"
 
 
-# ============================================================================
-# Severity
-# ============================================================================
+###############################################################################
+# Finding Severity
+###############################################################################
 
-class Severity(StrEnum):
+
+class Severity(
+    str,
+    Enum,
+):
     """
-    Standardized severity levels.
+    Canonical finding severity values.
 
-    Intended for findings, warnings and runtime diagnostics.
+    INFO is intentionally included because not every assessment result is a
+    vulnerability. Informational observations such as discovered services,
+    technologies and attack-surface details can still be meaningful findings.
     """
 
     INFO = "info"
+
     LOW = "low"
+
     MEDIUM = "medium"
+
     HIGH = "high"
+
     CRITICAL = "critical"
 
 
-# ============================================================================
-# Artifact Types
-# ============================================================================
+###############################################################################
+# Finding Confidence
+###############################################################################
 
-class ArtifactType(StrEnum):
+
+class Confidence(
+    str,
+    Enum,
+):
     """
-    Types of artifacts produced during execution.
-    """
+    Canonical confidence values for assessment findings.
 
-    TEXT = "text"
-    JSON = "json"
-    CSV = "csv"
-    HTML = "html"
-    MARKDOWN = "markdown"
-    XML = "xml"
-    LOG = "log"
-    SCREENSHOT = "screenshot"
-    PCAP = "pcap"
-    OTHER = "other"
+    Detection confidence is intentionally separate from severity.
 
-
-# ============================================================================
-# Tool Categories
-# ============================================================================
-
-class ToolCategory(StrEnum):
-    """
-    High-level categorization of executors/tools.
+    A high-severity detection does not automatically mean that the finding
+    has been manually confirmed.
     """
 
-    RECON = "recon"
-    ENUMERATION = "enumeration"
-    VULNERABILITY = "vulnerability"
-    EXPLOITATION = "exploitation"
-    POST_EXPLOITATION = "post_exploitation"
-    REPORTING = "reporting"
-    UTILITY = "utility"
+    CONFIRMED = "confirmed"
+
+    HIGH = "high"
+
+    MEDIUM = "medium"
+
+    LOW = "low"
+
+    INFORMATIONAL = "informational"
 
 
-# ============================================================================
-# Workflow Stages
-# ============================================================================
-
-class StageType(StrEnum):
-    """
-    Canonical workflow stages.
-
-    These represent logical stages of the ScopeForgeX workflow,
-    independent of the internal implementation.
-    """
-
-    RECON = "recon"
-    ENUMERATION = "enumeration"
-    VULNERABILITY = "vulnerability"
-    EXPLOITATION = "exploitation"
-    POST_EXPLOITATION = "post_exploitation"
-    REPORTING = "reporting"
-
-
-# ============================================================================
-# Runtime Events
-# ============================================================================
-
-class EventType(StrEnum):
-    """
-    Events emitted by the runtime event system.
-    """
-
-    WORKFLOW_STARTED = "workflow_started"
-    WORKFLOW_FINISHED = "workflow_finished"
-
-    STAGE_STARTED = "stage_started"
-    STAGE_FINISHED = "stage_finished"
-
-    TOOL_STARTED = "tool_started"
-    TOOL_FINISHED = "tool_finished"
-
-    ARTIFACT_CREATED = "artifact_created"
-
-    FINDING_RECORDED = "finding_recorded"
-
-    WARNING_RECORDED = "warning_recorded"
-
-    ERROR_RECORDED = "error_recorded"
-
-
-# ============================================================================
+###############################################################################
 # Public API
-# ============================================================================
+###############################################################################
+
 
 __all__ = [
-    "ArtifactType",
-    "EventType",
+    "AssessmentPhase",
+    "ExecutionStatus",
     "Severity",
-    "StageType",
-    "Status",
-    "StrEnum",
-    "ToolCategory",
+    "Confidence",
+    "get_phase_order",
+    "get_phase_order_map",
 ]

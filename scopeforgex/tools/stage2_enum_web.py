@@ -1,22 +1,26 @@
 """
-ScopeForgeX v0.5.0
-Stage 2 - Web Enumeration
+ScopeForgeX
+Stage 2 — Web Enumeration Compatibility Tools
+==============================================
 
-Features
---------
-* Shared helper utilities
-* Multiple target support
-* Structured ExecutionResult handling
-* Automatic output validation
-* Cleaner architecture
-* Easier future tool integration
+Provides the legacy Stage 2 web-enumeration tools:
+
+- HTTPX
+- Katana
+- WhatWeb
+- WAFW00F
+- FFUF
+
+The module uses the canonical ExecutionResult model and remains compatible
+with the ScopeForgeX tool registry.
+
+v1.1.0
 """
 
 from __future__ import annotations
 
 import os
 import shlex
-
 from pathlib import Path
 
 import questionary
@@ -41,7 +45,7 @@ def _enum_directory(
     ctx: dict,
 ) -> Path:
     """
-    Return Stage-2 enum directory.
+    Return the Stage 2 enumeration directory.
     """
 
     directory = (
@@ -61,7 +65,7 @@ def _safe_exists(
     path: Path,
 ) -> bool:
     """
-    True if file exists and contains data.
+    Return True when a path exists and contains data.
     """
 
     return (
@@ -86,7 +90,7 @@ def _normalize_target(
     target: str,
 ) -> str:
     """
-    Ensure targets always contain a scheme.
+    Ensure targets contain a URL scheme.
     """
 
     target = target.strip()
@@ -109,8 +113,9 @@ def _load_pipeline_targets(
     Determine web enumeration targets.
 
     Priority:
-        1. hosts_final
-        2. root target
+
+    1. Stage 1 hosts_final
+    2. Root target
     """
 
     pipeline = ctx.get(
@@ -127,24 +132,22 @@ def _load_pipeline_targets(
     if hosts_file and os.path.exists(
         hosts_file
     ):
-
         with open(
             hosts_file,
             encoding="utf-8",
         ) as handle:
 
             for line in handle:
-
                 host = line.strip()
 
                 if host:
-
                     targets.append(
-                        _normalize_target(host)
+                        _normalize_target(
+                            host
+                        )
                     )
 
     if not targets:
-
         targets.append(
             _normalize_target(
                 ctx["target"]
@@ -161,7 +164,7 @@ def _build_notes(
     message: str,
 ) -> str:
     """
-    Consistent report note generation.
+    Build consistent execution notes from a log file.
     """
 
     notes = build_notes_from_log(
@@ -172,29 +175,38 @@ def _build_notes(
     if not _safe_exists(
         logfile
     ):
-
-        notes += " [Log file missing.]"
+        notes += (
+            " [Log file missing.]"
+        )
 
     return notes
 
 
 def _missing_tool(
     name: str,
+    capability: str,
 ) -> ExecutionResult:
+    """
+    Return a canonical failure result for a missing executable.
+    """
 
     return ExecutionResult.failure(
         tool=name,
-        capability="web_enumeration",
+        capability=capability,
         error=f"{name} not installed",
     )
+
+
 ###############################################################################
 # Base Class
 ###############################################################################
 
 
-class WebEnumerationTool(ToolBase):
+class WebEnumerationTool(
+    ToolBase
+):
     """
-    Shared helper methods for all Stage-2 tools.
+    Shared functionality for legacy Stage 2 web-enumeration tools.
     """
 
     risk = "low"
@@ -204,6 +216,9 @@ class WebEnumerationTool(ToolBase):
         self,
         ctx: dict,
     ) -> Path:
+        """
+        Return the Stage 2 enumeration directory.
+        """
 
         return _enum_directory(
             ctx
@@ -214,9 +229,14 @@ class WebEnumerationTool(ToolBase):
         ctx: dict,
         filename: str,
     ) -> Path:
+        """
+        Return a file inside the Stage 2 enumeration directory.
+        """
 
         return (
-            self.enum_dir(ctx)
+            self.enum_dir(
+                ctx
+            )
             / filename
         )
 
@@ -224,6 +244,9 @@ class WebEnumerationTool(ToolBase):
         self,
         ctx: dict,
     ) -> list[str]:
+        """
+        Return the targets selected for web enumeration.
+        """
 
         return _load_pipeline_targets(
             ctx
@@ -235,11 +258,13 @@ class WebEnumerationTool(ToolBase):
         notes: str,
         warning: str,
     ) -> str:
+        """
+        Append a warning when the expected output is empty or missing.
+        """
 
         if not _safe_exists(
             output
         ):
-
             notes += (
                 f" [{warning}]"
             )
@@ -248,26 +273,290 @@ class WebEnumerationTool(ToolBase):
 
 
 ###############################################################################
-# WhatWeb
+# HTTPX
 ###############################################################################
 
 
-class WhatWebTool(WebEnumerationTool):
+class HttpxTool(
+    WebEnumerationTool
+):
+    """
+    HTTP service probing using HTTPX.
+    """
 
-    name = "whatweb"
-    description = "Website fingerprinting"
+    name = "httpx"
+    description = (
+        "Identify reachable HTTP services and collect web service metadata"
+    )
+    capability = "http_service_probing"
+    output_type = "http_services"
 
     def run(
         self,
         ctx: dict,
     ) -> ExecutionResult:
+        """
+        Execute HTTPX against the selected targets.
+        """
+
+        if not is_tool_installed(
+            "httpx"
+        ):
+            return _missing_tool(
+                self.name,
+                self.capability,
+            )
+
+        output = self.output_file(
+            ctx,
+            "httpx.txt",
+        )
+
+        logfile = self.output_file(
+            ctx,
+            "httpx.log",
+        )
+
+        targets_file = self.output_file(
+            ctx,
+            "httpx_targets.txt",
+        )
+
+        targets = self.targets(
+            ctx
+        )
+
+        targets_file.write_text(
+            "\n".join(targets) + "\n",
+            encoding="utf-8",
+        )
+
+        command = (
+            "httpx "
+            f"-l {_quote(str(targets_file))} "
+            "-silent "
+            "-status-code "
+            "-title "
+            "-server "
+            "-tech-detect "
+            f"-o {_quote(str(output))}"
+        )
+
+        execution = run_command(
+            tool=self.name,
+            capability=self.capability,
+            cmd=command,
+            outfile=str(logfile),
+            timeout=600,
+        )
+
+        notes = _build_notes(
+            logfile,
+            "HTTPX completed.",
+        )
+
+        if not execution.success:
+            result = ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error="HTTPX execution failed.",
+            )
+
+            for artifact in (
+                targets_file,
+                output,
+                logfile,
+            ):
+                result.add_artifact(
+                    artifact
+                )
+
+            result.metadata.update(
+                {
+                    "targets": len(targets),
+                }
+            )
+
+            return result
+
+        if not _safe_exists(
+            output
+        ):
+            notes += (
+                " [No HTTP services detected.]"
+            )
+
+        return ExecutionResult.success_result(
+            tool=self.name,
+            capability=self.capability,
+            artifacts=[
+                str(targets_file),
+                str(output),
+                str(logfile),
+            ],
+            metadata={
+                "notes": notes,
+                "targets": len(targets),
+            },
+        )
+
+
+###############################################################################
+# KATANA
+###############################################################################
+
+
+class KatanaTool(
+    WebEnumerationTool
+):
+    """
+    Web crawling and endpoint discovery using Katana.
+    """
+
+    name = "katana"
+    description = (
+        "Web crawling and application endpoint discovery"
+    )
+    capability = "web_crawling"
+    output_type = "web_crawl"
+    risk = "medium"
+
+    def run(
+        self,
+        ctx: dict,
+    ) -> ExecutionResult:
+        """
+        Execute Katana against the selected targets.
+        """
+
+        if not is_tool_installed(
+            "katana"
+        ):
+            return _missing_tool(
+                self.name,
+                self.capability,
+            )
+
+        output = self.output_file(
+            ctx,
+            "katana.txt",
+        )
+
+        logfile = self.output_file(
+            ctx,
+            "katana.log",
+        )
+
+        targets_file = self.output_file(
+            ctx,
+            "katana_targets.txt",
+        )
+
+        targets = self.targets(
+            ctx
+        )
+
+        targets_file.write_text(
+            "\n".join(targets) + "\n",
+            encoding="utf-8",
+        )
+
+        command = (
+            "katana "
+            f"-list {_quote(str(targets_file))} "
+            "-silent "
+            f"-o {_quote(str(output))}"
+        )
+
+        execution = run_command(
+            tool=self.name,
+            capability=self.capability,
+            cmd=command,
+            outfile=str(logfile),
+            timeout=600,
+        )
+
+        notes = _build_notes(
+            logfile,
+            "Katana completed.",
+        )
+
+        if not execution.success:
+            result = ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error="Katana execution failed.",
+            )
+
+            for artifact in (
+                targets_file,
+                output,
+                logfile,
+            ):
+                result.add_artifact(
+                    artifact
+                )
+
+            result.metadata.update(
+                {
+                    "targets": len(targets),
+                }
+            )
+
+            return result
+
+        if not _safe_exists(
+            output
+        ):
+            notes += (
+                " [No endpoints discovered.]"
+            )
+
+        return ExecutionResult.success_result(
+            tool=self.name,
+            capability=self.capability,
+            artifacts=[
+                str(targets_file),
+                str(output),
+                str(logfile),
+            ],
+            metadata={
+                "notes": notes,
+                "targets": len(targets),
+            },
+        )
+
+
+###############################################################################
+# WhatWeb
+###############################################################################
+
+
+class WhatWebTool(
+    WebEnumerationTool
+):
+    """
+    Website technology fingerprinting.
+    """
+
+    name = "whatweb"
+    description = "Website fingerprinting"
+    capability = "technology_fingerprinting"
+
+    def run(
+        self,
+        ctx: dict,
+    ) -> ExecutionResult:
+        """
+        Execute WhatWeb against the selected targets.
+        """
 
         if not is_tool_installed(
             "whatweb"
         ):
-
             return _missing_tool(
-                self.name
+                self.name,
+                self.capability,
             )
 
         output = self.output_file(
@@ -280,25 +569,29 @@ class WhatWebTool(WebEnumerationTool):
             "whatweb.log",
         )
 
+        targets = self.targets(
+            ctx
+        )
+
         with output.open(
             "w",
             encoding="utf-8",
         ) as report:
 
-            for target in self.targets(
-                ctx
-            ):
+            for target in targets:
 
                 command = (
-                    f"whatweb "
+                    "whatweb "
                     f"{_quote(target)}"
                 )
 
                 run_command(
                     tool=self.name,
-                    capability="technology_fingerprinting",
+                    capability=self.capability,
                     cmd=command,
-                    outfile=str(logfile),
+                    outfile=str(
+                        logfile
+                    ),
                 )
 
                 report.write(
@@ -318,41 +611,52 @@ class WhatWebTool(WebEnumerationTool):
 
         return ExecutionResult.success_result(
             tool=self.name,
-            capability="technology_fingerprinting",
+            capability=self.capability,
             artifacts=[
-                output,
-                logfile,
+                str(output),
+                str(logfile),
             ],
             metadata={
                 "notes": notes,
                 "targets": len(
-                    self.targets(ctx)
+                    targets
                 ),
             },
         )
 
 
 ###############################################################################
-# WAF Detection
+# WAFW00F
 ###############################################################################
 
 
-class Wafw00fTool(WebEnumerationTool):
+class Wafw00fTool(
+    WebEnumerationTool
+):
+    """
+    Web Application Firewall detection.
+    """
 
     name = "wafw00f"
-    description = "Detect Web Application Firewalls"
+    description = (
+        "Detect Web Application Firewalls"
+    )
+    capability = "waf_detection"
 
     def run(
         self,
         ctx: dict,
     ) -> ExecutionResult:
+        """
+        Execute WAFW00F against the selected targets.
+        """
 
         if not is_tool_installed(
             "wafw00f"
         ):
-
             return _missing_tool(
-                self.name
+                self.name,
+                self.capability,
             )
 
         output = self.output_file(
@@ -365,25 +669,29 @@ class Wafw00fTool(WebEnumerationTool):
             "wafw00f.log",
         )
 
+        targets = self.targets(
+            ctx
+        )
+
         with output.open(
             "w",
             encoding="utf-8",
         ) as report:
 
-            for target in self.targets(
-                ctx
-            ):
+            for target in targets:
 
                 command = (
-                    f"wafw00f "
+                    "wafw00f "
                     f"{_quote(target)}"
                 )
 
                 run_command(
                     tool=self.name,
-                    capability="waf_detection",
+                    capability=self.capability,
                     cmd=command,
-                    outfile=str(logfile),
+                    outfile=str(
+                        logfile
+                    ),
                 )
 
                 report.write(
@@ -403,18 +711,20 @@ class Wafw00fTool(WebEnumerationTool):
 
         return ExecutionResult.success_result(
             tool=self.name,
-            capability="waf_detection",
+            capability=self.capability,
             artifacts=[
-                output,
-                logfile,
+                str(output),
+                str(logfile),
             ],
             metadata={
                 "notes": notes,
                 "targets": len(
-                    self.targets(ctx)
+                    targets
                 ),
             },
         )
+
+
 ###############################################################################
 # FFUF Helpers
 ###############################################################################
@@ -422,7 +732,7 @@ class Wafw00fTool(WebEnumerationTool):
 
 def _select_wordlist() -> str | None:
     """
-    Interactive FFUF wordlist selection.
+    Interactively select an FFUF wordlist.
 
     Returns:
         Valid wordlist path or None.
@@ -436,18 +746,19 @@ def _select_wordlist() -> str | None:
         ],
     ).ask()
 
-    if mode == "Auto-detect default":
-
-        wordlist = find_default_web_fuzz_wordlist()
+    if mode == (
+        "Auto-detect default"
+    ):
+        wordlist = (
+            find_default_web_fuzz_wordlist()
+        )
 
         if not wordlist:
-
             wordlist = questionary.text(
                 "Default wordlist not found. Enter path:"
             ).ask()
 
     else:
-
         wordlist = questionary.text(
             "Enter wordlist path:"
         ).ask()
@@ -468,43 +779,56 @@ def _select_wordlist() -> str | None:
 ###############################################################################
 
 
-class FFUFTool(WebEnumerationTool):
+class FFUFTool(
+    WebEnumerationTool
+):
+    """
+    Directory and content discovery using FFUF.
+    """
 
     name = "ffuf"
-    description = "Directory and content discovery"
+    description = (
+        "Directory and content discovery"
+    )
+    capability = "content_discovery"
     risk = "medium"
 
     def run(
         self,
         ctx: dict,
     ) -> ExecutionResult:
+        """
+        Execute FFUF against the selected targets.
+        """
 
         if not is_tool_installed(
             "ffuf"
         ):
-
             return _missing_tool(
-                self.name
+                self.name,
+                self.capability,
             )
 
-        if not questionary.confirm(
+        confirmed = questionary.confirm(
             "Run FFUF directory enumeration?"
-        ).ask():
+        ).ask()
 
+        if not confirmed:
             return ExecutionResult.skipped(
                 tool=self.name,
-                capability="content_discovery",
+                capability=self.capability,
                 reason="Skipped by user",
             )
 
         wordlist = _select_wordlist()
 
         if not wordlist:
-
             return ExecutionResult.failure(
                 tool=self.name,
-                capability="content_discovery",
-                error="Invalid wordlist selected.",
+                capability=self.capability,
+                error=(
+                    "Invalid wordlist selected."
+                ),
             )
 
         enum_dir = self.enum_dir(
@@ -526,21 +850,20 @@ class FFUFTool(WebEnumerationTool):
             / "wordlist_used.txt"
         )
 
-        with wordlist_file.open(
-            "w",
+        wordlist_file.write_text(
+            wordlist + "\n",
             encoding="utf-8",
-        ) as fp:
-
-            fp.write(
-                wordlist
-                + "\n"
-            )
+        )
 
         generated_outputs = [
             summary,
             logfile,
             wordlist_file,
         ]
+
+        targets = self.targets(
+            ctx
+        )
 
         with summary.open(
             "w",
@@ -556,10 +879,9 @@ class FFUFTool(WebEnumerationTool):
             )
 
             for index, target in enumerate(
-                self.targets(ctx),
+                targets,
                 start=1,
             ):
-
                 report.write(
                     f"## Target {index}\n\n"
                 )
@@ -570,8 +892,9 @@ class FFUFTool(WebEnumerationTool):
 
                 outfile = (
                     enum_dir
-                    /
-                    f"ffuf_target_{index}.md"
+                    / (
+                        f"ffuf_target_{index}.md"
+                    )
                 )
 
                 command = (
@@ -585,25 +908,26 @@ class FFUFTool(WebEnumerationTool):
 
                 run_command(
                     tool=self.name,
-                    capability="content_discovery",
+                    capability=self.capability,
                     cmd=command,
-                    outfile=str(logfile),
+                    outfile=str(
+                        logfile
+                    ),
                 )
 
                 if _safe_exists(
                     outfile
                 ):
-
                     generated_outputs.append(
                         outfile
                     )
 
                     report.write(
-                        f"Output: `{outfile.name}`\n\n"
+                        "Output: "
+                        f"`{outfile.name}`\n\n"
                     )
 
                 else:
-
                     report.write(
                         "No results generated.\n\n"
                     )
@@ -621,12 +945,15 @@ class FFUFTool(WebEnumerationTool):
 
         return ExecutionResult.success_result(
             tool=self.name,
-            capability="content_discovery",
-            artifacts=generated_outputs,
+            capability=self.capability,
+            artifacts=[
+                str(path)
+                for path in generated_outputs
+            ],
             metadata={
                 "notes": notes,
                 "targets": len(
-                    self.targets(ctx)
+                    targets
                 ),
                 "wordlist": wordlist,
             },
@@ -646,13 +973,17 @@ ALL_STAGE2_WEB_ENUM_TOOLS = [
 
 
 ###############################################################################
-# Module Metadata
+# Module Exports
 ###############################################################################
 
 
 __all__ = [
+    "WebEnumerationTool",
+    "HttpxTool",
+    "KatanaTool",
     "WhatWebTool",
     "Wafw00fTool",
     "FFUFTool",
     "ALL_STAGE2_WEB_ENUM_TOOLS",
 ]
+

@@ -6,13 +6,16 @@ Reporting & Cleanup Stage
 
 Responsibilities
 ----------------
-* Collect workflow metadata
-* Discover generated artifacts
-* Parse vulnerability scanner output
-* Build ReportData
-* Generate Markdown + JSON reports
+- Collect workflow metadata
+- Discover generated artifacts
+- Parse vulnerability scanner output
+- Convert canonical runtime phase results into reporting results
+- Build ReportData
+- Generate Markdown + JSON reports
 
-v1.0.0
+RuntimeState is the authoritative source of workflow execution history.
+
+v1.1.0
 """
 
 from __future__ import annotations
@@ -26,11 +29,11 @@ from reporting.models import (
     ScanStatistics,
     StageResult,
 )
-
 from reporting.report_generator import ReportGenerator
 from reporting.json_exporter import export_json_report
 from reporting.parsers.nuclei_parser import parse_nuclei
 
+from scopeforgex.runtime import AssessmentPhase
 from scopeforgex.ui import ok, stage
 
 
@@ -42,6 +45,9 @@ from scopeforgex.ui import ok, stage
 def _count_lines(
     path: Path | None,
 ) -> int:
+    """
+    Count non-empty lines in a file.
+    """
 
     if path is None:
         return 0
@@ -62,33 +68,48 @@ def _count_lines(
         )
 
 
-
 def _discover_artifacts(
     outdir: Path,
 ) -> list[str]:
+    """
+    Discover generated files inside the workflow output directory.
+
+    Report files themselves are excluded so that files_generated represents
+    scan artifacts rather than the reports currently being generated.
+    """
 
     if not outdir.exists():
         return []
 
-    artifacts = []
+    artifacts: list[str] = []
+
+    excluded = {
+        "report.md",
+        "report.json",
+    }
 
     for path in outdir.rglob("*"):
 
-        if (
-            path.is_file()
-            and ".gitkeep" not in str(path)
-        ):
+        if not path.is_file():
+            continue
 
-            artifacts.append(
-                str(
-                    path.relative_to(outdir)
-                )
-            )
+        if ".gitkeep" in str(path):
+            continue
+
+        relative = path.relative_to(
+            outdir
+        )
+
+        if relative.name in excluded:
+            continue
+
+        artifacts.append(
+            str(relative)
+        )
 
     return sorted(
         artifacts
     )
-
 
 
 ###############################################################################
@@ -100,7 +121,6 @@ class ReportingStage:
     """
     Builds final ScopeForgeX reports.
     """
-
 
     def __init__(
         self,
@@ -121,9 +141,7 @@ class ReportingStage:
             self.outdir / "report.json"
         )
 
-        self.artifacts = []
-
-
+        self.artifacts: list[str] = []
 
     ###########################################################################
     # Artifact Paths
@@ -134,12 +152,9 @@ class ReportingStage:
     ) -> dict[str, Path]:
 
         recon = self.outdir / "recon"
-
         vuln = self.outdir / "vuln"
 
-
         return {
-
             "hosts_raw":
                 recon / "hosts_raw.txt",
 
@@ -154,10 +169,7 @@ class ReportingStage:
 
             "nuclei":
                 vuln / "nuclei.txt",
-
         }
-
-
 
     ###########################################################################
     # Statistics
@@ -166,17 +178,60 @@ class ReportingStage:
     def statistics(
         self,
     ) -> ScanStatistics:
+        """
+        Build workflow statistics.
+
+        Filesystem-derived metrics describe generated scan artifacts.
+
+        Runtime-derived metrics describe actual execution history.
+
+        RuntimeState is the authoritative source for execution metrics.
+        """
 
         files = self.artifact_paths()
-
 
         self.artifacts = _discover_artifacts(
             self.outdir
         )
 
+        runtime = self.ctx.get(
+            "runtime"
+        )
+
+        tools_executed = 0
+        stages_executed = 0
+        stages_skipped = 0
+
+        if runtime is not None:
+
+            tool_results = getattr(
+                runtime,
+                "tool_results",
+                [],
+            )
+
+            stage_results = getattr(
+                runtime,
+                "stage_results",
+                [],
+            )
+
+            tools_executed = len(
+                tool_results
+            )
+
+            for result in stage_results:
+
+                if getattr(
+                    result,
+                    "success",
+                    False,
+                ):
+                    stages_executed += 1
+                else:
+                    stages_skipped += 1
 
         return ScanStatistics(
-
             subdomains_found=_count_lines(
                 files["hosts_raw"]
             ),
@@ -201,9 +256,12 @@ class ReportingStage:
                 self.artifacts
             ),
 
+            stages_executed=stages_executed,
+
+            stages_skipped=stages_skipped,
+
+            tools_executed=tools_executed,
         )
-
-
 
     ###########################################################################
     # Findings
@@ -212,19 +270,22 @@ class ReportingStage:
     def findings(
         self,
     ):
+        """
+        Parse vulnerability scanner findings.
+        """
 
         nuclei_file = (
             self.artifact_paths()["nuclei"]
         )
 
+        if not nuclei_file.exists():
+            return []
 
         return parse_nuclei(
             str(
                 nuclei_file
             )
         )
-
-
 
     ###########################################################################
     # Stage Results
@@ -233,54 +294,69 @@ class ReportingStage:
     def _stage_results(
         self,
     ) -> list[StageResult]:
+        """
+        Convert canonical runtime phase results into reporting results.
 
-        results = self.ctx.get(
+        RuntimeState is the authoritative source of execution history.
+
+        Stage 6 does not reconstruct phases from filesystem artifacts and
+        does not consume legacy ctx["stage_results"] data.
+
+        The runtime StageResult and reporting StageResult are deliberately
+        separate models: runtime owns execution state, while reporting owns
+        the report representation.
+        """
+
+        runtime = self.ctx.get(
+            "runtime"
+        )
+
+        if runtime is None:
+            return []
+
+        runtime_results = getattr(
+            runtime,
             "stage_results",
             [],
         )
 
+        output: list[StageResult] = []
 
-        output = []
+        for result in runtime_results:
 
+            phase = getattr(
+                result,
+                "phase",
+                None,
+            )
 
-        for result in results:
+            if phase is None:
+                continue
+
+            if not isinstance(
+                phase,
+                AssessmentPhase,
+            ):
+                continue
+
+            status = (
+                "Completed"
+                if getattr(
+                    result,
+                    "success",
+                    False,
+                )
+                else "Failed"
+            )
 
             output.append(
-
                 StageResult(
-                    getattr(
-                        result,
-                        "tool",
-                        "Unknown",
-                    ),
-
-                    (
-                        "Completed"
-                        if getattr(
-                            result,
-                            "success",
-                            False,
-                        )
-                        else "Failed"
-                    ),
+                    phase=phase,
+                    status=status,
                 )
-
             )
-
-
-        output.append(
-
-            StageResult(
-                "Reporting",
-                "Completed",
-            )
-
-        )
-
 
         return output
-
-
 
     ###########################################################################
     # Tool Results
@@ -288,14 +364,52 @@ class ReportingStage:
 
     def _tool_results(
         self,
-    ):
+    ) -> dict[str, str]:
+        """
+        Build a report-friendly tool execution summary from RuntimeState.
 
-        return self.ctx.get(
+        RuntimeState is the authoritative source of tool execution history.
+        """
+
+        runtime = self.ctx.get(
+            "runtime"
+        )
+
+        if runtime is None:
+            return {}
+
+        results = getattr(
+            runtime,
             "tool_results",
             [],
         )
 
+        output: dict[str, str] = {}
 
+        for result in results:
+
+            tool = str(
+                getattr(
+                    result,
+                    "tool",
+                    "",
+                )
+            ).strip()
+
+            if not tool:
+                continue
+
+            output[tool] = (
+                "Completed"
+                if getattr(
+                    result,
+                    "success",
+                    False,
+                )
+                else "Failed"
+            )
+
+        return output
 
     ###########################################################################
     # Build Report
@@ -304,28 +418,28 @@ class ReportingStage:
     def build_report(
         self,
     ) -> ReportData:
+        """
+        Build the canonical ReportData object.
 
-
-        stats = self.statistics()
-
+        RuntimeState supplies execution history while filesystem artifacts
+        supply scan-specific discovery and finding data.
+        """
 
         start = self.ctx.get(
             "workflow_start_time",
             time.time(),
         )
 
-
         end = self.ctx.get(
             "workflow_end_time",
             time.time(),
         )
 
+        statistics = self.statistics()
 
         findings = self.findings()
 
-
         report = ReportData(
-
             target=self.ctx.get(
                 "target",
                 "-",
@@ -349,110 +463,82 @@ class ReportingStage:
                 end
             ),
 
-            statistics=stats,
+            statistics=statistics,
 
-            generated_files=self.artifacts,
+            generated_files=list(
+                self.artifacts
+            ),
 
+            stages=self._stage_results(),
+
+            tool_results=self._tool_results(),
         )
-
 
         report.duration_seconds = (
             end - start
         )
 
-
         report.findings = findings
-
-
-        report.stages = (
-            self._stage_results()
-        )
-
-
-        report.tool_results = (
-            self._tool_results()
-        )
-
-
-        report.warnings = []
-
-
-        if not findings:
-
-            report.warnings.append(
-                "No automated vulnerability findings were recorded."
-            )
-
 
         return report
 
-
-
     ###########################################################################
-    # Generate Reports
+    # Generate
     ###########################################################################
 
-    def write_report(
+    def generate(
         self,
-    ) -> None:
-
+    ) -> ReportData:
+        """
+        Generate Markdown and JSON reports.
+        """
 
         report = self.build_report()
-
 
         ReportGenerator(
             report
         ).generate_markdown(
-
             str(
                 self.report_path
             )
-
         )
-
 
         export_json_report(
-
             report,
-
             str(
                 self.json_path
-            )
-
+            ),
         )
 
-
-        ok(
-            f"Report written to {self.report_path}"
-        )
-
-
-        ok(
-            f"JSON report written to {self.json_path}"
-        )
-
+        return report
 
 
 ###############################################################################
-# Public Entry Point
+# Public Stage Entry Point
 ###############################################################################
 
 
 def stage6_reporting(
     ctx: dict,
 ) -> None:
-
+    """
+    Execute the ScopeForgeX-native reporting phase.
+    """
 
     stage(
-        "STAGE 6 — REPORTING",
-        "magenta",
+        "PHASE 6 — REPORTING",
+        "green",
     )
 
-
-    ReportingStage(
+    reporting = ReportingStage(
         ctx
-    ).write_report()
+    )
 
+    reporting.generate()
+
+    ok(
+        f"Reports written to {reporting.outdir}"
+    )
 
 
 __all__ = [

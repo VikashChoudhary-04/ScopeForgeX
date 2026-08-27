@@ -1,24 +1,22 @@
 """
-ScopeForgeX v0.5.0
-Stage 3 - Vulnerability Assessment
+ScopeForgeX
+Stage 3 — Vulnerability Assessment
+==================================
 
-Features
---------
-* Shared vulnerability scanner framework
-* Structured ExecutionResult handling
-* Finding collection
-* Artifact tracking
-* Multi-input support
-* Unified logging
-* Automatic result merging
+Provides the canonical Stage 3 vulnerability-assessment adapter:
+
+- Nuclei
+
+The adapter executes Nuclei against pipeline-generated hosts and URLs,
+preserves raw outputs and logs, and returns the canonical ExecutionResult.
+
+v1.1.0
 """
 
 from __future__ import annotations
 
-import shlex
-
 from pathlib import Path
-from typing import Iterable
+from typing import Any
 
 from scopeforgex.models.execution_result import ExecutionResult
 from scopeforgex.registry.tool_base import ToolBase
@@ -27,396 +25,754 @@ from scopeforgex.toolcheck import is_tool_installed
 
 
 ###############################################################################
-# Nuclei Profiles
+# Helpers
 ###############################################################################
-
-NUCLEI_FAST_FLAGS = (
-    "-severity high,critical "
-    "-rate-limit 30 "
-    "-timeout 5 "
-    "-retries 1"
-)
-
-
-###############################################################################
-# Helper Functions
-###############################################################################
-
-
-def _vuln_directory(
-    ctx: dict,
-) -> Path:
-    """
-    Return vulnerability output directory.
-    """
-
-    directory = (
-        Path(ctx["outdir"])
-        / "vuln"
-    )
-
-    directory.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    return directory
-
-
-def _safe_exists(
-    path: Path,
-) -> bool:
-    """
-    True when a file exists and contains data.
-    """
-
-    return (
-        path.exists()
-        and path.stat().st_size > 0
-    )
 
 
 def _quote(
     value: str,
 ) -> str:
     """
-    Safe shell quoting.
+    Safely quote a shell argument.
     """
+
+    import shlex
 
     return shlex.quote(
         value
     )
 
 
-def _pipeline_file(
-    ctx: dict,
-    key: str,
-) -> Path | None:
+def _safe_exists(
+    path: Path,
+) -> bool:
     """
-    Return a pipeline artifact if available.
+    Return True when a path exists and contains data.
     """
 
-    pipeline = ctx.get(
-        "pipeline",
-        {},
+    return (
+        path.exists()
+        and path.is_file()
+        and path.stat().st_size > 0
     )
 
-    filename = pipeline.get(
-        key
-    )
 
-    if not filename:
-        return None
+def _dedupe_file(
+    path: Path,
+) -> int:
+    """
+    Deduplicate non-empty lines in a file.
 
-    path = Path(
-        filename
-    )
+    Returns:
+        Number of unique non-empty lines.
+    """
 
     if not path.exists():
-        return None
+        return 0
 
-    if path.stat().st_size == 0:
-        return None
+    lines = []
 
-    return path
+    for line in path.read_text(
+        encoding="utf-8",
+        errors="ignore",
+    ).splitlines():
 
+        value = line.strip()
 
-###############################################################################
-# Finding Helpers
-###############################################################################
+        if value:
+            lines.append(
+                value
+            )
+
+    unique = list(
+        dict.fromkeys(
+            lines
+        )
+    )
+
+    path.write_text(
+        (
+            "\n".join(
+                unique
+            )
+            + "\n"
+            if unique
+            else ""
+        ),
+        encoding="utf-8",
+    )
+
+    return len(
+        unique
+    )
 
 
 def _merge_results(
-    inputs: Iterable[Path],
+    inputs: list[Path],
     output: Path,
-) -> list[str]:
+) -> int:
     """
-    Merge and deduplicate findings.
+    Merge multiple Nuclei result files into one deduplicated file.
 
     Returns:
-        List of unique findings.
+        Number of unique findings.
     """
 
     findings: list[str] = []
 
     for path in inputs:
 
-        if not _safe_exists(
-            path
-        ):
+        if not path.exists():
             continue
 
-        with path.open(
+        for line in path.read_text(
             encoding="utf-8",
             errors="ignore",
-        ) as infile:
+        ).splitlines():
 
-            findings.extend(
-                line.strip()
-                for line in infile
-                if line.strip()
-            )
+            value = line.strip()
 
-    findings = list(
+            if value:
+                findings.append(
+                    value
+                )
+
+    unique = list(
         dict.fromkeys(
             findings
         )
     )
 
-    with output.open(
-        "w",
+    output.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    output.write_text(
+        (
+            "\n".join(
+                unique
+            )
+            + "\n"
+            if unique
+            else ""
+        ),
         encoding="utf-8",
-    ) as outfile:
+    )
 
-        if findings:
+    return len(
+        unique
+    )
 
-            outfile.write(
-                "\n".join(
-                    findings
+
+def _input_file(
+    ctx: dict[str, Any],
+    key: str,
+) -> Path | None:
+    """
+    Resolve a pipeline input file from the execution context.
+    """
+
+    pipeline = ctx.get(
+        "pipeline",
+        {}
+    )
+
+    value = pipeline.get(
+        key
+    )
+
+    if not value:
+        return None
+
+    return Path(
+        str(value)
+    )
+
+
+def _build_flags(
+    options: dict[str, Any],
+) -> str:
+    """
+    Build Nuclei command-line options from normalized tool options.
+    """
+
+    flags: list[str] = []
+
+    severity = options.get(
+        "severity"
+    )
+
+    if severity:
+
+        if isinstance(
+            severity,
+            (tuple, list),
+        ):
+            severity_value = ",".join(
+                str(value)
+                for value in severity
+            )
+
+        else:
+            severity_value = str(
+                severity
+            )
+
+        flags.extend(
+            [
+                "-severity",
+                _quote(
+                    severity_value
+                ),
+            ]
+        )
+
+    tags = options.get(
+        "tags"
+    )
+
+    if tags:
+
+        if isinstance(
+            tags,
+            (tuple, list),
+        ):
+            tag_value = ",".join(
+                str(value)
+                for value in tags
+            )
+
+        else:
+            tag_value = str(
+                tags
+            )
+
+        flags.extend(
+            [
+                "-tags",
+                _quote(
+                    tag_value
+                ),
+            ]
+        )
+
+    templates = options.get(
+        "templates"
+    )
+
+    if templates:
+
+        if isinstance(
+            templates,
+            (tuple, list),
+        ):
+            for template in templates:
+                flags.extend(
+                    [
+                        "-t",
+                        _quote(
+                            str(template)
+                        ),
+                    ]
                 )
+
+        else:
+            flags.extend(
+                [
+                    "-t",
+                    _quote(
+                        str(templates)
+                    ),
+                ]
             )
 
-            outfile.write(
-                "\n"
-            )
+    rate_limit = options.get(
+        "rate_limit"
+    )
 
-    return findings
+    if rate_limit is not None:
+
+        flags.extend(
+            [
+                "-rate-limit",
+                str(
+                    rate_limit
+                ),
+            ]
+        )
+
+    concurrency = options.get(
+        "concurrency"
+    )
+
+    if concurrency is not None:
+
+        flags.extend(
+            [
+                "-c",
+                str(
+                    concurrency
+                ),
+            ]
+        )
+
+    timeout = options.get(
+        "timeout"
+    )
+
+    if timeout is not None:
+
+        flags.extend(
+            [
+                "-timeout",
+                str(
+                    timeout
+                ),
+            ]
+        )
+
+    retries = options.get(
+        "retries"
+    )
+
+    if retries is not None:
+
+        flags.extend(
+            [
+                "-retries",
+                str(
+                    retries
+                ),
+            ]
+        )
+
+    return " ".join(
+        flags
+    )
+
+
 ###############################################################################
-# Base Scanner
+# Nuclei
 ###############################################################################
 
 
-class VulnerabilityScanner(ToolBase):
+class NucleiTool(
+    ToolBase
+):
     """
-    Shared functionality for Stage-3 scanners.
-    """
-
-    stage = 3
-    risk = "medium"
-
-    def vuln_dir(
-        self,
-        ctx: dict,
-    ) -> Path:
-
-        return _vuln_directory(
-            ctx
-        )
-
-    def output(
-        self,
-        ctx: dict,
-        filename: str,
-    ) -> Path:
-
-        return (
-            self.vuln_dir(ctx)
-            /
-            filename
-        )
-
-    def pipeline_input(
-        self,
-        ctx: dict,
-        key: str,
-    ) -> Path | None:
-
-        return _pipeline_file(
-            ctx,
-            key,
-        )
-
-    def tool_missing(
-        self,
-    ) -> ExecutionResult:
-
-        return ExecutionResult.failure(
-            tool=self.name,
-            capability="vulnerability_scanning",
-            error=f"{self.name} not installed",
-        )
-
-    def ensure_output(
-        self,
-        path: Path,
-    ) -> None:
-        """
-        Always create an output file.
-        """
-
-        if not path.exists():
-            path.touch()
-
-
-###############################################################################
-# Nuclei Scanner
-###############################################################################
-
-
-class NucleiTool(VulnerabilityScanner):
-    """
-    Fast Nuclei vulnerability assessment.
-
-    Scans:
-        • Alive hosts
-        • Discovered URLs
-
-    Produces:
-        nuclei_hosts.txt
-        nuclei_urls.txt
-        nuclei.txt
-        nuclei_hosts.log
-        nuclei_urls.log
+    Template-based vulnerability and security-configuration assessment.
     """
 
     name = "nuclei"
+    display_name = "Nuclei"
 
     description = (
-        "FAST: Scan alive hosts and discovered URLs using Nuclei"
+        "Broad template-based vulnerability and "
+        "security-configuration assessment."
     )
 
-    def _scan(
+    capability = (
+        "broad_vulnerability_detection"
+    )
+
+    input_type = (
+        "host_or_url_list"
+    )
+
+    output_type = (
+        "vulnerability_findings"
+    )
+
+    finding_types = (
+        "VULNERABILITY",
+        "MISCONFIGURATION",
+        "EXPOSED_RESOURCE",
+        "CVE",
+        "SECURITY_ISSUE",
+    )
+
+    risk = "medium"
+
+    supported_options = (
+        "severity",
+        "tags",
+        "templates",
+        "rate_limit",
+        "concurrency",
+        "timeout",
+        "retries",
+    )
+
+    default_options = {
+        "severity": (
+            "high",
+            "critical",
+        ),
+        "rate_limit": 30,
+        "timeout": 5,
+        "retries": 1,
+    }
+
+    ###########################################################################
+    # Command Construction
+    ###########################################################################
+
+    def build_command(
         self,
-        input_file: Path | None,
-        output_file: Path,
-        logfile: Path,
-    ) -> bool:
+        ctx: dict[str, Any],
+    ) -> str:
         """
-        Execute a single Nuclei scan.
+        Build a Nuclei command from the supplied execution context.
 
-        Returns:
-            True if scan started.
+        The context may provide:
+
+        - input_file
+        - output_file
+        - options
         """
 
-        if input_file is None:
+        input_file = ctx.get(
+            "input_file"
+        )
 
-            self.ensure_output(
-                output_file
+        output_file = ctx.get(
+            "output_file"
+        )
+
+        if not input_file:
+            raise ValueError(
+                "Nuclei requires an input_file."
             )
 
-            return False
+        if not output_file:
+            raise ValueError(
+                "Nuclei requires an output_file."
+            )
 
-        command = (
+        options = dict(
+            self.default_options
+        )
+
+        options.update(
+            ctx.get(
+                "options",
+                {}
+            )
+        )
+
+        flags = _build_flags(
+            options
+        )
+
+        return (
             "nuclei "
             f"-l {_quote(str(input_file))} "
-            f"{NUCLEI_FAST_FLAGS} "
+            f"{flags} "
             f"-o {_quote(str(output_file))}"
-        )
+        ).strip()
 
-        run_command(
-            tool=self.name,
-            capability="vulnerability_scanning",
-            cmd=command,
-            outfile=str(logfile),
-            timeout=600,
-        )
-
-        self.ensure_output(
-            output_file
-        )
-
-        return True
-
+    ###########################################################################
+    # Execution
+    ###########################################################################
 
     def run(
         self,
-        ctx: dict,
+        ctx: dict[str, Any],
     ) -> ExecutionResult:
+        """
+        Execute Nuclei against pipeline-generated hosts and URLs.
+        """
 
         if not is_tool_installed(
             "nuclei"
         ):
 
-            return self.tool_missing()
+            return ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error="nuclei not installed",
+            )
 
-        hosts_input = self.pipeline_input(
+        outdir = Path(
+            str(
+                ctx["outdir"]
+            )
+        )
+
+        vuln_dir = (
+            outdir
+            / "vuln"
+        )
+
+        vuln_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        hosts_final = _input_file(
             ctx,
             "hosts_final",
         )
 
-        urls_input = self.pipeline_input(
+        urls_final = _input_file(
             ctx,
             "urls_final",
         )
 
-        hosts_output = self.output(
-            ctx,
-            "nuclei_hosts.txt",
+        out_hosts = (
+            vuln_dir
+            / "nuclei_hosts.txt"
         )
 
-        urls_output = self.output(
-            ctx,
-            "nuclei_urls.txt",
+        out_urls = (
+            vuln_dir
+            / "nuclei_urls.txt"
         )
 
-        merged_output = self.output(
-            ctx,
-            "nuclei.txt",
+        out_combined = (
+            vuln_dir
+            / "nuclei.txt"
         )
 
-        hosts_log = self.output(
-            ctx,
-            "nuclei_hosts.log",
+        log_hosts = (
+            vuln_dir
+            / "nuclei_hosts.log"
         )
 
-        urls_log = self.output(
-            ctx,
-            "nuclei_urls.log",
+        log_urls = (
+            vuln_dir
+            / "nuclei_urls.log"
         )
 
-        scanned_inputs = 0
+        host_result: ExecutionResult | None = None
+        url_result: ExecutionResult | None = None
 
-        if self._scan(
-            hosts_input,
-            hosts_output,
-            hosts_log,
+        #######################################################################
+        # Host Scan
+        #######################################################################
+
+        if hosts_final and _safe_exists(
+            hosts_final
         ):
 
-            scanned_inputs += 1
+            host_context = dict(
+                ctx
+            )
 
+            host_context.update(
+                {
+                    "input_file": hosts_final,
+                    "output_file": out_hosts,
+                }
+            )
 
-        if self._scan(
-            urls_input,
-            urls_output,
-            urls_log,
+            host_command = self.build_command(
+                host_context
+            )
+
+            host_result = run_command(
+                tool=self.name,
+                capability=self.capability,
+                cmd=host_command,
+                outfile=str(
+                    log_hosts
+                ),
+                timeout=600,
+            )
+
+        else:
+
+            out_hosts.write_text(
+                "",
+                encoding="utf-8",
+            )
+
+        #######################################################################
+        # URL Scan
+        #######################################################################
+
+        if urls_final and _safe_exists(
+            urls_final
         ):
 
-            scanned_inputs += 1
+            url_context = dict(
+                ctx
+            )
 
+            url_context.update(
+                {
+                    "input_file": urls_final,
+                    "output_file": out_urls,
+                }
+            )
 
-        findings = _merge_results(
+            url_command = self.build_command(
+                url_context
+            )
+
+            url_result = run_command(
+                tool=self.name,
+                capability=self.capability,
+                cmd=url_command,
+                outfile=str(
+                    log_urls
+                ),
+                timeout=600,
+            )
+
+        else:
+
+            out_urls.write_text(
+                "",
+                encoding="utf-8",
+            )
+
+        #######################################################################
+        # Normalize Results
+        #######################################################################
+
+        host_count = _dedupe_file(
+            out_hosts
+        )
+
+        url_count = _dedupe_file(
+            out_urls
+        )
+
+        total = _merge_results(
             [
-                hosts_output,
-                urls_output,
+                out_hosts,
+                out_urls,
             ],
-            merged_output,
+            out_combined,
         )
 
+        #######################################################################
+        # Execution Status
+        #######################################################################
+
+        executed = (
+            host_result is not None
+            or url_result is not None
+        )
+
+        failed = False
+
+        if host_result is not None:
+            failed = (
+                failed
+                or not host_result.success
+            )
+
+        if url_result is not None:
+            failed = (
+                failed
+                or not url_result.success
+            )
+
+        if not executed:
+
+            result = ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error=(
+                    "No valid hosts_final or "
+                    "urls_final input was available."
+                ),
+            )
+
+        elif failed:
+
+            result = ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error=(
+                    "One or more Nuclei scans failed."
+                ),
+            )
+
+        else:
+
+            result = ExecutionResult.success_result(
+                tool=self.name,
+                capability=self.capability,
+            )
+
+        #######################################################################
+        # Artifacts
+        #######################################################################
 
         artifacts = [
-            merged_output,
-            hosts_output,
-            urls_output,
-            hosts_log,
-            urls_log,
+            out_combined,
+            out_hosts,
+            out_urls,
         ]
 
+        if log_hosts.exists():
+            artifacts.append(
+                log_hosts
+            )
 
-        return ExecutionResult.success_result(
-            tool=self.name,
-            capability="vulnerability_scanning",
-            artifacts=artifacts,
-            findings=findings,
-            metadata={
-                "scanned_sources": scanned_inputs,
-                "finding_count": len(findings),
-                "message": (
-                    "Nuclei vulnerability assessment completed."
+        if log_urls.exists():
+            artifacts.append(
+                log_urls
+            )
+
+        for artifact in artifacts:
+            result.add_artifact(
+                artifact
+            )
+
+        #######################################################################
+        # Metadata
+        #######################################################################
+
+        result.metadata.update(
+            {
+                "hosts_scanned": (
+                    host_result is not None
                 ),
-            },
+                "urls_scanned": (
+                    url_result is not None
+                ),
+                "host_findings": host_count,
+                "url_findings": url_count,
+                "total_findings": total,
+                "hosts_input": (
+                    str(hosts_final)
+                    if hosts_final
+                    else None
+                ),
+                "urls_input": (
+                    str(urls_final)
+                    if urls_final
+                    else None
+                ),
+            }
         )
+
+        return result
+
+    ###########################################################################
+    # Output Collection
+    ###########################################################################
+
+    def collect(
+        self,
+        result: ExecutionResult,
+    ) -> ExecutionResult:
+        """
+        Return the canonical execution result.
+
+        Nuclei output remains available through the registered artifacts.
+        """
+
+        return result
+
+
 ###############################################################################
-# Tool Registration
+# Registry Export
 ###############################################################################
 
 
@@ -426,12 +782,11 @@ ALL_STAGE3_VULN_TOOLS = [
 
 
 ###############################################################################
-# Public Exports
+# Public API
 ###############################################################################
 
 
 __all__ = [
-    "NUCLEI_FAST_FLAGS",
     "NucleiTool",
     "ALL_STAGE3_VULN_TOOLS",
 ]

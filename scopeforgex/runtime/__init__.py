@@ -1,102 +1,122 @@
 """
-ScopeForgeX Runtime Package
-===========================
+ScopeForgeX Runtime
+===================
 
-Public runtime API for ScopeForgeX.
+Public package interface for the ScopeForgeX runtime subsystem.
 
-The runtime package provides the authoritative execution model used by the
-Workflow Engine. It exposes strongly typed models for execution state,
-statistics, artifacts, events and execution results.
+The runtime package intentionally avoids eagerly importing heavyweight
+runtime components such as ToolExecutor.
 
-Package Layout
---------------
-runtime/
-├── enums.py
-├── events.py
-├── artifacts.py
-├── statistics.py
-├── results.py
-├── state.py
-└── __init__.py
+This is important because registry and tool-base modules depend on runtime
+enums. Eagerly importing ToolExecutor from this package during package
+initialization creates the following circular dependency:
 
-Design Principles
------------------
-- RuntimeState is the single source of truth.
-- Structured execution data.
-- Strong typing.
-- Immutable execution models where appropriate.
-- Filesystem-independent reporting.
+    tool_base
+        ↓
+    runtime.enums
+        ↓
+    runtime.__init__
+        ↓
+    tool_executor
+        ↓
+    tool_registry
+        ↓
+    tool_base
+
+Runtime components are therefore exposed through lazy attribute resolution.
+
+v1.1.0
 """
 
-from .artifacts import Artifact
-from .enums import (
-    ArtifactType,
-    EventType,
-    Severity,
-    StageType,
-    Status,
-    StrEnum,
-    ToolCategory,
-)
-from .events import (
-    ArtifactCreatedEvent,
-    ErrorRecordedEvent,
-    FindingRecordedEvent,
-    RuntimeEvent,
-    StageFinishedEvent,
-    StageStartedEvent,
-    ToolFinishedEvent,
-    ToolStartedEvent,
-    WarningRecordedEvent,
-    WorkflowFinishedEvent,
-    WorkflowStartedEvent,
-)
-from .results import (
-    ExecutionResult,
-    StageResult,
-    ToolResult,
-    WorkflowResult,
-)
-from .state import RuntimeState
-from .statistics import WorkflowStatistics
+from __future__ import annotations
 
-__version__ = "1.0"
+from typing import Any
+
+
+###############################################################################
+# Package Metadata
+###############################################################################
+
+__version__ = "1.1.0"
+
+
+###############################################################################
+# Lazy Public API
+###############################################################################
+
+
+def __getattr__(
+    name: str,
+) -> Any:
+    """
+    Lazily resolve public runtime components.
+
+    Lazy imports prevent runtime package initialization from importing
+    ToolExecutor before registry/tool-base initialization has completed.
+    """
+
+    if name in {
+        "AssessmentPhase",
+        "ExecutionStatus",
+        "Severity",
+        "Confidence",
+        "get_phase_order",
+        "get_phase_order_map",
+    }:
+        from scopeforgex.runtime import enums
+
+        return getattr(
+            enums,
+            name,
+        )
+
+    if name in {
+        "RuntimeState",
+        "ExecutionState",
+        "utc_now",
+    }:
+        from scopeforgex.runtime import state
+
+        return getattr(
+            state,
+            name,
+        )
+
+    if name == "ToolExecutor":
+        from scopeforgex.runtime import tool_executor
+
+        return tool_executor.ToolExecutor
+
+    return _raise_missing_attribute(name)
+
+
+def _raise_missing_attribute(
+    name: str,
+) -> Any:
+    """
+    Raise the standard module attribute error.
+
+    Kept separate so __getattr__ remains straightforward and readable.
+    """
+
+    raise AttributeError(
+        f"module {__name__!r} has no attribute {name!r}"
+    )
+
+
+###############################################################################
+# Public API
+###############################################################################
 
 __all__ = [
-    # Runtime
-    "RuntimeState",
-
-    # Statistics
-    "WorkflowStatistics",
-
-    # Artifacts
-    "Artifact",
-
-    # Results
-    "ExecutionResult",
-    "ToolResult",
-    "StageResult",
-    "WorkflowResult",
-
-    # Events
-    "RuntimeEvent",
-    "WorkflowStartedEvent",
-    "WorkflowFinishedEvent",
-    "StageStartedEvent",
-    "StageFinishedEvent",
-    "ToolStartedEvent",
-    "ToolFinishedEvent",
-    "ArtifactCreatedEvent",
-    "FindingRecordedEvent",
-    "WarningRecordedEvent",
-    "ErrorRecordedEvent",
-
-    # Enums
-    "Status",
+    "AssessmentPhase",
+    "ExecutionStatus",
     "Severity",
-    "ArtifactType",
-    "StageType",
-    "ToolCategory",
-    "EventType",
-    "StrEnum",
+    "Confidence",
+    "get_phase_order",
+    "get_phase_order_map",
+    "RuntimeState",
+    "ExecutionState",
+    "utc_now",
+    "ToolExecutor",
 ]

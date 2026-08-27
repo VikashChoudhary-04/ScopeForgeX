@@ -1,48 +1,33 @@
 """
-ScopeForgeX Professional Report Generator
-==========================================
+ScopeForgeX Report Generator
+============================
 
-Generates professional Markdown assessment reports.
+Markdown report renderer for the canonical ScopeForgeX reporting models.
 
-v1.0.0
+Responsibilities
+----------------
+- Render assessment metadata
+- Render canonical assessment phases
+- Render workflow statistics
+- Render tool execution results
+- Render generated artifacts
+- Render execution notes
+- Write the final Markdown report
 
-Features:
-    - Executive summary
-    - Scope details
-    - Methodology
-    - Workflow execution summary
-    - Attack surface statistics
-    - Vulnerability findings
-    - Risk summary
-    - Tool execution tracking
-    - Artifact tracking
-    - Remediation guidance
-
-Compatible with:
-    - dict based tool results
-    - ExecutionResult list based tool results
+v1.1.0
 """
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 
 from .models import ReportData
 
 
-###############################################################################
-# Report Generator
-###############################################################################
-
-
 class ReportGenerator:
     """
-    Markdown report generator.
+    Generate Markdown reports from ReportData.
     """
-
-    TITLE = "ScopeForgeX Assessment Report"
-
 
     def __init__(
         self,
@@ -50,215 +35,209 @@ class ReportGenerator:
     ) -> None:
 
         self.report = report
-        self.lines: list[str] = []
 
-
-    ###########################################################################
+    # ------------------------------------------------------------------
     # Markdown Helpers
-    ###########################################################################
+    # ------------------------------------------------------------------
 
     def _line(
         self,
+        lines: list[str],
         text: str = "",
     ) -> None:
 
-        self.lines.append(
-            f"{text}\n"
+        lines.append(
+            text + "\n"
         )
 
+    # ------------------------------------------------------------------
+    # Generate
+    # ------------------------------------------------------------------
 
-    def _blank(
+    def generate_markdown(
         self,
+        output_file: str,
     ) -> None:
+        """
+        Generate a Markdown assessment report.
+        """
 
-        self.lines.append(
-            "\n"
-        )
+        report = self.report
 
+        lines: list[str] = []
 
-    def _heading(
-        self,
-        level: int,
-        title: str,
-    ) -> None:
+        # --------------------------------------------------------------
+        # Header
+        # --------------------------------------------------------------
 
         self._line(
-            f"{'#' * level} {title}"
-        )
-
-        self._blank()
-
-
-
-    def _bullet(
-        self,
-        label: str,
-        value,
-    ) -> None:
-
-        self._line(
-            f"- **{label}:** {value}"
-        )
-
-
-
-    def _table(
-        self,
-        headers: list[str],
-        rows: list[list[str]],
-    ) -> None:
-
-        self._line(
-            "| "
-            + " | ".join(headers)
-            + " |"
+            lines,
+            "# ScopeForgeX Assessment Report",
         )
 
         self._line(
-            "|"
-            +
-            "|".join(
-                "---"
-                for _ in headers
-            )
-            +
-            "|"
+            lines
         )
 
+        # --------------------------------------------------------------
+        # Assessment Summary
+        # --------------------------------------------------------------
 
-        for row in rows:
+        self._line(
+            lines,
+            "## Assessment Summary",
+        )
+
+        self._line(
+            lines,
+            f"- **Target:** `{report.target}`",
+        )
+
+        self._line(
+            lines,
+            f"- **Profile:** `{report.profile}`",
+        )
+
+        self._line(
+            lines,
+            f"- **Target Type:** `{report.target_type}`",
+        )
+
+        if getattr(
+            report,
+            "start_time",
+            None,
+        ):
 
             self._line(
-                "| "
-                +
-                " | ".join(
-                    str(item)
-                    for item in row
-                )
-                +
-                " |"
+                lines,
+                (
+                    f"- **Started:** "
+                    f"{report.start_time}"
+                ),
             )
 
-
-        self._blank()
-
-
-
-    ###########################################################################
-    # Report Sections
-    ###########################################################################
-
-    def _render_title(
-        self,
-    ) -> None:
-
-        self._heading(
-            1,
-            self.TITLE,
-        )
-
-        self._line(
-            "_Generated by ScopeForgeX_"
-        )
-
-        self._line(
-            datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
-        )
-
-        self._blank()
-
-
-
-    def _render_executive_summary(
-        self,
-    ) -> None:
-
-        self._heading(
-            2,
-            "Executive Summary",
-        )
-
-        self._bullet(
-            "Target",
-            f"`{self.report.target}`",
-        )
-
-        self._bullet(
-            "Profile",
-            f"`{self.report.profile}`",
-        )
-
-        self._bullet(
-            "Target Type",
-            f"`{self.report.target_type}`",
-        )
-
-        self._blank()
-
-
-
-    def _render_scope(
-        self,
-    ) -> None:
-
-        self._heading(
-            2,
-            "Assessment Scope",
-        )
-
-        self._bullet(
-            "Target",
-            self.report.target,
-        )
-
-        self._bullet(
-            "Target Type",
-            self.report.target_type,
-        )
-
-        self._blank()
-
-
-
-    def _render_methodology(
-        self,
-    ) -> None:
-
-        self._heading(
-            2,
-            "Methodology",
-        )
-
-        methods = [
-            "Reconnaissance",
-            "Technology Enumeration",
-            "Vulnerability Assessment",
-            "Manual Validation Preparation",
-            "Reporting",
-        ]
-
-        for method in methods:
+        if getattr(
+            report,
+            "end_time",
+            None,
+        ):
 
             self._line(
-                f"- {method}"
+                lines,
+                (
+                    f"- **Finished:** "
+                    f"{report.end_time}"
+                ),
             )
 
-        self._blank()
+        if hasattr(
+            report,
+            "duration_seconds",
+        ):
 
+            self._line(
+                lines,
+                (
+                    f"- **Duration:** "
+                    f"{report.duration_seconds:.2f} "
+                    "seconds"
+                ),
+            )
 
+        self._line(
+            lines
+        )
+
+        # --------------------------------------------------------------
+        # Workflow Execution
+        # --------------------------------------------------------------
+
+        self._render_workflow(
+            lines
+        )
+
+        # --------------------------------------------------------------
+        # Workflow Statistics
+        # --------------------------------------------------------------
+
+        self._render_statistics(
+            lines
+        )
+
+        # --------------------------------------------------------------
+        # Tool Execution
+        # --------------------------------------------------------------
+
+        self._render_tools(
+            lines
+        )
+
+        # --------------------------------------------------------------
+        # Generated Artifacts
+        # --------------------------------------------------------------
+
+        self._render_artifacts(
+            lines
+        )
+
+        # --------------------------------------------------------------
+        # Execution Notes
+        # --------------------------------------------------------------
+
+        self._render_notes(
+            lines
+        )
+
+        # --------------------------------------------------------------
+        # Analyst Guidance
+        # --------------------------------------------------------------
+
+        self._render_guidance(
+            lines
+        )
+
+        # --------------------------------------------------------------
+        # Write
+        # --------------------------------------------------------------
+
+        Path(
+            output_file
+        ).write_text(
+            "".join(lines),
+            encoding="utf-8",
+        )
+
+    # ------------------------------------------------------------------
+    # Workflow
+    # ------------------------------------------------------------------
 
     def _render_workflow(
         self,
+        lines: list[str],
     ) -> None:
+        """
+        Render canonical assessment-phase execution results.
 
-        self._heading(
-            2,
-            "Workflow Execution",
+        Reporting StageResult uses AssessmentPhase as its lifecycle
+        identifier. The legacy ``stage.name`` field is intentionally
+        no longer consumed.
+        """
+
+        self._line(
+            lines,
+            "## Workflow Execution",
         )
 
-        rows = []
+        self._line(
+            lines,
+            "| Phase | Status |",
+        )
+
+        self._line(
+            lines,
+            "|-------|--------|",
+        )
 
         for stage in getattr(
             self.report,
@@ -266,236 +245,154 @@ class ReportGenerator:
             [],
         ):
 
-            rows.append(
-                [
-                    stage.name,
-                    stage.status,
-                ]
+            phase = getattr(
+                stage,
+                "phase",
+                None,
             )
 
+            if phase is None:
+                continue
 
-        if rows:
-
-            self._table(
-                [
-                    "Stage",
-                    "Status",
-                ],
-                rows,
+            phase_name = getattr(
+                phase,
+                "value",
+                str(phase),
             )
 
-        else:
+            status = getattr(
+                stage,
+                "status",
+                "Unknown",
+            )
 
             self._line(
-                "_No workflow information available._"
+                lines,
+                (
+                    f"| {phase_name} | "
+                    f"{status} |"
+                ),
             )
 
-            self._blank()
+        self._line(
+            lines
+        )
 
-
+    # ------------------------------------------------------------------
+    # Statistics
+    # ------------------------------------------------------------------
 
     def _render_statistics(
         self,
+        lines: list[str],
     ) -> None:
-
-        self._heading(
-            2,
-            "Attack Surface Summary",
-        )
+        """
+        Render workflow statistics.
+        """
 
         stats = self.report.statistics
 
+        self._line(
+            lines,
+            "## Workflow Statistics",
+        )
 
-        metrics = [
-
+        statistics = [
             (
                 "Subdomains discovered",
-                stats.subdomains_found,
+                getattr(
+                    stats,
+                    "subdomains_found",
+                    0,
+                ),
             ),
-
             (
                 "Alive hosts",
-                stats.alive_hosts,
+                getattr(
+                    stats,
+                    "alive_hosts",
+                    0,
+                ),
             ),
-
             (
                 "Validated hosts",
-                stats.final_hosts,
+                getattr(
+                    stats,
+                    "final_hosts",
+                    0,
+                ),
             ),
-
             (
                 "URLs discovered",
-                stats.urls_discovered,
+                getattr(
+                    stats,
+                    "urls_discovered",
+                    0,
+                ),
             ),
-
             (
                 "Nuclei findings",
-                stats.nuclei_findings,
+                getattr(
+                    stats,
+                    "nuclei_findings",
+                    0,
+                ),
             ),
-
             (
                 "Files generated",
-                stats.files_generated,
+                getattr(
+                    stats,
+                    "files_generated",
+                    0,
+                ),
             ),
-
+            (
+                "Tools executed",
+                getattr(
+                    stats,
+                    "tools_executed",
+                    0,
+                ),
+            ),
+            (
+                "Stages executed",
+                getattr(
+                    stats,
+                    "stages_executed",
+                    0,
+                ),
+            ),
+            (
+                "Stages skipped",
+                getattr(
+                    stats,
+                    "stages_skipped",
+                    0,
+                ),
+            ),
         ]
 
-
-        for label, value in metrics:
-
-            self._bullet(
-                label,
-                f"**{value}**",
-            )
-
-
-        self._blank()
-
-
-
-    def _render_findings(
-        self,
-    ) -> None:
-
-        self._heading(
-            2,
-            "Vulnerability Findings",
-        )
-
-
-        findings = getattr(
-            self.report,
-            "findings",
-            [],
-        )
-
-
-        if not findings:
+        for label, value in statistics:
 
             self._line(
-                "No automated vulnerabilities were identified."
+                lines,
+                f"- {label}: **{value}**",
             )
 
-            self._blank()
-
-            return
-
-
-
-        rows = []
-
-
-        for finding in findings:
-
-            rows.append(
-                [
-                    getattr(
-                        finding,
-                        "finding_id",
-                        "-",
-                    ),
-
-                    getattr(
-                        finding,
-                        "severity",
-                        "-",
-                    ),
-
-                    getattr(
-                        finding,
-                        "title",
-                        "-",
-                    ),
-
-                ]
-            )
-
-
-        self._table(
-            [
-                "ID",
-                "Severity",
-                "Title",
-            ],
-            rows,
+        self._line(
+            lines
         )
 
-
-
-    def _render_risk_summary(
-        self,
-    ) -> None:
-
-        summary = getattr(
-            self.report,
-            "severity_summary",
-            None,
-        )
-
-        if not summary:
-
-            return
-
-
-        self._heading(
-            2,
-            "Risk Summary",
-        )
-
-
-        rows = [
-
-            [
-                "Critical",
-                summary.critical,
-            ],
-
-            [
-                "High",
-                summary.high,
-            ],
-
-            [
-                "Medium",
-                summary.medium,
-            ],
-
-            [
-                "Low",
-                summary.low,
-            ],
-
-            [
-                "Informational",
-                summary.informational,
-            ],
-
-        ]
-
-
-        self._table(
-            [
-                "Severity",
-                "Count",
-            ],
-            rows,
-        )
-
-
-
-    ###########################################################################
-    # Tool Execution
-    ###########################################################################
+    # ------------------------------------------------------------------
+    # Tools
+    # ------------------------------------------------------------------
 
     def _render_tools(
         self,
+        lines: list[str],
     ) -> None:
         """
         Render tool execution results.
-
-        Supports:
-            - dictionary format
-            - ExecutionResult list format
         """
 
         tool_results = getattr(
@@ -504,118 +401,88 @@ class ReportGenerator:
             None,
         )
 
-
         if not tool_results:
-
             return
 
-
-        self._heading(
-            2,
-            "Tool Execution",
+        self._line(
+            lines,
+            "## Tool Execution",
         )
 
+        self._line(
+            lines,
+            "| Tool | Status |",
+        )
 
-        rows = []
+        self._line(
+            lines,
+            "|------|--------|",
+        )
 
+        for tool, status in tool_results.items():
 
-        if isinstance(
-            tool_results,
-            dict,
-        ):
-
-            for tool, status in tool_results.items():
-
-                rows.append(
-                    [
-                        tool,
-                        status,
-                    ]
-                )
-
-
-        elif isinstance(
-            tool_results,
-            list,
-        ):
-
-            for result in tool_results:
-
-                tool = getattr(
-                    result,
-                    "tool",
-                    "unknown",
-                )
-
-
-                success = getattr(
-                    result,
-                    "success",
-                    False,
-                )
-
-
-                rows.append(
-                    [
-                        tool,
-                        (
-                            "Completed"
-                            if success
-                            else "Failed"
-                        ),
-                    ]
-                )
-
-
-        if rows:
-
-            self._table(
-                [
-                    "Tool",
-                    "Status",
-                ],
-                rows,
+            self._line(
+                lines,
+                (
+                    f"| {tool} | "
+                    f"{status} |"
+                ),
             )
 
+        self._line(
+            lines
+        )
 
-
-    ###########################################################################
+    # ------------------------------------------------------------------
     # Artifacts
-    ###########################################################################
+    # ------------------------------------------------------------------
 
     def _render_artifacts(
         self,
+        lines: list[str],
     ) -> None:
+        """
+        Render generated workflow artifacts.
+        """
 
-        if not self.report.generated_files:
-
-            return
-
-
-        self._heading(
-            2,
-            "Generated Artifacts",
+        generated_files = getattr(
+            self.report,
+            "generated_files",
+            [],
         )
 
+        if not generated_files:
+            return
 
-        for artifact in self.report.generated_files:
+        self._line(
+            lines,
+            "## Generated Artifacts",
+        )
+
+        for file_path in generated_files:
 
             self._line(
-                f"- `{artifact}`"
+                lines,
+                (
+                    f"- `{Path(file_path).name}`"
+                ),
             )
 
+        self._line(
+            lines
+        )
 
-        self._blank()
-
-
-
-    ###########################################################################
+    # ------------------------------------------------------------------
     # Notes
-    ###########################################################################
+    # ------------------------------------------------------------------
 
     def _render_notes(
         self,
+        lines: list[str],
     ) -> None:
+        """
+        Render warnings and execution notes.
+        """
 
         warnings = getattr(
             self.report,
@@ -623,119 +490,80 @@ class ReportGenerator:
             [],
         )
 
-
-        if not warnings:
-
-            return
-
-
-        self._heading(
-            2,
-            "Execution Notes",
+        errors = getattr(
+            self.report,
+            "errors",
+            [],
         )
 
+        if not warnings and not errors:
+            return
+
+        self._line(
+            lines,
+            "## Execution Notes",
+        )
 
         for warning in warnings:
 
             self._line(
-                f"- {warning}"
+                lines,
+                f"- {warning}",
             )
 
+        for error in errors:
 
-        self._blank()
+            self._line(
+                lines,
+                f"- **Error:** {error}",
+            )
 
+        self._line(
+            lines
+        )
 
-
-    ###########################################################################
+    # ------------------------------------------------------------------
     # Guidance
-    ###########################################################################
+    # ------------------------------------------------------------------
 
     def _render_guidance(
         self,
+        lines: list[str],
     ) -> None:
+        """
+        Render analyst guidance.
+        """
 
-        self._heading(
-            2,
-            "Analyst Guidance",
+        self._line(
+            lines,
+            "## Analyst Guidance",
         )
 
+        self._line(
+            lines,
+            "- Review skipped stages.",
+        )
 
-        guidance = [
-
-            "Review all automated findings before reporting them.",
-
-            "Validate potential vulnerabilities manually.",
-
-            "Investigate medium and high severity issues.",
-
-            "Verify false positives before disclosure.",
-
-            "Correlate results from multiple tools.",
-
-        ]
-
-
-        for item in guidance:
-
-            self._line(
-                f"- {item}"
-            )
-
-
-        self._blank()
-
-
-
-    ###########################################################################
-    # Public API
-    ###########################################################################
-
-    def generate_markdown(
-        self,
-        output_file: str,
-    ) -> None:
-
-        self.lines.clear()
-
-
-        self._render_title()
-
-        self._render_executive_summary()
-
-        self._render_scope()
-
-        self._render_methodology()
-
-        self._render_workflow()
-
-        self._render_statistics()
-
-        self._render_findings()
-
-        self._render_risk_summary()
-
-        self._render_tools()
-
-        self._render_artifacts()
-
-        self._render_notes()
-
-        self._render_guidance()
-
-
-        Path(
-            output_file,
-        ).write_text(
-            "".join(
-                self.lines
+        self._line(
+            lines,
+            (
+                "- Validate automated findings "
+                "manually."
             ),
-            encoding="utf-8",
         )
 
+        self._line(
+            lines,
+            (
+                "- Re-run using FULL_SAFE "
+                "if required."
+            ),
+        )
 
-###############################################################################
-# Public API
-###############################################################################
+        self._line(
+            lines
+        )
+
 
 __all__ = [
     "ReportGenerator",

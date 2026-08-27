@@ -1,10 +1,22 @@
 """
-ScopeForgeX Execution Result Model
-===================================
+ScopeForgeX — Execution Result Model
+====================================
 
-Canonical execution result object used by all tools.
+Canonical result object returned by executable ScopeForgeX tools.
 
-v0.5.2
+The model provides:
+
+- Success/failure state
+- stdout/stderr capture
+- Artifacts
+- Findings
+- Warnings
+- Errors
+- Execution metadata
+- Timing information
+- Serialization helpers
+
+v1.1.0
 """
 
 from __future__ import annotations
@@ -21,7 +33,7 @@ from typing import Any
 
 def utc_now() -> datetime:
     """
-    Return current UTC timestamp.
+    Return the current UTC timestamp.
     """
 
     return datetime.now(
@@ -37,15 +49,21 @@ def utc_now() -> datetime:
 @dataclass(slots=True)
 class ExecutionResult:
     """
-    Standard result returned by every ScopeForgeX tool.
+    Standard result returned by every ScopeForgeX executable tool.
     """
 
+    # Identity
     tool: str
-
     capability: str
 
-    success: bool
+    # Execution state
+    success: bool = False
 
+    # Captured process output
+    stdout: str = ""
+    stderr: str = ""
+
+    # Structured execution data
     artifacts: list[str] = field(
         default_factory=list,
     )
@@ -66,6 +84,7 @@ class ExecutionResult:
         default_factory=dict,
     )
 
+    # Timing
     started_at: datetime = field(
         default_factory=utc_now,
     )
@@ -74,24 +93,18 @@ class ExecutionResult:
         default_factory=utc_now,
     )
 
-    # Runtime compatibility field.
-    #
-    # WorkflowEngine and runner update this value
-    # after command execution.
     duration: float = 0.0
-
 
     ###########################################################################
     # Runtime Properties
     ###########################################################################
-
 
     @property
     def status(
         self,
     ) -> str:
         """
-        Return human-readable execution status.
+        Return a human-readable execution status.
         """
 
         if self.metadata.get(
@@ -101,16 +114,78 @@ class ExecutionResult:
             return "skipped"
 
         if self.success:
-
             return "success"
 
         return "failed"
 
+    ###########################################################################
+    # Mutation Helpers
+    ###########################################################################
+
+    def add_artifact(
+        self,
+        artifact: str,
+    ) -> None:
+        """
+        Add an artifact path if it is not already present.
+        """
+
+        if not artifact:
+            return
+
+        if artifact not in self.artifacts:
+            self.artifacts.append(
+                artifact
+            )
+
+    def add_error(
+        self,
+        error: str,
+    ) -> None:
+        """
+        Add an execution error.
+        """
+
+        if not error:
+            return
+
+        self.errors.append(
+            str(error)
+        )
+
+    def add_warning(
+        self,
+        warning: str,
+    ) -> None:
+        """
+        Add an execution warning.
+        """
+
+        if not warning:
+            return
+
+        self.warnings.append(
+            str(warning)
+        )
+
+    def add_finding(
+        self,
+        finding: Any,
+    ) -> None:
+        """
+        Add a structured finding.
+        """
+
+        if finding is None:
+            return
+
+        self.findings.append(
+            finding
+        )
 
     ###########################################################################
     # Constructors
     ###########################################################################
-
 
     @classmethod
     def success_result(
@@ -121,17 +196,21 @@ class ExecutionResult:
         findings=None,
         metadata=None,
         warnings=None,
+        stdout: str = "",
+        stderr: str = "",
     ) -> "ExecutionResult":
         """
-        Create successful execution result.
+        Create a successful execution result.
         """
 
         now = utc_now()
 
-        return cls(
+        result = cls(
             tool=tool,
             capability=capability,
             success=True,
+            stdout=stdout or "",
+            stderr=stderr or "",
             artifacts=list(
                 artifacts or []
             ),
@@ -148,6 +227,7 @@ class ExecutionResult:
             duration=0.0,
         )
 
+        return result
 
     @classmethod
     def failure(
@@ -157,9 +237,11 @@ class ExecutionResult:
         error: str,
         artifacts=None,
         metadata=None,
+        stdout: str = "",
+        stderr: str = "",
     ) -> "ExecutionResult":
         """
-        Create failed execution result.
+        Create a failed execution result.
         """
 
         now = utc_now()
@@ -168,6 +250,8 @@ class ExecutionResult:
             tool=tool,
             capability=capability,
             success=False,
+            stdout=stdout or "",
+            stderr=stderr or "",
             artifacts=list(
                 artifacts or []
             ),
@@ -182,7 +266,6 @@ class ExecutionResult:
             duration=0.0,
         )
 
-
     @classmethod
     def skipped(
         cls,
@@ -191,7 +274,7 @@ class ExecutionResult:
         reason: str,
     ) -> "ExecutionResult":
         """
-        Create skipped execution result.
+        Create a skipped execution result.
         """
 
         now = utc_now()
@@ -200,6 +283,8 @@ class ExecutionResult:
             tool=tool,
             capability=capability,
             success=False,
+            stdout="",
+            stderr="",
             artifacts=[],
             findings=[],
             warnings=[
@@ -214,17 +299,15 @@ class ExecutionResult:
             duration=0.0,
         )
 
-
     ###########################################################################
     # Serialization
     ###########################################################################
-
 
     def as_dict(
         self,
     ) -> dict[str, Any]:
         """
-        Convert result to dictionary.
+        Convert the result into a JSON-compatible dictionary.
         """
 
         return {
@@ -232,22 +315,24 @@ class ExecutionResult:
             "capability": self.capability,
             "success": self.success,
             "status": self.status,
-            "duration": self.duration,
-            "artifacts": self.artifacts,
-            "findings": self.findings,
-            "warnings": self.warnings,
-            "errors": self.errors,
-            "metadata": self.metadata,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "artifacts": list(
+                self.artifacts
+            ),
+            "findings": list(
+                self.findings
+            ),
+            "warnings": list(
+                self.warnings
+            ),
+            "errors": list(
+                self.errors
+            ),
+            "metadata": dict(
+                self.metadata
+            ),
             "started_at": self.started_at.isoformat(),
             "finished_at": self.finished_at.isoformat(),
+            "duration": self.duration,
         }
-
-
-###############################################################################
-# Public API
-###############################################################################
-
-
-__all__ = [
-    "ExecutionResult",
-]
