@@ -2,19 +2,53 @@
 ScopeForgeX Reporting Models
 ============================
 
-Canonical reporting data structures.
+Canonical data structures for ScopeForgeX assessment findings and reports.
 
-v1.1.0
+The universal Finding model is the common representation used after tool
+collection, native analysis, specialized validation, correlation and
+deduplication.
 
-Supports:
-    - Professional pentest reports
-    - Vulnerability findings
-    - Evidence tracking
-    - Tool execution summaries
-    - Severity aggregation
-    - Assessment-phase reporting
-    - Runtime execution statistics
-    - JSON serialization
+Assessment pipeline
+-------------------
+
+Tool / Analyzer
+        |
+        v
+Collector / Analyzer Observation
+        |
+        v
+Finding Normalization
+        |
+        v
+Canonical Finding
+        |
+        +--> Correlation
+        |
+        +--> Deduplication
+        |
+        +--> Risk Classification
+        |
+        +--> Evidence Management
+        |
+        v
+Professional Reporting
+
+Design Principles
+-----------------
+
+- Every finding uses one universal structure.
+- Detection is not automatically confirmation.
+- Confidence is separate from severity.
+- Source-tool information is preserved.
+- Detection method is preserved.
+- Evidence is preserved independently from finding metadata.
+- CWE/CVE information is retained when available.
+- Manual findings use the same model as automated findings.
+- Reporting consumes normalized findings rather than raw scanner output.
+- Raw tool output remains assessment evidence.
+- The model supports the complete ScopeForgeX assessment lifecycle.
+
+v1.3.0
 """
 
 from __future__ import annotations
@@ -31,14 +65,18 @@ from scopeforgex.runtime import AssessmentPhase
 
 
 ###############################################################################
-# Finding Models
+# Finding Evidence
 ###############################################################################
 
 
 @dataclass
 class FindingEvidence:
     """
-    Evidence attached to a vulnerability finding.
+    Evidence attached to a ScopeForgeX finding.
+
+    Evidence represents material supporting a detection. It may originate
+    from an external tool, a native analyzer, a specialized validator or a
+    manual analyst.
     """
 
     description: str = ""
@@ -51,33 +89,108 @@ class FindingEvidence:
 
     file_path: str = ""
 
+    raw_output: str = ""
+
+    artifact_path: str = ""
+
+    source: str = ""
+
+    details: dict[str, Any] = field(
+        default_factory=dict,
+    )
+
+    # Compatibility alias used by existing collectors.
+    @property
+    def metadata(
+        self,
+    ) -> dict[str, Any]:
+        """
+        Backward-compatible alias for details.
+        """
+
+        return self.details
+
+    @metadata.setter
+    def metadata(
+        self,
+        value: dict[str, Any],
+    ) -> None:
+        self.details = dict(
+            value or {}
+        )
+
     def as_dict(
         self,
     ) -> dict[str, Any]:
+        """
+        Serialize evidence into a JSON-compatible dictionary.
+        """
 
         return asdict(
             self
         )
 
 
+###############################################################################
+# Universal Finding
+###############################################################################
+
+
 @dataclass
 class Finding:
     """
-    Normalized vulnerability finding.
+    Universal ScopeForgeX finding representation.
 
-    All vulnerability sources should eventually
-    convert into this format.
+    Every automated or manual finding should ultimately be represented by
+    this model.
+
+    Severity
+        How serious the issue is.
+
+    Confidence
+        How strongly the available evidence supports the detection.
+
+    Status
+        Whether the finding has been validated or remains pending.
     """
+
+    # ========================================================================
+    # Identity
+    # ========================================================================
 
     finding_id: str
 
     title: str
 
-    severity: str
+    category: str = "security_issue"
 
-    target: str
+    # ========================================================================
+    # Risk / Validation
+    # ========================================================================
 
-    source: str
+    severity: str = "Informational"
+
+    confidence: str = "Medium"
+
+    status: str = "Pending"
+
+    # ========================================================================
+    # Affected Asset
+    # ========================================================================
+
+    target: str = ""
+
+    host: str | None = None
+
+    port: int | None = None
+
+    url: str | None = None
+
+    parameter: str | None = None
+
+    # ========================================================================
+    # Finding Description
+    # ========================================================================
 
     description: str = ""
 
@@ -85,27 +198,81 @@ class Finding:
 
     remediation: str = ""
 
+    # ========================================================================
+    # Evidence
+    # ========================================================================
+
     evidence: FindingEvidence = field(
         default_factory=FindingEvidence,
     )
 
-    cvss: float | None = None
+    # ========================================================================
+    # Detection Metadata
+    # ========================================================================
+
+    source_tool: str = ""
+
+    detection_method: str = ""
+
+    timestamp: datetime | str | None = None
+
+    metadata: dict[str, Any] = field(
+        default_factory=dict,
+    )
+
+    # ========================================================================
+    # Security References
+    # ========================================================================
+
+    cwe: str | None = None
+
+    cve: str | None = None
 
     references: list[str] = field(
         default_factory=list,
     )
 
+    # ========================================================================
+    # Compatibility
+    # ========================================================================
+
+    @property
+    def source(
+        self,
+    ) -> str:
+        """
+        Backward-compatible alias for source_tool.
+        """
+
+        return self.source_tool
+
+    @source.setter
+    def source(
+        self,
+        value: str,
+    ) -> None:
+        self.source_tool = str(
+            value
+        )
+
     def as_dict(
         self,
     ) -> dict[str, Any]:
+        """
+        Serialize the complete universal finding model.
+        """
 
         data = asdict(
             self
         )
 
-        data["evidence"] = (
-            self.evidence.as_dict()
-        )
+        if isinstance(
+            self.timestamp,
+            datetime,
+        ):
+            data["timestamp"] = (
+                self.timestamp.isoformat()
+            )
 
         return data
 
@@ -118,7 +285,7 @@ class Finding:
 @dataclass
 class SeveritySummary:
     """
-    Vulnerability severity distribution.
+    Distribution of findings by severity.
     """
 
     critical: int = 0
@@ -134,6 +301,9 @@ class SeveritySummary:
     def total(
         self,
     ) -> int:
+        """
+        Return the total number of findings.
+        """
 
         return (
             self.critical
@@ -146,6 +316,9 @@ class SeveritySummary:
     def as_dict(
         self,
     ) -> dict[str, int]:
+        """
+        Serialize the severity summary.
+        """
 
         return asdict(
             self
@@ -160,7 +333,9 @@ class SeveritySummary:
 @dataclass
 class ToolExecutionResult:
     """
-    Individual tool execution record.
+    Individual external-tool execution record.
+
+    This represents execution metadata, not the normalized finding itself.
     """
 
     tool: str
@@ -184,6 +359,9 @@ class ToolExecutionResult:
     def as_dict(
         self,
     ) -> dict[str, Any]:
+        """
+        Serialize the execution record.
+        """
 
         return asdict(
             self
@@ -200,9 +378,8 @@ class StageResult:
     """
     Assessment-phase result.
 
-    The class name is retained for compatibility with existing
-    reporting callers. The canonical lifecycle identifier is
-    AssessmentPhase.
+    The class name is retained for compatibility with existing reporting
+    callers. The canonical lifecycle identifier is AssessmentPhase.
     """
 
     phase: AssessmentPhase
@@ -212,6 +389,9 @@ class StageResult:
     def as_dict(
         self,
     ) -> dict[str, Any]:
+        """
+        Serialize the stage result.
+        """
 
         return {
             "phase": self.phase.value,
@@ -227,10 +407,7 @@ class StageResult:
 @dataclass
 class ScanStatistics:
     """
-    Workflow and assessment statistics.
-
-    RuntimeState is the authoritative source for execution history.
-    These fields expose the relevant execution totals to reporting.
+    Assessment execution and coverage statistics.
     """
 
     subdomains_found: int = 0
@@ -251,6 +428,35 @@ class ScanStatistics:
 
     stages_skipped: int = 0
 
+    findings_total: int = 0
+
+    findings_critical: int = 0
+
+    findings_high: int = 0
+
+    findings_medium: int = 0
+
+    findings_low: int = 0
+
+    findings_informational: int = 0
+
+    findings_confirmed: int = 0
+
+    findings_pending: int = 0
+
+    findings_false_positive: int = 0
+
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
+        """
+        Serialize assessment statistics.
+        """
+
+        return asdict(
+            self
+        )
+
 
 ###############################################################################
 # Report Metadata
@@ -260,14 +466,16 @@ class ScanStatistics:
 @dataclass
 class ReportMetadata:
     """
-    Additional report information.
+    Metadata describing the generated assessment report.
     """
 
     generator: str = "ScopeForgeX"
 
-    version: str = "v1.1.0"
+    version: str = "v1.3.0"
 
-    generated_by: str = "ScopeForgeX Reporting Engine"
+    generated_by: str = (
+        "ScopeForgeX Reporting Engine"
+    )
 
 
 ###############################################################################
@@ -278,7 +486,11 @@ class ReportMetadata:
 @dataclass
 class ReportData:
     """
-    Complete assessment report object.
+    Complete ScopeForgeX assessment report object.
+
+    The report contains normalized findings rather than raw scanner output as
+    its primary result. Raw output remains available through finding evidence
+    and generated assessment artifacts.
     """
 
     target: str
@@ -349,8 +561,8 @@ class ReportData:
                 self.duration_seconds
             ),
 
-            "statistics": asdict(
-                self.statistics
+            "statistics": (
+                self.statistics.as_dict()
             ),
 
             "generated_files": list(

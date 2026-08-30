@@ -1,21 +1,26 @@
 """
-ScopeForgeX Runtime Enums
-=========================
+ScopeForgeX Runtime Enumerations
+================================
 
-Canonical enumerations used by the ScopeForgeX runtime.
+Canonical runtime enums and phase ordering for ScopeForgeX 3.0.0.
 
-These enums provide stable values for:
+The assessment lifecycle is:
 
-- Assessment workflow phases
-- Execution status
-- Finding severity
-- Finding confidence
+    Scope Authorization
+        ↓
+    Reconnaissance
+        ↓
+    Enumeration
+        ↓
+    Vulnerability Assessment
+        ↓
+    Vulnerability Validation
+        ↓
+    Credential Assessment
+        ↓
+    Reporting
 
-Keeping these values centralized prevents individual stages, tools,
-collectors, analyzers and reporting components from defining incompatible
-phase, status, severity or confidence names.
-
-v1.1.0
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations
@@ -33,61 +38,85 @@ class AssessmentPhase(
     Enum,
 ):
     """
-    Canonical ScopeForgeX assessment phases.
+    Canonical ScopeForgeX assessment lifecycle.
 
-    The ordering represents the normal assessment lifecycle.
+    These phases describe workflow purpose rather than individual
+    implementations or tools.
     """
 
-    RECONNAISSANCE = "reconnaissance"
+    SCOPE_AUTHORIZATION = (
+        "scope_authorization"
+    )
 
-    ENUMERATION = "enumeration"
+    RECONNAISSANCE = (
+        "reconnaissance"
+    )
+
+    ENUMERATION = (
+        "enumeration"
+    )
 
     VULNERABILITY_ASSESSMENT = (
         "vulnerability_assessment"
     )
 
-    EXPLOITATION = "exploitation"
-
-    POST_EXPLOITATION = (
-        "post_exploitation"
+    VULNERABILITY_VALIDATION = (
+        "vulnerability_validation"
     )
 
-    REPORTING = "reporting"
+    CREDENTIAL_ASSESSMENT = (
+        "credential_assessment"
+    )
+
+    REPORTING = (
+        "reporting"
+    )
 
 
-def get_phase_order(
-    phase: AssessmentPhase,
-) -> int:
+###############################################################################
+# Assessment Phase Compatibility
+###############################################################################
+
+
+# Compatibility alias retained for code that previously used AssessmentPhase.SCOPE.
+#
+# This does not create another enum member.
+AssessmentPhase.SCOPE = (
+    AssessmentPhase.SCOPE_AUTHORIZATION
+)
+
+
+def get_phase_order() -> tuple[AssessmentPhase, ...]:
     """
-    Return the canonical execution order for an assessment phase.
+    Return the canonical ScopeForgeX assessment phase execution order.
 
-    Lower values execute earlier in the workflow.
+    Reporting is always last.
     """
 
-    order = {
-        AssessmentPhase.RECONNAISSANCE: 1,
-        AssessmentPhase.ENUMERATION: 2,
-        AssessmentPhase.VULNERABILITY_ASSESSMENT: 3,
-        AssessmentPhase.EXPLOITATION: 4,
-        AssessmentPhase.POST_EXPLOITATION: 5,
-        AssessmentPhase.REPORTING: 6,
-    }
-
-    return order[phase]
+    return (
+        AssessmentPhase.SCOPE_AUTHORIZATION,
+        AssessmentPhase.RECONNAISSANCE,
+        AssessmentPhase.ENUMERATION,
+        AssessmentPhase.VULNERABILITY_ASSESSMENT,
+        AssessmentPhase.VULNERABILITY_VALIDATION,
+        AssessmentPhase.CREDENTIAL_ASSESSMENT,
+        AssessmentPhase.REPORTING,
+    )
 
 
 def get_phase_order_map() -> dict[AssessmentPhase, int]:
     """
-    Return the complete canonical assessment phase ordering.
+    Return the canonical numeric ordering of assessment phases.
     """
 
     return {
-        AssessmentPhase.RECONNAISSANCE: 1,
-        AssessmentPhase.ENUMERATION: 2,
-        AssessmentPhase.VULNERABILITY_ASSESSMENT: 3,
-        AssessmentPhase.EXPLOITATION: 4,
-        AssessmentPhase.POST_EXPLOITATION: 5,
-        AssessmentPhase.REPORTING: 6,
+        AssessmentPhase.SCOPE_AUTHORIZATION: 1,
+        AssessmentPhase.RECONNAISSANCE: 2,
+        AssessmentPhase.ENUMERATION: 3,
+        AssessmentPhase.VULNERABILITY_ASSESSMENT: 4,
+        AssessmentPhase.VULNERABILITY_VALIDATION: 5,
+        AssessmentPhase.CREDENTIAL_ASSESSMENT: 6,
+        AssessmentPhase.REPORTING: 7,
     }
 
 
@@ -101,18 +130,15 @@ class ExecutionStatus(
     Enum,
 ):
     """
-    Canonical status values for tool and stage execution.
+    Canonical execution status values.
     """
 
     PENDING = "pending"
-
     RUNNING = "running"
-
     SUCCESS = "success"
-
     FAILED = "failed"
-
     SKIPPED = "skipped"
+    CANCELLED = "cancelled"
 
 
 ###############################################################################
@@ -126,20 +152,12 @@ class Severity(
 ):
     """
     Canonical finding severity values.
-
-    INFO is intentionally included because not every assessment result is a
-    vulnerability. Informational observations such as discovered services,
-    technologies and attack-surface details can still be meaningful findings.
     """
 
     INFO = "info"
-
     LOW = "low"
-
     MEDIUM = "medium"
-
     HIGH = "high"
-
     CRITICAL = "critical"
 
 
@@ -153,22 +171,16 @@ class Confidence(
     Enum,
 ):
     """
-    Canonical confidence values for assessment findings.
+    Canonical finding confidence values.
 
-    Detection confidence is intentionally separate from severity.
-
-    A high-severity detection does not automatically mean that the finding
-    has been manually confirmed.
+    Confidence is intentionally separate from severity. A high-severity
+    detection is not automatically a manually confirmed finding.
     """
 
     CONFIRMED = "confirmed"
-
     HIGH = "high"
-
     MEDIUM = "medium"
-
     LOW = "low"
-
     INFORMATIONAL = "informational"
 
 

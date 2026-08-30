@@ -10,11 +10,11 @@ The previous integrations for:
 
     - enum4linux-ng
     - snmpwalk
+    - testssl.sh
 
-were removed from the core toolchain because they do not provide enough
-distinct capability to justify maintaining separate automatic integrations.
+are not implemented in this compatibility module.
 
-Nmap now owns the primary network discovery capability, including:
+Nmap owns the primary network discovery capability, including:
 
     - Port discovery
     - Service detection
@@ -22,7 +22,7 @@ Nmap now owns the primary network discovery capability, including:
     - NSE security checks
     - Network configuration observations
 
-This module is retained temporarily for compatibility with legacy imports.
+This module is retained only for compatibility with legacy imports.
 
 It intentionally contains no executable tool integrations.
 
@@ -48,9 +48,10 @@ from __future__ import annotations
 # Deprecated Compatibility
 ###############################################################################
 
-# Kept only so older imports do not fail.
+# Kept only so older code that references the module can continue to import it.
 #
-# New code must use the canonical ToolRegistry and NmapTool instead.
+# New code must use the canonical ToolRegistry and the appropriate primary
+# tool adapter instead.
 ALL_STAGE2_NET_ENUM_TOOLS: list[object] = []
 
 

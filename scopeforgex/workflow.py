@@ -10,6 +10,8 @@ The workflow engine is responsible for:
 - Executing ScopeForgeX scope validation
 - Selecting registered tools
 - Resolving registered tool definitions to adapters
+- Building canonical ToolContext instances
+- Delegating adapter execution to the canonical ToolExecutor
 - Executing tools in canonical phase order
 - Preserving structured execution results
 - Maintaining shared runtime context
@@ -35,6 +37,8 @@ Architecture
 
 USER
   ↓
+SCOPEFORGEX CLI
+  ↓
 WORKFLOW ENGINE
   ↓
 PROFILE
@@ -45,7 +49,11 @@ TOOL REGISTRY
   ↓
 TOOL DEFINITION
   ↓
+TOOL CONTEXT
+  ↓
 TOOL ADAPTER
+  ↓
+TOOL EXECUTOR
   ↓
 EXECUTION RESULT
   ↓
@@ -59,12 +67,13 @@ REPORTING
   ↓
 WORKFLOW RESULT
 
-v1.1.0
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
 from rich.progress import (
@@ -76,16 +85,19 @@ from rich.progress import (
 )
 
 from scopeforgex.models.execution_result import ExecutionResult
+from scopeforgex.registry.tool_base import ToolContext
 from scopeforgex.registry.tool_registry import (
     build_registry,
     create_tool_adapter,
 )
 from scopeforgex.runtime.enums import (
     AssessmentPhase,
+    ExecutionStatus,
     get_phase_order,
 )
 from scopeforgex.runtime.results import StageResult
 from scopeforgex.runtime.state import RuntimeState
+from scopeforgex.runtime.tool_executor import ToolExecutor
 from scopeforgex.state import save_last_run
 from scopeforgex.ui import (
     info,
@@ -97,7 +109,9 @@ from scopeforgex.ui import (
 from scopeforgex.utils import load_yaml
 
 from scopeforgex.stages.stage0_scope import stage0_scope
-from scopeforgex.stages.stage6_report_cleanup import stage6_reporting
+from scopeforgex.stages.stage6_report_cleanup import (
+    stage6_report_cleanup,
+)
 
 
 ###############################################################################
@@ -116,9 +130,6 @@ PROFILE_FILE = "config/profiles.yaml"
 def _load_profiles() -> dict[str, Any]:
     """
     Load configured assessment profiles.
-
-    Returns:
-        Dictionary containing configured profiles.
     """
 
     configuration = load_yaml(
@@ -154,13 +165,6 @@ def _load_profile(
 ) -> dict[str, Any]:
     """
     Load a single assessment profile.
-
-    Args:
-        profile_name:
-            Profile identifier.
-
-    Returns:
-        Profile configuration.
     """
 
     profiles = _load_profiles()
@@ -219,34 +223,37 @@ def _tool_capability(
 ) -> str:
     """
     Return a normalized tool capability.
-
-    Tool definitions are the canonical source for registry-level capability
-    metadata. Older adapters may not expose capability directly.
     """
+
+    capability = getattr(
+        tool,
+        "capability",
+        None,
+    )
+
+    if capability is None:
+        definition = getattr(
+            tool,
+            "definition",
+            None,
+        )
+
+        capability = getattr(
+            definition,
+            "capability",
+            None,
+        )
+
+    if capability is None:
+        return ""
 
     return str(
         getattr(
-            tool,
-            "capability",
-            "",
+            capability,
+            "value",
+            capability,
         )
     ).strip().lower()
-
-
-def _tool_enabled_by_default(
-    tool: Any,
-) -> bool:
-    """
-    Return whether a tool is enabled by default.
-    """
-
-    return bool(
-        getattr(
-            tool,
-            "enabled_by_default",
-            True,
-        )
-    )
 
 
 def _tool_requires_confirmation(
@@ -256,100 +263,88 @@ def _tool_requires_confirmation(
     Return whether a tool requires explicit confirmation.
     """
 
-    return bool(
-        getattr(
-            tool,
-            "requires_confirmation",
-            False,
-        )
+    value = getattr(
+        tool,
+        "requires_confirmation",
+        False,
     )
+
+    if callable(
+        value
+    ):
+        try:
+            return bool(
+                value()
+            )
+        except TypeError:
+            return False
+
+    return bool(
+        value
+    )
+
+
+def _tool_phase(
+    tool: Any,
+) -> AssessmentPhase | None:
+    """
+    Resolve a registry tool phase to AssessmentPhase.
+    """
+
+    value = getattr(
+        tool,
+        "phase",
+        None,
+    )
+
+    if isinstance(
+        value,
+        AssessmentPhase,
+    ):
+        return value
+
+    if hasattr(
+        value,
+        "value",
+    ):
+        value = value.value
+
+    if value is None:
+        return None
+
+    try:
+        return AssessmentPhase(
+            str(value).strip().lower()
+        )
+    except ValueError:
+        return None
+
+
+###############################################################################
+# Phase Configuration
+###############################################################################
+
+
+def _phase_sections() -> dict[
+    AssessmentPhase,
+    str,
+]:
+    """
+    Return the canonical runtime-phase to profile-section mapping.
+    """
+
+    return {
+        AssessmentPhase.RECONNAISSANCE: "reconnaissance",
+        AssessmentPhase.ENUMERATION: "enumeration",
+        AssessmentPhase.VULNERABILITY_ASSESSMENT: "vulnerability",
+        AssessmentPhase.VULNERABILITY_VALIDATION: "validation",
+        AssessmentPhase.CREDENTIAL_ASSESSMENT: "credential",
+    }
 
 
 ###############################################################################
 # Profile Tool Selection
 ###############################################################################
-
-
-def _configured_tool_names(
-    profile: dict[str, Any],
-) -> set[str] | None:
-    """
-    Return explicitly configured tool names.
-
-    Supported profile keys:
-
-    tools:
-        List of enabled tool names.
-
-    enabled_tools:
-        Backward-compatible alias for tools.
-
-    If neither key exists, None is returned and the workflow falls back
-    to each tool's enabled_by_default setting.
-    """
-
-    configured = profile.get(
-        "tools",
-        profile.get(
-            "enabled_tools"
-        ),
-    )
-
-    if configured is None:
-        return None
-
-    if not isinstance(
-        configured,
-        list,
-    ):
-        raise SystemExit(
-            "Profile 'tools' must be a list."
-        )
-
-    return {
-        str(name).strip().lower()
-        for name in configured
-        if str(name).strip()
-    }
-
-
-def _configured_capabilities(
-    profile: dict[str, Any],
-) -> set[str] | None:
-    """
-    Return explicitly configured capabilities.
-
-    This allows profiles to select capabilities without coupling the
-    workflow engine to a particular implementation.
-
-    Example:
-
-        capabilities:
-          - attack_surface_discovery
-          - network_service_discovery
-          - http_service_probing
-    """
-
-    configured = profile.get(
-        "capabilities"
-    )
-
-    if configured is None:
-        return None
-
-    if not isinstance(
-        configured,
-        list,
-    ):
-        raise SystemExit(
-            "Profile 'capabilities' must be a list."
-        )
-
-    return {
-        str(capability).strip().lower()
-        for capability in configured
-        if str(capability).strip()
-    }
 
 
 def _excluded_tools(
@@ -386,34 +381,16 @@ def _select_tools(
     profile: dict[str, Any],
 ) -> list[Any]:
     """
-    Select registered tool definitions according to the assessment profile.
+    Select canonical registry tool definitions according to the profile.
 
-    Selection precedence:
+    The profile is authoritative.
 
-    1. Explicit tool selection
-    2. Explicit capability selection
-    3. Tool enabled_by_default metadata
+    A tool is selected only when its profile configuration contains:
 
-    Exclusions always take precedence.
-
-    Tools are returned in canonical AssessmentPhase order and registry
-    order within each phase.
-
-    The registry definitions remain authoritative here. Adapter resolution
-    occurs only when a selected tool is executed.
+        enabled: true
     """
 
     registry = build_registry()
-
-    configured_names = _configured_tool_names(
-        profile
-    )
-
-    configured_capabilities = (
-        _configured_capabilities(
-            profile
-        )
-    )
 
     excluded = _excluded_tools(
         profile
@@ -421,25 +398,47 @@ def _select_tools(
 
     selected: list[Any] = []
 
+    phase_sections = _phase_sections()
+
     for phase in get_phase_order():
 
         if phase in {
-            AssessmentPhase.SCOPE,
+            AssessmentPhase.SCOPE_AUTHORIZATION,
             AssessmentPhase.REPORTING,
         }:
             continue
 
-        phase_tools = registry.by_phase(
+        section_name = phase_sections.get(
             phase
         )
+
+        if section_name is None:
+            continue
+
+        section = profile.get(
+            section_name,
+            {},
+        )
+
+        if not isinstance(
+            section,
+            dict,
+        ):
+            raise SystemExit(
+                f"Profile '{section_name}' section must be a mapping."
+            )
+
+        phase_tools = [
+            tool
+            for tool in registry.values()
+            if _tool_phase(
+                tool
+            ) == phase
+        ]
 
         for tool in phase_tools:
 
             name = _tool_name(
-                tool
-            )
-
-            capability = _tool_capability(
                 tool
             )
 
@@ -449,25 +448,26 @@ def _select_tools(
             if name in excluded:
                 continue
 
-            if (
-                configured_names is not None
-                and name not in configured_names
+            lookup_name = (
+                "testssl"
+                if name == "testssl.sh"
+                else name
+            )
+
+            configuration = section.get(
+                lookup_name
+            )
+
+            if not isinstance(
+                configuration,
+                dict,
             ):
                 continue
 
-            if (
-                configured_names is None
-                and configured_capabilities is not None
-                and capability
-                not in configured_capabilities
-            ):
-                continue
-
-            if (
-                configured_names is None
-                and configured_capabilities is None
-                and not _tool_enabled_by_default(
-                    tool
+            if not bool(
+                configuration.get(
+                    "enabled",
+                    False,
                 )
             ):
                 continue
@@ -476,59 +476,23 @@ def _select_tools(
                 tool
             )
 
-    registry_order = {
-        id(tool): index
-        for index, tool in enumerate(
-            registry.all()
-        )
-    }
-
-    selected.sort(
-        key=lambda tool: registry_order.get(
-            id(tool),
-            999999,
-        )
-    )
-
     return selected
 
 
 ###############################################################################
-# Tool Context
+# Tool Options
 ###############################################################################
 
 
-def _build_tool_context(
-    ctx: dict[str, Any],
-    tool: Any,
+def _tool_profile_options(
     profile: dict[str, Any],
+    tool_name: str,
 ) -> dict[str, Any]:
     """
-    Build the execution context passed to a tool adapter.
-
-    The workflow engine supplies generic runtime information only.
-
-    Tool-specific command construction remains the responsibility of the
-    adapter.
-
-    The returned context contains:
-
-    - Existing workflow context
-    - Tool name
-    - Tool capability
-    - Profile-specific tool options
-    - Generic options alias for adapter compatibility
+    Return profile-configured options for a tool.
     """
 
-    tool_ctx = dict(
-        ctx
-    )
-
-    tool_name = _tool_name(
-        tool
-    )
-
-    tool_options: dict[str, Any] = {}
+    options: dict[str, Any] = {}
 
     profile_tools = profile.get(
         "tool_options",
@@ -548,24 +512,313 @@ def _build_tool_context(
             configured,
             dict,
         ):
-            tool_options.update(
+            options.update(
                 configured
             )
 
-    tool_ctx["tool"] = tool_name
+    section_names = (
+        "reconnaissance",
+        "enumeration",
+        "vulnerability",
+        "validation",
+        "credential",
+    )
 
-    tool_ctx["capability"] = (
-        _tool_capability(
+    lookup_name = (
+        "testssl"
+        if tool_name == "testssl.sh"
+        else tool_name
+    )
+
+    for section_name in section_names:
+
+        section = profile.get(
+            section_name,
+            {},
+        )
+
+        if not isinstance(
+            section,
+            dict,
+        ):
+            continue
+
+        configuration = section.get(
+            lookup_name
+        )
+
+        if not isinstance(
+            configuration,
+            dict,
+        ):
+            continue
+
+        configured_options = configuration.get(
+            "options",
+            {},
+        )
+
+        if isinstance(
+            configured_options,
+            dict,
+        ):
+            options.update(
+                configured_options
+            )
+
+    return options
+
+
+###############################################################################
+# Tool Context
+###############################################################################
+
+
+def _create_tool_context(
+    ctx: dict[str, Any],
+    tool: Any,
+    profile: dict[str, Any],
+) -> ToolContext:
+    """
+    Build the typed ToolContext required by ToolAdapter implementations.
+
+    Explicit workflow input_data takes precedence.
+
+    Adapters declaring ``host_or_url_list`` as their canonical input type
+    receive the workflow target automatically when no explicit input_data
+    has been supplied. This allows pipeline-aware tools such as Nuclei to
+    operate correctly during ordinary profile execution.
+    """
+
+    tool_name = _tool_name(
+        tool
+    )
+
+    target = str(
+        ctx.get(
+            "target",
+            "",
+        )
+    ).strip()
+
+    outdir = ctx.get(
+        "outdir"
+    )
+
+    if not outdir:
+        raise ValueError(
+            f"Tool '{tool_name}' requires a workflow output directory."
+        )
+
+    output_dir = (
+        Path(
+            str(outdir)
+        )
+        / "raw"
+        / tool_name
+    )
+
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    phase_sections = _phase_sections()
+
+    section_name = phase_sections.get(
+        _tool_phase(
             tool
         )
     )
 
-    tool_ctx["tool_options"] = (
-        tool_options
+    configuration: dict[str, Any] = {}
+
+    if section_name is not None:
+
+        section = profile.get(
+            section_name,
+            {},
+        )
+
+        if isinstance(
+            section,
+            dict,
+        ):
+            lookup_name = (
+                "testssl"
+                if tool_name == "testssl.sh"
+                else tool_name
+            )
+
+            configured = section.get(
+                lookup_name
+            )
+
+            if isinstance(
+                configured,
+                dict,
+            ):
+                configuration = dict(
+                    configured
+                )
+
+    configured_options = configuration.get(
+        "options",
+        {},
     )
 
-    tool_ctx["options"] = (
-        tool_options
+    if not isinstance(
+        configured_options,
+        dict,
+    ):
+        configured_options = {}
+
+    workflow_input = ctx.get(
+        "input_data",
+        (),
+    )
+
+    if workflow_input is None:
+        workflow_input = ()
+
+    if isinstance(
+        workflow_input,
+        str,
+    ):
+        workflow_input = (
+            workflow_input,
+        )
+
+    explicit_input = tuple(
+        str(value).strip()
+        for value in workflow_input
+        if value is not None
+        and str(value).strip()
+    )
+
+    if explicit_input:
+        input_data = explicit_input
+
+    elif getattr(
+        tool,
+        "input_type",
+        "",
+    ) == "host_or_url_list":
+        input_data = (
+            target,
+        )
+
+    else:
+        input_data = ()
+
+    return ToolContext(
+        target=target,
+        output_dir=output_dir,
+        profile=str(
+            ctx.get(
+                "profile",
+                "standard",
+            )
+        ),
+        options=dict(
+            configured_options
+        ),
+        input_data=input_data,
+    )
+
+
+def _build_tool_context(
+    ctx: dict[str, Any],
+    tool: Any,
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Build the generic execution context passed to ToolExecutor.
+    """
+
+    tool_ctx = dict(
+        ctx
+    )
+
+    tool_name = _tool_name(
+        tool
+    )
+
+    capability = _tool_capability(
+        tool
+    )
+
+    phase_sections = _phase_sections()
+
+    section_name = phase_sections.get(
+        _tool_phase(
+            tool
+        )
+    )
+
+    configuration: dict[str, Any] = {}
+
+    if section_name is not None:
+
+        section = profile.get(
+            section_name,
+            {},
+        )
+
+        if isinstance(
+            section,
+            dict,
+        ):
+            lookup_name = (
+                "testssl"
+                if tool_name == "testssl.sh"
+                else tool_name
+            )
+
+            configured = section.get(
+                lookup_name
+            )
+
+            if isinstance(
+                configured,
+                dict,
+            ):
+                configuration = dict(
+                    configured
+                )
+
+    configured_options = configuration.get(
+        "options",
+        {},
+    )
+
+    if not isinstance(
+        configured_options,
+        dict,
+    ):
+        configured_options = {}
+
+    tool_ctx["tool"] = tool_name
+    tool_ctx["capability"] = capability
+    tool_ctx["tool_options"] = dict(
+        configured_options
+    )
+    tool_ctx["options"] = dict(
+        configured_options
+    )
+    tool_ctx["tool_configuration"] = configuration
+
+    tool_ctx.setdefault(
+        "timeout",
+        600,
+    )
+
+    tool_ctx.setdefault(
+        "tool_timeout",
+        tool_ctx.get(
+            "timeout",
+            600,
+        ),
     )
 
     return tool_ctx
@@ -576,64 +829,12 @@ def _build_tool_context(
 ###############################################################################
 
 
-def _record_result(
-    runtime: RuntimeState,
-    result: Any,
-) -> None:
-    """
-    Store a structured tool result in RuntimeState.
-
-    RuntimeState is the authoritative runtime state container.
-    """
-
-    add_result = getattr(
-        runtime,
-        "add_tool_result",
-        None,
-    )
-
-    if callable(
-        add_result
-    ):
-        add_result(
-            result
-        )
-        return
-
-    add_result = getattr(
-        runtime,
-        "add_result",
-        None,
-    )
-
-    if callable(
-        add_result
-    ):
-        add_result(
-            result
-        )
-        return
-
-    if hasattr(
-        runtime,
-        "tool_results",
-    ):
-        runtime.tool_results.append(
-            result
-        )
-
-
 def _record_context_result(
     ctx: dict[str, Any],
     result: Any,
 ) -> None:
     """
-    Preserve a structured execution result in the shared workflow context.
-
-    RuntimeState remains the authoritative runtime container. This context
-    mirror exists so reporting and later workflow components can consume the
-    actual ExecutionResult objects without having to know RuntimeState's
-    internal storage implementation.
+    Preserve a structured execution result in shared workflow context.
     """
 
     results = ctx.get(
@@ -660,37 +861,45 @@ def _record_phase_result(
     results: list[Any],
 ) -> StageResult | None:
     """
-    Record the completed assessment phase in RuntimeState.
-
-    RuntimeState is the authoritative source of workflow phase execution
-    history.
-
-    A phase result is recorded only when the phase contains selected tools.
-
-    The phase succeeds only when every tool executed during the phase
-    reports success.
+    Record one completed assessment phase in RuntimeState.
     """
 
     if not results:
         return None
 
-    success = all(
-        bool(
-            getattr(
-                result,
-                "success",
-                False,
-            )
+    statuses = {
+        getattr(
+            result,
+            "status",
+            None,
         )
         for result in results
-    )
+    }
+
+    if ExecutionStatus.FAILED.value in statuses:
+        stage_status = ExecutionStatus.FAILED
+
+    elif statuses and statuses <= {
+        ExecutionStatus.SKIPPED.value,
+    }:
+        stage_status = ExecutionStatus.SKIPPED
+
+    elif ExecutionStatus.SUCCESS.value in statuses:
+        stage_status = ExecutionStatus.SUCCESS
+
+    else:
+        stage_status = ExecutionStatus.FAILED
 
     stage_result = StageResult(
-        tool=f"phase:{phase.value}",
-        capability="assessment_phase",
-        success=success,
+        stage=f"phase:{phase.value}",
         phase=phase,
+        status=stage_status,
+        tool_results=list(
+            results
+        ),
     )
+
+    stage_result.finalize()
 
     runtime.add_stage_result(
         stage_result
@@ -713,9 +922,6 @@ class WorkflowEngine:
         self,
         profile_name: str,
     ) -> None:
-        """
-        Initialize the workflow engine.
-        """
 
         self.profile_name = (
             profile_name
@@ -731,17 +937,20 @@ class WorkflowEngine:
 
         self.runtime = RuntimeState()
 
+        self.runtime.profile = (
+            self.profile_name
+        )
+
+        self.executor = ToolExecutor(
+            runtime_state=self.runtime,
+        )
+
         self.ctx: dict[str, Any] = {
             "profile": profile_name,
             "profile_config": self.profile,
             "runtime": self.runtime,
             "workflow_start_time": time.time(),
-
-            # Canonical execution history exposed to downstream workflow
-            # components and reporting.
             "execution_results": [],
-
-            # Phase-level execution history exposed to downstream consumers.
             "stage_results": [],
         }
 
@@ -752,25 +961,7 @@ class WorkflowEngine:
         profile: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
-        Build the execution context for a registered tool definition.
-
-        This class-level wrapper delegates to the canonical module-level
-        context builder.
-
-        Args:
-            ctx:
-                Generic workflow context.
-
-            tool:
-                Registered tool definition.
-
-            profile:
-                Assessment profile configuration. When omitted, the engine's
-                currently loaded profile is used.
-
-        Returns:
-            Tool execution context containing generic runtime data,
-            tool identity and profile-configured options.
+        Build the generic execution context for a tool.
         """
 
         if profile is None:
@@ -782,15 +973,25 @@ class WorkflowEngine:
             profile,
         )
 
+    def _create_tool_context(
+        self,
+        tool: Any,
+        ctx: dict[str, Any],
+        profile: dict[str, Any],
+    ) -> ToolContext:
+        """
+        Create the canonical ToolContext for a registered tool.
+        """
+
+        return _create_tool_context(
+            ctx,
+            tool,
+            profile,
+        )
+
     def _prepare_context(
         self,
     ) -> None:
-        """
-        Prepare generic workflow context.
-
-        Target information may be populated by the CLI or by the scope
-        validation phase.
-        """
 
         self.runtime.profile = (
             self.profile_name
@@ -808,7 +1009,6 @@ class WorkflowEngine:
             self.runtime
         )
 
-        # Ensure downstream consumers always receive concrete containers.
         if not isinstance(
             self.ctx.get(
                 "execution_results"
@@ -832,13 +1032,6 @@ class WorkflowEngine:
     def _sync_runtime_identity(
         self,
     ) -> None:
-        """
-        Synchronize workflow identity from the shared context into RuntimeState.
-
-        Scope validation may populate target information after RuntimeState
-        initialization. RuntimeState must therefore receive the final target
-        before the canonical WorkflowResult is constructed.
-        """
 
         self.runtime.profile = (
             self.profile_name
@@ -856,11 +1049,6 @@ class WorkflowEngine:
     def _run_scope(
         self,
     ) -> None:
-        """
-        Execute ScopeForgeX-native scope and authorization validation.
-
-        Scope is not represented as an external tool.
-        """
 
         stage(
             "PHASE 0 — SCOPE & AUTHORIZATION",
@@ -878,65 +1066,66 @@ class WorkflowEngine:
         tool: Any,
         ctx: dict[str, Any],
         profile: dict[str, Any],
-    ) -> Any:
+    ) -> ExecutionResult:
         """
-        Resolve a registered tool definition to its adapter and execute it.
+        Create and execute the canonical adapter for a registry tool.
 
-        The workflow engine operates on ToolDefinition objects during
-        selection and ordering. The registry is responsible for resolving
-        the definition to the executable ToolBase adapter.
+        Registry:
+            owns adapter construction.
 
-        The workflow engine never constructs tool-specific commands.
+        ToolContext:
+            carries typed runtime configuration.
+
+        ToolAdapter:
+            owns command construction.
+
+        ToolExecutor:
+            owns process execution.
         """
 
         name = _tool_name(
             tool
         )
 
-        adapter = getattr(
-            tool,
-            "adapter",
-            None,
+        capability = _tool_capability(
+            tool
         )
 
-        if adapter is None:
-            return ExecutionResult.failure(
-                tool=name,
-                capability=_tool_capability(
-                    tool
-                ),
-                error=(
-                    f"Tool '{name}' is registered but "
-                    "has no adapter."
-                ),
+        if not name:
+            raise ValueError(
+                "Selected tool definition has no valid name."
             )
 
-        instance = create_tool_adapter(
-            name
-        )
+        if not capability:
+            raise ValueError(
+                f"Tool '{name}' has no canonical capability metadata."
+            )
 
-        tool_ctx = self._build_tool_context(
+        tool_context = _create_tool_context(
             ctx,
             tool,
             profile,
         )
 
-        return instance.run(
-            tool_ctx
+        adapter = create_tool_adapter(
+            name,
+            context=tool_context,
+        )
+
+        execution_context = _build_tool_context(
+            ctx,
+            tool,
+            profile,
+        )
+
+        return self.executor.execute(
+            adapter,
+            execution_context,
         )
 
     def _run_assessment_tools(
         self,
     ) -> None:
-        """
-        Execute selected tools in canonical assessment phase order.
-
-        Each completed assessment phase produces one canonical StageResult
-        in RuntimeState.
-
-        Each tool execution is preserved in both RuntimeState and the shared
-        workflow context before the next tool or reporting phase executes.
-        """
 
         if not self.selected_tools:
             warn(
@@ -955,18 +1144,21 @@ class WorkflowEngine:
 
         for tool in self.selected_tools:
 
-            phase = getattr(
-                tool,
-                "phase",
-                None,
+            phase = _tool_phase(
+                tool
             )
 
-            if phase in phase_groups:
-                phase_groups[
-                    phase
-                ].append(
-                    tool
-                )
+            if phase is None:
+                continue
+
+            if phase not in phase_groups:
+                continue
+
+            phase_groups[
+                phase
+            ].append(
+                tool
+            )
 
         total_tools = len(
             self.selected_tools
@@ -992,7 +1184,7 @@ class WorkflowEngine:
             for phase in get_phase_order():
 
                 if phase in {
-                    AssessmentPhase.SCOPE,
+                    AssessmentPhase.SCOPE_AUTHORIZATION,
                     AssessmentPhase.REPORTING,
                 }:
                     continue
@@ -1021,17 +1213,15 @@ class WorkflowEngine:
                         tool
                     )
 
-                    capability = (
-                        _tool_capability(
-                            tool
-                        )
+                    capability = _tool_capability(
+                        tool
                     )
 
                     info(
                         (
                             f"Executing "
                             f"{name} "
-                            f"({capability})"
+                            f"({capability or 'unknown'})"
                         )
                     )
 
@@ -1044,8 +1234,6 @@ class WorkflowEngine:
                                 "explicit authorization."
                             )
                         )
-
-                    execution_start = time.time()
 
                     try:
 
@@ -1068,61 +1256,19 @@ class WorkflowEngine:
 
                     except Exception as exc:
 
-                        result = (
-                            ExecutionResult.failure(
-                                tool=name,
-                                capability=capability,
-                                error=(
-                                    f"Tool execution "
-                                    f"failed: {exc}"
-                                ),
-                            )
-                        )
-
-                    execution_end = time.time()
-
-                    # Preserve execution timing without changing the
-                    # ExecutionResult model contract. Existing metadata is
-                    # retained and augmented when available.
-                    metadata = getattr(
-                        result,
-                        "metadata",
-                        None,
-                    )
-
-                    if isinstance(
-                        metadata,
-                        dict,
-                    ):
-                        metadata.setdefault(
-                            "workflow_duration",
-                            execution_end
-                            - execution_start,
-                        )
-
-                        metadata.setdefault(
-                            "workflow_profile",
-                            self.profile_name,
-                        )
-
-                        metadata.setdefault(
-                            "workflow_phase",
-                            getattr(
-                                phase,
-                                "value",
-                                str(phase),
+                        result = ExecutionResult.failure(
+                            tool=name,
+                            capability=(
+                                capability
+                                or "unknown"
+                            ),
+                            error=(
+                                f"Tool execution failed: "
+                                f"{type(exc).__name__}: "
+                                f"{exc}"
                             ),
                         )
 
-                    # RuntimeState remains authoritative.
-                    _record_result(
-                        self.runtime,
-                        result,
-                    )
-
-                    # Explicit context-level execution history gives
-                    # reporting a stable interface to the exact results
-                    # produced by adapters.
                     _record_context_result(
                         self.ctx,
                         result,
@@ -1174,19 +1320,9 @@ class WorkflowEngine:
     def _run_reporting(
         self,
     ) -> None:
-        """
-        Execute the ScopeForgeX-native reporting phase.
-
-        Reporting receives the complete runtime context and structured
-        execution history.
-
-        Reporting is deliberately executed before RuntimeState is finalized
-        so the reporting layer can consume the complete execution history
-        while the workflow is still active.
-        """
 
         stage(
-            "PHASE 6 — REPORTING",
+            "PHASE 7 — REPORTING",
             "green",
         )
 
@@ -1205,58 +1341,36 @@ class WorkflowEngine:
             ]
         )
 
-        # Make the authoritative runtime object and explicit execution
-        # history available to the reporting layer.
         self.ctx[
             "runtime"
         ] = self.runtime
 
-        stage6_reporting(
+        stage6_report_cleanup(
             self.ctx
         )
 
     def _finalize_runtime(
         self,
     ) -> None:
-        """
-        Finalize RuntimeState and construct the canonical WorkflowResult.
-
-        RuntimeState becomes the authoritative aggregate of the complete
-        workflow lifecycle before the final context is returned.
-        """
 
         self._sync_runtime_identity()
 
-        workflow_end_time = self.ctx.get(
+        if self.ctx.get(
             "workflow_end_time"
-        )
-
-        if workflow_end_time is None:
-            workflow_end_time = time.time()
-
+        ) is None:
             self.ctx[
                 "workflow_end_time"
-            ] = workflow_end_time
+            ] = time.time()
 
         self.runtime.finish()
 
-        workflow_result = (
-            self.runtime.finalize_workflow_result()
-        )
-
         self.ctx[
             "workflow_result"
-        ] = workflow_result
+        ] = self.runtime.finalize_workflow_result()
 
     def run(
         self,
     ) -> dict[str, Any]:
-        """
-        Execute the complete assessment workflow.
-
-        Returns:
-            Shared workflow context containing the canonical WorkflowResult.
-        """
 
         self._prepare_context()
 
@@ -1296,14 +1410,6 @@ def run_profile(
 ) -> dict[str, Any]:
     """
     Execute a configured ScopeForgeX assessment profile.
-
-    Args:
-        profile_name:
-            Profile identifier, for example:
-            fast, standard or full.
-
-    Returns:
-        Final workflow context.
     """
 
     engine = WorkflowEngine(

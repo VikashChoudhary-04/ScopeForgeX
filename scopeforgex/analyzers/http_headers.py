@@ -2,15 +2,15 @@
 ScopeForgeX HTTP Security Header Analyzer
 ==========================================
 
-ScopeForgeX-native analyzer for HTTP response security headers.
+ScopeForgeX-native analyzer for deterministic HTTP response security-header
+analysis.
 
-The analyzer consumes HTTP response evidence collected by enumeration
-capabilities such as HTTPX and produces normalized security findings.
+The analyzer consumes HTTP response evidence already collected by the
+ScopeForgeX workflow. It does not perform network requests and does not
+execute external tools.
 
-It does not execute an external security tool.
-
-Supported headers
------------------
+Analyzed headers
+----------------
 - Content-Security-Policy
 - Strict-Transport-Security
 - X-Frame-Options
@@ -26,13 +26,15 @@ Finding types
 
 Design Principles
 -----------------
-- Native ScopeForgeX analysis.
+- Native ScopeForgeX capability.
+- Analyze collected evidence only.
+- No network access.
 - No external executable dependency.
-- Structured findings.
 - Preserve source evidence.
-- Deterministic analysis.
-- Standard-library only.
-- Compatible with the canonical finding model.
+- Produce structured observations.
+- Detection is not confirmation.
+- Header analysis is configuration analysis.
+- The analyzer does not replace generic vulnerability scanners.
 
 v1.2.0
 """
@@ -40,13 +42,19 @@ v1.2.0
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 
 ###############################################################################
 # Constants
 ###############################################################################
 
+
+MISSING_SECURITY_HEADER = "MISSING_SECURITY_HEADER"
+WEAK_SECURITY_HEADER = "WEAK_SECURITY_HEADER"
+SECURITY_HEADER_MISCONFIGURATION = (
+    "SECURITY_HEADER_MISCONFIGURATION"
+)
 
 SUPPORTED_HEADERS = (
     "Content-Security-Policy",
@@ -59,17 +67,17 @@ SUPPORTED_HEADERS = (
 
 
 ###############################################################################
-# Finding
+# Observation Model
 ###############################################################################
 
 
 @dataclass(slots=True)
-class HeaderFinding:
+class HeaderObservation:
     """
-    Normalized finding produced by the HTTP security header analyzer.
+    Normalized HTTP security-header observation.
 
-    This is intentionally lightweight so the analyzer does not depend on
-    reporting or execution components.
+    The observation represents a configuration condition identified in
+    already-collected HTTP response evidence.
     """
 
     finding_type: str
@@ -85,7 +93,7 @@ class HeaderFinding:
     description: str
 
     evidence: dict[str, Any] = field(
-        default_factory=dict
+        default_factory=dict,
     )
 
     source_tool: str = "scopeforgex"
@@ -104,7 +112,7 @@ class HeaderFinding:
         self,
     ) -> dict[str, Any]:
         """
-        Serialize the finding into a stable dictionary.
+        Serialize the observation into a stable dictionary.
         """
 
         return {
@@ -113,12 +121,14 @@ class HeaderFinding:
             "severity": self.severity,
             "confidence": self.confidence,
             "target": self.target,
-            "category": self.category,
             "description": self.description,
-            "evidence": dict(self.evidence),
+            "evidence": dict(
+                self.evidence
+            ),
             "source_tool": self.source_tool,
             "detection_method": self.detection_method,
             "remediation": self.remediation,
+            "category": self.category,
         }
 
 
@@ -129,44 +139,73 @@ class HeaderFinding:
 
 class HttpSecurityHeaderAnalyzer:
     """
-    Analyze HTTP response security headers.
+    Analyze collected HTTP response security headers.
 
-    Expected input
-    ---------------
-
-    A mapping containing a target and HTTP response headers.
-
-    Example:
+    Supported evidence forms include:
 
         {
             "target": "https://example.com",
             "headers": {
-                "Content-Type": "text/html",
-                "Server": "nginx",
+                "Content-Security-Policy": "default-src 'self'",
+                "Strict-Transport-Security":
+                    "max-age=31536000",
                 "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff",
+                "Referrer-Policy":
+                    "strict-origin-when-cross-origin",
+                "Permissions-Policy":
+                    "camera=(), microphone=()",
             },
         }
 
+    HTTP response records are also supported:
+
+        {
+            "target": "https://example.com",
+            "responses": [
+                {
+                    "url": "https://example.com/",
+                    "headers": {
+                        "X-Frame-Options": "SAMEORIGIN",
+                    },
+                },
+            ],
+        }
+
     Header names are matched case-insensitively.
+
+    The analyzer only inspects supplied evidence.
     """
 
     name = "http_security_headers"
 
     description = (
-        "Analyze HTTP response security headers for missing, weak or "
-        "misconfigured security controls."
+        "Analyze collected HTTP response security headers for missing, "
+        "weak or misconfigured security controls."
     )
 
     def analyze(
         self,
         evidence: Mapping[str, Any],
-    ) -> list[HeaderFinding]:
+    ) -> list[HeaderObservation]:
         """
-        Analyze HTTP response evidence.
+        Analyze collected HTTP response evidence.
 
         Returns:
-            A list of normalized HeaderFinding objects.
+            A list of normalized HeaderObservation objects.
+
+        Raises:
+            TypeError:
+                If evidence is not a mapping.
         """
+
+        if not isinstance(
+            evidence,
+            Mapping,
+        ):
+            raise TypeError(
+                "HTTP security header evidence must be a mapping."
+            )
 
         target = str(
             evidence.get(
@@ -175,113 +214,302 @@ class HttpSecurityHeaderAnalyzer:
             )
         ).strip()
 
-        headers = evidence.get(
-            "headers",
-            {},
+        records = self._extract_records(
+            evidence
         )
 
-        if not isinstance(
-            headers,
-            Mapping,
-        ):
-            return []
+        if not records:
+            records = [
+                evidence
+            ]
 
-        normalized = self._normalize_headers(
-            headers
-        )
+        observations: list[
+            HeaderObservation
+        ] = []
 
-        findings: list[HeaderFinding] = []
+        seen: set[
+            tuple[str, str, str, str]
+        ] = set()
 
-        findings.extend(
-            self._check_csp(
-                target,
-                normalized,
+        for record in records:
+
+            record_target = str(
+                record.get(
+                    "url",
+                    record.get(
+                        "target",
+                        target,
+                    ),
+                )
+            ).strip()
+
+            if not record_target:
+                record_target = target
+
+            headers = self._extract_headers(
+                record
             )
-        )
 
-        findings.extend(
-            self._check_hsts(
-                target,
-                normalized,
+            if not headers:
+                continue
+
+            record_observations = (
+                self._analyze_headers(
+                    target=record_target,
+                    headers=headers,
+                )
             )
-        )
 
-        findings.extend(
-            self._check_x_frame_options(
-                target,
-                normalized,
-            )
-        )
+            for observation in record_observations:
 
-        findings.extend(
-            self._check_x_content_type_options(
-                target,
-                normalized,
-            )
-        )
+                key = (
+                    observation.finding_type,
+                    observation.target,
+                    observation.title,
+                    str(
+                        observation.evidence
+                    ),
+                )
 
-        findings.extend(
-            self._check_referrer_policy(
-                target,
-                normalized,
-            )
-        )
+                if key in seen:
+                    continue
 
-        findings.extend(
-            self._check_permissions_policy(
-                target,
-                normalized,
-            )
-        )
+                seen.add(
+                    key
+                )
 
-        return findings
+                observations.append(
+                    observation
+                )
 
-    # ------------------------------------------------------------------
-    # Normalization
-    # ------------------------------------------------------------------
+        return observations
+
+    ###########################################################################
+    # Evidence Extraction
+    ###########################################################################
 
     @staticmethod
-    def _normalize_headers(
-        headers: Mapping[str, Any],
+    def _extract_records(
+        evidence: Mapping[str, Any],
+    ) -> list[Mapping[str, Any]]:
+        """
+        Extract HTTP response records from collected evidence.
+        """
+
+        records: list[
+            Mapping[str, Any]
+        ] = []
+
+        for key in (
+            "responses",
+            "http_responses",
+            "documents",
+        ):
+
+            value = evidence.get(
+                key
+            )
+
+            if value is None:
+                continue
+
+            if isinstance(
+                value,
+                Mapping,
+            ):
+
+                records.append(
+                    value
+                )
+
+                continue
+
+            if isinstance(
+                value,
+                Iterable,
+            ) and not isinstance(
+                value,
+                (str, bytes),
+            ):
+
+                for item in value:
+
+                    if isinstance(
+                        item,
+                        Mapping,
+                    ):
+
+                        records.append(
+                            item
+                        )
+
+        return records
+
+    @classmethod
+    def _extract_headers(
+        cls,
+        record: Mapping[str, Any],
     ) -> dict[str, str]:
         """
-        Normalize HTTP header names and values.
+        Extract response headers from collected evidence.
 
-        Header names become lowercase. Values are converted to strings and
-        surrounding whitespace is removed.
+        Supported locations:
+
+        - headers
+        - response_headers
+        - response.headers
         """
 
-        normalized: dict[str, str] = {}
+        candidates: list[
+            Mapping[str, Any]
+        ] = []
 
-        for name, value in headers.items():
+        for key in (
+            "headers",
+            "response_headers",
+        ):
 
-            if name is None:
-                continue
+            value = record.get(
+                key
+            )
 
-            key = str(
-                name
-            ).strip().lower()
+            if isinstance(
+                value,
+                Mapping,
+            ):
 
-            if not key:
-                continue
+                candidates.append(
+                    value
+                )
 
-            normalized[key] = str(
-                value
-            ).strip()
+        response = record.get(
+            "response"
+        )
+
+        if isinstance(
+            response,
+            Mapping,
+        ):
+
+            response_headers = response.get(
+                "headers"
+            )
+
+            if isinstance(
+                response_headers,
+                Mapping,
+            ):
+
+                candidates.append(
+                    response_headers
+                )
+
+        normalized: dict[
+            str,
+            str,
+        ] = {}
+
+        for headers in candidates:
+
+            for name, value in headers.items():
+
+                if name is None:
+                    continue
+
+                header_name = str(
+                    name
+                ).strip().lower()
+
+                if not header_name:
+                    continue
+
+                if value is None:
+                    header_value = ""
+
+                else:
+                    header_value = str(
+                        value
+                    ).strip()
+
+                normalized[
+                    header_name
+                ] = header_value
 
         return normalized
 
-    # ------------------------------------------------------------------
+    ###########################################################################
+    # Header Analysis
+    ###########################################################################
+
+    def _analyze_headers(
+        self,
+        *,
+        target: str,
+        headers: Mapping[str, str],
+    ) -> list[HeaderObservation]:
+        """
+        Analyze all plan-defined security headers.
+        """
+
+        observations: list[
+            HeaderObservation
+        ] = []
+
+        observations.extend(
+            self._check_csp(
+                target,
+                headers,
+            )
+        )
+
+        observations.extend(
+            self._check_hsts(
+                target,
+                headers,
+            )
+        )
+
+        observations.extend(
+            self._check_x_frame_options(
+                target,
+                headers,
+            )
+        )
+
+        observations.extend(
+            self._check_x_content_type_options(
+                target,
+                headers,
+            )
+        )
+
+        observations.extend(
+            self._check_referrer_policy(
+                target,
+                headers,
+            )
+        )
+
+        observations.extend(
+            self._check_permissions_policy(
+                target,
+                headers,
+            )
+        )
+
+        return observations
+
+    ###########################################################################
     # Content-Security-Policy
-    # ------------------------------------------------------------------
+    ###########################################################################
 
     def _check_csp(
         self,
         target: str,
         headers: Mapping[str, str],
-    ) -> list[HeaderFinding]:
+    ) -> list[HeaderObservation]:
         """
-        Check Content-Security-Policy.
+        Analyze Content-Security-Policy.
         """
 
         name = "content-security-policy"
@@ -292,8 +520,10 @@ class HttpSecurityHeaderAnalyzer:
                 self._missing(
                     target=target,
                     header="Content-Security-Policy",
-                    title="Missing Content-Security-Policy Header",
-                    severity="medium",
+                    title=(
+                        "Missing Content-Security-Policy Header"
+                    ),
+                    severity="Medium",
                     remediation=(
                         "Define a restrictive Content-Security-Policy "
                         "appropriate for the application."
@@ -302,12 +532,11 @@ class HttpSecurityHeaderAnalyzer:
             ]
 
         value = headers[name]
-
         lowered = value.lower()
 
         if (
-            "unsafe-inline" in lowered
-            or "unsafe-eval" in lowered
+            "'unsafe-inline'" in lowered
+            or "'unsafe-eval'" in lowered
         ):
 
             return [
@@ -318,7 +547,7 @@ class HttpSecurityHeaderAnalyzer:
                     title=(
                         "Weak Content-Security-Policy Header"
                     ),
-                    severity="medium",
+                    severity="Medium",
                     remediation=(
                         "Avoid unsafe-inline and unsafe-eval where "
                         "possible. Prefer nonces, hashes and restrictive "
@@ -329,17 +558,17 @@ class HttpSecurityHeaderAnalyzer:
 
         return []
 
-    # ------------------------------------------------------------------
-    # HSTS
-    # ------------------------------------------------------------------
+    ###########################################################################
+    # Strict-Transport-Security
+    ###########################################################################
 
     def _check_hsts(
         self,
         target: str,
         headers: Mapping[str, str],
-    ) -> list[HeaderFinding]:
+    ) -> list[HeaderObservation]:
         """
-        Check Strict-Transport-Security.
+        Analyze Strict-Transport-Security.
         """
 
         name = "strict-transport-security"
@@ -351,7 +580,7 @@ class HttpSecurityHeaderAnalyzer:
                     target=target,
                     header="Strict-Transport-Security",
                     title="Missing HSTS Header",
-                    severity="medium",
+                    severity="Medium",
                     remediation=(
                         "Enable Strict-Transport-Security for HTTPS "
                         "applications with an appropriate max-age."
@@ -374,7 +603,7 @@ class HttpSecurityHeaderAnalyzer:
                     header="Strict-Transport-Security",
                     value=value,
                     title="Misconfigured HSTS Header",
-                    severity="medium",
+                    severity="Medium",
                     remediation=(
                         "Configure Strict-Transport-Security with a "
                         "valid max-age directive."
@@ -394,7 +623,7 @@ class HttpSecurityHeaderAnalyzer:
                     header="Strict-Transport-Security",
                     value=value,
                     title="Invalid HSTS max-age",
-                    severity="medium",
+                    severity="Medium",
                     remediation=(
                         "Set max-age to a valid numeric value."
                     ),
@@ -409,7 +638,7 @@ class HttpSecurityHeaderAnalyzer:
                     header="Strict-Transport-Security",
                     value=value,
                     title="Weak HSTS Configuration",
-                    severity="medium",
+                    severity="Medium",
                     remediation=(
                         "Use a positive HSTS max-age appropriate for "
                         "the application's deployment."
@@ -419,17 +648,17 @@ class HttpSecurityHeaderAnalyzer:
 
         return []
 
-    # ------------------------------------------------------------------
+    ###########################################################################
     # X-Frame-Options
-    # ------------------------------------------------------------------
+    ###########################################################################
 
     def _check_x_frame_options(
         self,
         target: str,
         headers: Mapping[str, str],
-    ) -> list[HeaderFinding]:
+    ) -> list[HeaderObservation]:
         """
-        Check X-Frame-Options.
+        Analyze X-Frame-Options.
         """
 
         name = "x-frame-options"
@@ -440,11 +669,14 @@ class HttpSecurityHeaderAnalyzer:
                 self._missing(
                     target=target,
                     header="X-Frame-Options",
-                    title="Missing X-Frame-Options Header",
-                    severity="low",
+                    title=(
+                        "Missing X-Frame-Options Header"
+                    ),
+                    severity="Low",
                     remediation=(
                         "Set X-Frame-Options to DENY or SAMEORIGIN, "
-                        "or enforce an equivalent framing policy through CSP."
+                        "or enforce an equivalent framing policy through "
+                        "Content-Security-Policy."
                     ),
                 )
             ]
@@ -461,8 +693,10 @@ class HttpSecurityHeaderAnalyzer:
                     target=target,
                     header="X-Frame-Options",
                     value=headers[name],
-                    title="Misconfigured X-Frame-Options Header",
-                    severity="low",
+                    title=(
+                        "Misconfigured X-Frame-Options Header"
+                    ),
+                    severity="Low",
                     remediation=(
                         "Use DENY or SAMEORIGIN where appropriate."
                     ),
@@ -471,17 +705,17 @@ class HttpSecurityHeaderAnalyzer:
 
         return []
 
-    # ------------------------------------------------------------------
+    ###########################################################################
     # X-Content-Type-Options
-    # ------------------------------------------------------------------
+    ###########################################################################
 
     def _check_x_content_type_options(
         self,
         target: str,
         headers: Mapping[str, str],
-    ) -> list[HeaderFinding]:
+    ) -> list[HeaderObservation]:
         """
-        Check X-Content-Type-Options.
+        Analyze X-Content-Type-Options.
         """
 
         name = "x-content-type-options"
@@ -492,8 +726,10 @@ class HttpSecurityHeaderAnalyzer:
                 self._missing(
                     target=target,
                     header="X-Content-Type-Options",
-                    title="Missing X-Content-Type-Options Header",
-                    severity="low",
+                    title=(
+                        "Missing X-Content-Type-Options Header"
+                    ),
+                    severity="Low",
                     remediation=(
                         "Set X-Content-Type-Options to nosniff."
                     ),
@@ -510,9 +746,10 @@ class HttpSecurityHeaderAnalyzer:
                     header="X-Content-Type-Options",
                     value=headers[name],
                     title=(
-                        "Misconfigured X-Content-Type-Options Header"
+                        "Misconfigured "
+                        "X-Content-Type-Options Header"
                     ),
-                    severity="low",
+                    severity="Low",
                     remediation=(
                         "Set X-Content-Type-Options to nosniff."
                     ),
@@ -521,17 +758,17 @@ class HttpSecurityHeaderAnalyzer:
 
         return []
 
-    # ------------------------------------------------------------------
+    ###########################################################################
     # Referrer-Policy
-    # ------------------------------------------------------------------
+    ###########################################################################
 
     def _check_referrer_policy(
         self,
         target: str,
         headers: Mapping[str, str],
-    ) -> list[HeaderFinding]:
+    ) -> list[HeaderObservation]:
         """
-        Check Referrer-Policy.
+        Analyze Referrer-Policy.
         """
 
         name = "referrer-policy"
@@ -543,7 +780,7 @@ class HttpSecurityHeaderAnalyzer:
                     target=target,
                     header="Referrer-Policy",
                     title="Missing Referrer-Policy Header",
-                    severity="low",
+                    severity="Low",
                     remediation=(
                         "Set an explicit Referrer-Policy appropriate "
                         "for the application."
@@ -566,32 +803,31 @@ class HttpSecurityHeaderAnalyzer:
                     header="Referrer-Policy",
                     value=headers[name],
                     title="Weak Referrer-Policy",
-                    severity="low",
+                    severity="Low",
                     remediation=(
                         "Prefer a restrictive policy such as "
-                        "strict-origin-when-cross-origin, "
-                        "same-origin or no-referrer where appropriate."
+                        "strict-origin-when-cross-origin, same-origin "
+                        "or no-referrer where appropriate."
                     ),
                 )
             ]
 
         return []
 
-    # ------------------------------------------------------------------
+    ###########################################################################
     # Permissions-Policy
-    # ------------------------------------------------------------------
+    ###########################################################################
 
     def _check_permissions_policy(
         self,
         target: str,
         headers: Mapping[str, str],
-    ) -> list[HeaderFinding]:
+    ) -> list[HeaderObservation]:
         """
-        Check Permissions-Policy presence.
+        Analyze Permissions-Policy presence.
 
-        The analyzer intentionally treats absence as informational rather
-        than automatically assigning a vulnerability severity because the
-        appropriate policy depends on the application's feature requirements.
+        Absence is treated as informational because the appropriate policy
+        depends on the application's required browser capabilities.
         """
 
         name = "permissions-policy"
@@ -603,7 +839,7 @@ class HttpSecurityHeaderAnalyzer:
                     target=target,
                     header="Permissions-Policy",
                     title="Missing Permissions-Policy Header",
-                    severity="informational",
+                    severity="Informational",
                     remediation=(
                         "Define a Permissions-Policy that restricts "
                         "browser features not required by the application."
@@ -613,9 +849,9 @@ class HttpSecurityHeaderAnalyzer:
 
         return []
 
-    # ------------------------------------------------------------------
+    ###########################################################################
     # Finding Builders
-    # ------------------------------------------------------------------
+    ###########################################################################
 
     @staticmethod
     def _missing(
@@ -625,16 +861,16 @@ class HttpSecurityHeaderAnalyzer:
         title: str,
         severity: str,
         remediation: str,
-    ) -> HeaderFinding:
+    ) -> HeaderObservation:
         """
-        Construct a missing-header finding.
+        Construct a missing-header observation.
         """
 
-        return HeaderFinding(
-            finding_type="MISSING_SECURITY_HEADER",
+        return HeaderObservation(
+            finding_type=MISSING_SECURITY_HEADER,
             title=title,
             severity=severity,
-            confidence="high",
+            confidence="High",
             target=target,
             description=(
                 f"The HTTP response does not contain the "
@@ -656,16 +892,16 @@ class HttpSecurityHeaderAnalyzer:
         title: str,
         severity: str,
         remediation: str,
-    ) -> HeaderFinding:
+    ) -> HeaderObservation:
         """
-        Construct a weak-header finding.
+        Construct a weak-header observation.
         """
 
-        return HeaderFinding(
-            finding_type="WEAK_SECURITY_HEADER",
+        return HeaderObservation(
+            finding_type=WEAK_SECURITY_HEADER,
             title=title,
             severity=severity,
-            confidence="high",
+            confidence="High",
             target=target,
             description=(
                 f"The {header} header is present but its "
@@ -688,18 +924,18 @@ class HttpSecurityHeaderAnalyzer:
         title: str,
         severity: str,
         remediation: str,
-    ) -> HeaderFinding:
+    ) -> HeaderObservation:
         """
-        Construct a misconfiguration finding.
+        Construct a misconfiguration observation.
         """
 
-        return HeaderFinding(
+        return HeaderObservation(
             finding_type=(
-                "SECURITY_HEADER_MISCONFIGURATION"
+                SECURITY_HEADER_MISCONFIGURATION
             ),
             title=title,
             severity=severity,
-            confidence="high",
+            confidence="High",
             target=target,
             description=(
                 f"The {header} header is present but does "
@@ -712,6 +948,10 @@ class HttpSecurityHeaderAnalyzer:
             },
             remediation=remediation,
         )
+
+    ###########################################################################
+    # Directive Helpers
+    ###########################################################################
 
     @staticmethod
     def _extract_directive(
@@ -747,15 +987,23 @@ class HttpSecurityHeaderAnalyzer:
 
 
 ###############################################################################
+# Backward-Compatible Alias
+###############################################################################
+
+
+HeaderFinding = HeaderObservation
+
+
+###############################################################################
 # Convenience Function
 ###############################################################################
 
 
 def analyze_http_security_headers(
     evidence: Mapping[str, Any],
-) -> list[HeaderFinding]:
+) -> list[HeaderObservation]:
     """
-    Analyze HTTP security headers using the default analyzer.
+    Analyze collected HTTP security headers using the default analyzer.
     """
 
     analyzer = HttpSecurityHeaderAnalyzer()
@@ -771,7 +1019,11 @@ def analyze_http_security_headers(
 
 
 __all__ = [
+    "MISSING_SECURITY_HEADER",
+    "WEAK_SECURITY_HEADER",
+    "SECURITY_HEADER_MISCONFIGURATION",
     "SUPPORTED_HEADERS",
+    "HeaderObservation",
     "HeaderFinding",
     "HttpSecurityHeaderAnalyzer",
     "analyze_http_security_headers",

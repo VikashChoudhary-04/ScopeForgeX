@@ -1,11 +1,298 @@
+# ScopeForgeX — Default Configuration
+# ====================================
+#
+# Global defaults shared by all assessment profiles.
+#
+# Profiles:
+#   fast
+#   standard
+#   full
+#
+# Profile definitions and per-tool options are maintained in:
+#
+#   config/profiles.yaml
+#
+# Tool executable mappings are maintained in:
+#
+#   config/tools.yaml
+#
+# Design principle:
+#
+#   Profiles define defaults, not hard limits.
+#
+# Individual capabilities and tool options may be overridden explicitly.
+#
+# v1.2.0
+
+
+###############################################################################
+# Global Configuration
+###############################################################################
+
 output_base_dir: outputs
 
-modes:
-  safe_auto_run: true
-  confirm_before_aggressive: true
+default_profile: standard
 
-wordlists:
-  ffuf_default_mode: true
+
+###############################################################################
+# Compatibility Profile Default
+###############################################################################
+#
+# The nested form is retained for compatibility with the legacy configuration
+# loader while the canonical `default_profile` field above is used by the
+# current configuration model.
+#
+###############################################################################
 
 profiles:
-  default: full_safe
+  default: standard
+
+
+###############################################################################
+# Execution
+###############################################################################
+
+execution:
+
+  # Continue the assessment when an individual tool fails.
+  continue_on_error: true
+
+  # Maximum execution time for a single tool unless overridden by the
+  # selected assessment profile.
+  command_timeout: 600
+
+  # Global request-rate ceiling.
+  #
+  # Individual tools may impose stricter limits through their own options.
+  request_rate_limit: 25
+
+
+###############################################################################
+# Safety
+###############################################################################
+
+safety:
+
+  # Potentially aggressive operations require explicit analyst confirmation.
+  require_confirmation_for_aggressive: true
+
+  # Prevent accidental execution of tools that are not explicitly enabled
+  # through the selected profile or user overrides.
+  require_explicit_tool_selection: true
+
+  # Higher-risk validation and credential capabilities remain opt-in.
+  allow_automatic_specialized_validation: false
+
+  allow_automatic_credential_assessment: false
+
+
+###############################################################################
+# Legacy / Compatibility Safety Keys
+###############################################################################
+#
+# These values mirror the canonical safety configuration for older consumers
+# that still read the original `modes` mapping.
+#
+###############################################################################
+
+modes:
+
+  safe_auto_run: true
+
+  confirm_before_aggressive: true
+
+
+###############################################################################
+# Assessment Defaults
+###############################################################################
+
+assessment:
+
+  # Assessment lifecycle:
+  #
+  #   0 Scope & Authorization
+  #   1 Reconnaissance
+  #   2 Enumeration
+  #   3 Vulnerability Assessment
+  #   4 Vulnerability Validation
+  #   5 Post-Exploitation / Impact Assessment
+  #   6 Reporting
+
+  lifecycle:
+    - scope
+    - reconnaissance
+    - enumeration
+    - vulnerability_assessment
+    - vulnerability_validation
+    - credential_assessment
+    - reporting
+
+
+###############################################################################
+# Scope Defaults
+###############################################################################
+
+scope:
+
+  # Target authorization must be established before assessment execution.
+  require_authorization: true
+
+  # Do not assume that a target is authorized merely because it was supplied
+  # to the CLI.
+  require_explicit_scope: true
+
+  # Authentication material is supplied by the analyst when required.
+  authentication_required: false
+
+
+###############################################################################
+# Network Defaults
+###############################################################################
+
+network:
+
+  # Conservative default request rate.
+  request_rate_limit: 25
+
+  # Default connection timeout in seconds.
+  connection_timeout: 10
+
+  # Default command timeout in seconds.
+  command_timeout: 600
+
+
+###############################################################################
+# Vulnerability Assessment Defaults
+###############################################################################
+
+vulnerability:
+
+  # Default Nuclei severity range for STANDARD-style assessment.
+  #
+  # FAST overrides this with critical/high.
+  # FULL extends this with lower-severity and informational checks.
+  default_severity:
+    - critical
+    - high
+    - medium
+
+
+###############################################################################
+# Evidence
+###############################################################################
+
+evidence:
+
+  # Preserve raw tool output.
+  preserve_raw_output: true
+
+  # Preserve structured normalized findings.
+  preserve_normalized_findings: true
+
+  # Keep evidence associated with its source tool and detection method.
+  preserve_source_metadata: true
+
+  # Organize evidence by assessment target.
+  target_scoped: true
+
+
+###############################################################################
+# Findings
+###############################################################################
+
+findings:
+
+  # Findings are normalized before reporting.
+  normalize: true
+
+  # Duplicate observations should be merged during the finding pipeline.
+  deduplicate: true
+
+  # Related observations from multiple tools should be correlated.
+  correlate: true
+
+  # Detection confidence is independent from severity.
+  track_confidence: true
+
+  # Finding status remains separate from detection state.
+  track_status: true
+
+
+###############################################################################
+# Reporting
+###############################################################################
+
+reporting:
+
+  # Primary report formats.
+  formats:
+    - json
+    - md
+    - html
+
+  # Preserve source/detection information in reports.
+  include_source_tool: true
+
+  include_detection_method: true
+
+  include_evidence: true
+
+  include_confidence: true
+
+  include_risk: true
+
+  include_validation_status: true
+
+  # Include assessment coverage information.
+  include_tool_coverage: true
+
+  include_statistics: true
+
+
+###############################################################################
+# Wordlists
+###############################################################################
+
+wordlists:
+
+  # Wordlists are environment-provided and are not bundled into ScopeForgeX.
+  managed_externally: true
+
+  # Preserve compatibility with the existing wordlist configuration.
+  ffuf_default_mode: true
+
+
+###############################################################################
+# Profile Selection Policy
+###############################################################################
+#
+# The profile determines the default assessment coverage.
+#
+# FAST
+#   Minimal high-value checks.
+#
+# STANDARD
+#   Normal professional assessment.
+#
+# FULL
+#   Maximum configured coverage.
+#
+# Individual tools may still be explicitly enabled or disabled.
+#
+###############################################################################
+
+profile_policy:
+
+  allow_tool_overrides: true
+
+  allow_profile_override: true
+
+  profiles:
+    fast:
+      enabled: true
+
+    standard:
+      enabled: true
+
+    full:
+      enabled: true

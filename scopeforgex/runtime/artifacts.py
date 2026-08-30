@@ -8,7 +8,7 @@ Artifacts represent files and other persistent outputs produced during an
 assessment. They provide a consistent interface for execution, workflow and
 reporting layers.
 
-v1.1.0
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations

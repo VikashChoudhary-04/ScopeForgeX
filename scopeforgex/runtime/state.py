@@ -19,7 +19,7 @@ Design Principles
 - Independent of CLI/UI.
 - Canonical workflow result construction.
 
-v1.1.0
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations
@@ -286,46 +286,94 @@ class RuntimeState:
         """
         Build the canonical final WorkflowResult from RuntimeState.
 
-        RuntimeState is the single source of truth for:
-
-        - Workflow identity
-        - Target
-        - Profile
-        - Assessment phase results
-        - Tool execution results
-        - Runtime events
-        - Artifacts
-        - Workflow success state
-
-        The method does not modify RuntimeState.
+        RuntimeState is the single source of truth for workflow execution.
         """
 
         with self._lock:
+            if self.errors:
+                status = "failed"
+            elif self.stage_results:
+                statuses = {
+                    stage.status
+                    for stage in self.stage_results
+                }
 
-            success = not self.errors
+                if statuses == {"skipped"}:
+                    status = "skipped"
+                elif "failed" in statuses:
+                    status = "failed"
+                elif "success" in statuses:
+                    status = "success"
+                else:
+                    status = "failed"
+            else:
+                status = "skipped"
 
-            result = WorkflowResult(
-                tool="workflow",
-                capability="assessment_workflow",
-                success=success,
-                workflow_id=str(
-                    self.workflow_id
-                ),
+            started_at = self.started_at
+            ended_at = self.finished_at
+
+            duration = 0.0
+
+            if (
+                started_at is not None
+                and ended_at is not None
+            ):
+                duration = (
+                    ended_at - started_at
+                ).total_seconds()
+
+            findings: list[Any] = []
+
+            for stage in self.stage_results:
+                findings.extend(
+                    stage.findings
+                )
+
+            return WorkflowResult(
                 target=self.target,
                 profile=self.profile,
-                stages=tuple(
+                status=status,
+                stage_results=list(
                     self.stage_results
                 ),
-                events=tuple(
-                    self.events
-                ),
-                artifacts=tuple(
+                started_at=started_at,
+                ended_at=ended_at,
+                duration=duration,
+                findings=findings,
+                artifacts=list(
                     self.artifacts
                 ),
-                severity=severity,
+                warnings=list(
+                    self.warnings
+                ),
+                errors=list(
+                    self.errors
+                ),
+                metadata={
+                    **self.metadata,
+                    "workflow_id": str(
+                        self.workflow_id
+                    ),
+                    "schema_version": self.schema_version,
+                    "event_count": len(
+                        self.events
+                    ),
+                    "tool_result_count": len(
+                        self.tool_results
+                    ),
+                    "severity": (
+                        severity.value
+                        if isinstance(
+                            severity,
+                            Severity,
+                        )
+                        else str(
+                            severity
+                        )
+                    ),
+                },
             )
 
-            return result
 
     def finalize_workflow_result(
         self,

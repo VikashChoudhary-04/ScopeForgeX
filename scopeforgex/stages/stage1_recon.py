@@ -2,18 +2,24 @@
 ScopeForgeX Stage 1 — Reconnaissance
 ====================================
 
-Executes reconnaissance tools selected from the canonical tool registry.
+Executes reconnaissance adapters selected from the canonical tool registry.
 
-Tool selection is capability/phase-oriented. The stage orchestrator does not
-construct tool-specific commands or maintain a second list of integrations.
+The stage orchestrator does not construct tool-specific commands and does not
+maintain a second integration list.
 
-v1.1.0
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations
 
-from scopeforgex.registry.tool_registry import build_registry
-from scopeforgex.runtime.enums import AssessmentPhase
+from pathlib import Path
+from typing import Any
+
+from scopeforgex.registry.tool_base import ToolContext
+from scopeforgex.registry.tool_registry import (
+    create_tool_adapter,
+    get_tools_by_phase,
+)
 from scopeforgex.ui import err, info, ok, stage, warn
 
 
@@ -23,13 +29,9 @@ from scopeforgex.ui import err, info, ok, stage, warn
 
 
 def _print_tool_result(
-    result,
+    result: Any,
 ) -> None:
-    """
-    Display the outcome of a single reconnaissance tool.
-
-    Uses the canonical ExecutionResult model.
-    """
+    """Display the outcome of a single reconnaissance tool."""
 
     if result.success:
         ok(
@@ -69,24 +71,90 @@ def _print_tool_result(
 
 
 ###############################################################################
+# Context
+###############################################################################
+
+
+def _build_tool_context(
+    ctx: dict[str, Any],
+) -> ToolContext:
+    """
+    Convert the legacy workflow dictionary into the canonical ToolContext.
+
+    The stage orchestrator performs only context translation. Tool-specific
+    behavior remains inside each ToolAdapter.
+    """
+
+    target = str(
+        ctx.get(
+            "target",
+            "",
+        )
+    ).strip()
+
+    outdir = ctx.get(
+        "outdir"
+    )
+
+    if not outdir:
+        raise ValueError(
+            "Stage 1 requires an output directory."
+        )
+
+    options = ctx.get(
+        "options",
+        {},
+    )
+
+    if not isinstance(
+        options,
+        dict,
+    ):
+        options = dict(
+            options
+        )
+
+    input_data = ctx.get(
+        "input_data",
+        (),
+    )
+
+    if isinstance(
+        input_data,
+        str,
+    ):
+        input_data = (
+            input_data,
+        )
+
+    return ToolContext(
+        target=target,
+        output_dir=Path(
+            str(outdir)
+        ),
+        profile=str(
+            ctx.get(
+                "profile",
+                "full_safe",
+            )
+        ),
+        options=options,
+        input_data=tuple(
+            input_data
+        ),
+    )
+
+
+###############################################################################
 # Stage Execution
 ###############################################################################
 
 
 def stage1_recon(
-    ctx: dict,
+    ctx: dict[str, Any],
 ) -> None:
     """
     Execute reconnaissance tools registered for the current profile.
-
-    Supported profiles:
-
-        - full_safe
-        - fast
-
-    The registry remains the single source of truth for reconnaissance
-    integrations. Profile filtering only controls which registered tools are
-    selected for execution.
     """
 
     stage(
@@ -94,19 +162,30 @@ def stage1_recon(
         "green",
     )
 
-    profile = ctx.get(
-        "profile",
-        "full_safe",
+    profile = str(
+        ctx.get(
+            "profile",
+            "full_safe",
+        )
     )
 
-    tools = [
-        tool
-        for tool in build_registry()
-        if tool.phase
-        == AssessmentPhase.RECONNAISSANCE
-    ]
+    try:
+        tool_context = _build_tool_context(
+            ctx
+        )
+    except ValueError as exc:
+        err(
+            str(exc)
+        )
+        return
 
-    if not tools:
+    tool_names = list(
+        get_tools_by_phase(
+            "reconnaissance"
+        )
+    )
+
+    if not tool_names:
         err(
             "No reconnaissance tools registered."
         )
@@ -128,10 +207,10 @@ def stage1_recon(
             "attack-surface discovery tools."
         )
 
-        tools = [
-            tool
-            for tool in tools
-            if tool.name in allowed_tools
+        tool_names = [
+            name
+            for name in tool_names
+            if name in allowed_tools
         ]
 
     ###########################################################################
@@ -149,17 +228,20 @@ def stage1_recon(
     # Execution
     ###########################################################################
 
-    for tool in tools:
+    for name in tool_names:
 
         try:
-            result = tool.run(
-                ctx
+            adapter = create_tool_adapter(
+                name,
+                context=tool_context,
             )
+
+            result = adapter.run()
 
         except Exception as exc:
             warn(
                 f"Tool execution error: "
-                f"{tool.name}: {exc}"
+                f"{name}: {exc}"
             )
             continue
 

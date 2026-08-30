@@ -25,7 +25,7 @@ initialization creates the following circular dependency:
 
 Runtime components are therefore exposed through lazy attribute resolution.
 
-v1.1.0
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from typing import Any
 # Package Metadata
 ###############################################################################
 
-__version__ = "1.1.0"
+__version__ = "3.0.0"
 
 
 ###############################################################################

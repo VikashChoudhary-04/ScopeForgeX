@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "scopeforgex"
 version = "3.0.0"
@@ -10,5 +14,8 @@ dependencies = [
   "questionary==2.0.1"
 ]
 
-[tool.setuptools]
-packages = ["scopeforgex"]
+[project.scripts]
+scopeforgex = "scopeforgex.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["scopeforgex*"]

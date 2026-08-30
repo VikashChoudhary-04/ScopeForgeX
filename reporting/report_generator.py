@@ -14,7 +14,7 @@ Responsibilities
 - Render execution notes
 - Write the final Markdown report
 
-v1.1.0
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations

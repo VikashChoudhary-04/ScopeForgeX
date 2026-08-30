@@ -1,108 +1,247 @@
 """
-ScopeForgeX CORS Security Analyzer
-===================================
+ScopeForgeX CORS Analyzer
+=========================
 
-ScopeForgeX-native analyzer for Cross-Origin Resource Sharing (CORS)
-configuration.
+Native analyzer for detecting Cross-Origin Resource Sharing (CORS)
+misconfigurations from collected HTTP response evidence.
 
-The analyzer consumes HTTP response evidence collected by enumeration
-capabilities and produces normalized security findings.
+CORS analysis is performed entirely inside ScopeForgeX. No external
+scanner is executed by this module.
 
-It does not execute an external security tool.
-
-Analyzed headers
+Responsibilities
 ----------------
-- Access-Control-Allow-Origin
-- Access-Control-Allow-Credentials
-- Access-Control-Allow-Methods
-- Access-Control-Allow-Headers
 
-Finding types
--------------
-- CORS_MISCONFIGURATION
+- Analyze HTTP response headers for CORS behavior.
+- Inspect Access-Control-Allow-Origin.
+- Inspect Access-Control-Allow-Credentials.
+- Detect origin reflection when request-origin evidence is available.
+- Identify dangerous wildcard credential combinations.
+- Identify potentially unsafe reflected-origin configurations.
+- Preserve the relevant HTTP response evidence.
+- Produce normalized observations compatible with the universal Finding
+  pipeline.
 
-Design Principles
------------------
-- Native ScopeForgeX analysis.
-- No external executable dependency.
-- Structured findings.
-- Preserve source evidence.
-- Deterministic analysis.
-- Standard-library only.
-- Compatible with the canonical finding model.
+The analyzer does not:
 
-Important
----------
-CORS configuration is contextual. A permissive policy is not automatically
-a vulnerability in every application. The analyzer therefore reports
-configuration conditions as findings/observations that require contextual
-validation.
+- Execute external tools.
+- Construct commands.
+- Perform global finding correlation.
+- Deduplicate findings across tools.
+- Perform final report generation.
+- Assume that every permissive CORS configuration is exploitable.
 
-v1.2.0
+Architecture
+------------
+
+HTTP Response Evidence
+        |
+        v
+CORSAnalyzer
+        |
+        v
+Structured Observations
+        |
+        v
+Finding Normalizer
+        |
+        v
+Universal Finding Model
+        |
+        v
+Correlation / Deduplication
+        |
+        v
+Risk Classification
+
+v1.0.0
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 
 ###############################################################################
-# Finding
+# Constants
+###############################################################################
+
+
+ANALYZER_NAME = "cors"
+
+CATEGORY_CORS = "CORS_MISCONFIGURATION"
+
+DETECTION_METHOD = "ScopeForgeX CORS Analyzer"
+
+DEFAULT_SEVERITY = "Medium"
+DEFAULT_CONFIDENCE = "Medium"
+
+
+###############################################################################
+# Header helpers
+###############################################################################
+
+
+def _text(value: Any) -> str:
+    """Return a normalized string representation."""
+
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
+def _optional_text(value: Any) -> str | None:
+    """Return normalized text or None when empty."""
+
+    normalized = _text(value)
+
+    return normalized or None
+
+
+def _normalize_headers(
+    headers: Any,
+) -> dict[str, str]:
+    """
+    Normalize HTTP headers into a case-insensitive mapping.
+
+    Supported forms include:
+
+    - Mapping[str, str]
+    - Mapping[str, list[str]]
+    - Iterable of ``(name, value)`` pairs
+    - Iterable of header-like objects
+    """
+
+    if headers is None:
+        return {}
+
+    normalized: dict[str, str] = {}
+
+    if isinstance(headers, Mapping):
+        for name, value in headers.items():
+
+            key = _text(name).lower()
+
+            if not key:
+                continue
+
+            if isinstance(value, (list, tuple)):
+                values = [
+                    _text(item)
+                    for item in value
+                    if _text(item)
+                ]
+
+                if values:
+                    normalized[key] = ", ".join(values)
+
+            else:
+                value_text = _text(value)
+
+                if value_text:
+                    normalized[key] = value_text
+
+        return normalized
+
+    if isinstance(headers, str):
+        for line in headers.splitlines():
+
+            if ":" not in line:
+                continue
+
+            name, value = line.split(
+                ":",
+                1,
+            )
+
+            key = name.strip().lower()
+            value_text = value.strip()
+
+            if key and value_text:
+                normalized[key] = value_text
+
+        return normalized
+
+    if isinstance(headers, Iterable):
+
+        for item in headers:
+
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+
+                key = _text(item[0]).lower()
+                value = _text(item[1])
+
+                if key and value:
+                    normalized[key] = value
+
+        return normalized
+
+    return {}
+
+
+###############################################################################
+# Observation
 ###############################################################################
 
 
 @dataclass(slots=True)
-class CORSFinding:
+class CORSObservation:
     """
-    Normalized CORS finding produced by the analyzer.
-    """
+    Structured CORS observation.
 
-    finding_type: str
+    This lightweight representation is converted into the universal Finding
+    model by the surrounding finding pipeline.
+    """
 
     title: str
 
-    severity: str
-
-    confidence: str
-
-    target: str
-
     description: str
+
+    target: str = ""
+
+    host: str | None = None
+
+    port: int | None = None
+
+    url: str | None = None
+
+    severity: str = DEFAULT_SEVERITY
+
+    confidence: str = DEFAULT_CONFIDENCE
+
+    source_tool: str = ANALYZER_NAME
+
+    detection_method: str = DETECTION_METHOD
 
     evidence: dict[str, Any] = field(
         default_factory=dict
     )
 
-    source_tool: str = "scopeforgex"
-
-    detection_method: str = (
-        "CORS Security Analyzer"
+    metadata: dict[str, Any] = field(
+        default_factory=dict
     )
 
-    remediation: str = ""
-
-    category: str = "cors_configuration"
-
-    def as_dict(
-        self,
-    ) -> dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         """
-        Serialize the finding into a stable dictionary.
+        Convert the observation into a normalized finding-compatible mapping.
         """
 
         return {
-            "finding_type": self.finding_type,
+            "type": "vulnerability",
+            "category": CATEGORY_CORS,
             "title": self.title,
+            "description": self.description,
+            "target": self.target,
+            "host": self.host,
+            "port": self.port,
+            "url": self.url,
             "severity": self.severity,
             "confidence": self.confidence,
-            "target": self.target,
-            "category": self.category,
-            "description": self.description,
             "evidence": dict(self.evidence),
             "source_tool": self.source_tool,
             "detection_method": self.detection_method,
-            "remediation": self.remediation,
+            "metadata": dict(self.metadata),
         }
 
 
@@ -111,451 +250,716 @@ class CORSFinding:
 ###############################################################################
 
 
-class CORSSecurityAnalyzer:
+class CORSAnalyzer:
     """
-    Analyze HTTP CORS response configuration.
+    Analyze HTTP response evidence for CORS security issues.
 
-    Expected input:
-
-        {
-            "target": "https://example.com",
-            "headers": {
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Credentials": "true",
-            },
-        }
-
-    Header names are matched case-insensitively.
+    The analyzer is intentionally conservative. A permissive CORS policy is
+    not automatically considered exploitable. Stronger findings require
+    evidence such as credentialed wildcard access or reflected origins.
     """
 
-    name = "cors_security"
+    name = ANALYZER_NAME
+
+    category = CATEGORY_CORS
 
     description = (
-        "Analyze Cross-Origin Resource Sharing configuration for "
-        "potentially unsafe origin and credential handling."
+        "Analyze HTTP CORS response headers for potentially unsafe "
+        "cross-origin access configurations."
     )
+
+    ###########################################################################
+    # Public interface
+    ###########################################################################
 
     def analyze(
         self,
-        evidence: Mapping[str, Any],
-    ) -> list[CORSFinding]:
+        response: Any,
+        *,
+        target: str = "",
+        host: str | None = None,
+        port: int | None = None,
+        url: str | None = None,
+        request_origin: str | None = None,
+        **kwargs: Any,
+    ) -> list[CORSObservation]:
         """
-        Analyze CORS response headers.
+        Analyze a collected HTTP response.
 
-        Returns:
-            A list of normalized CORSFinding objects.
+        ``response`` may be:
+
+        - a response-like object,
+        - a mapping containing ``headers``,
+        - a mapping containing ``response_headers``,
+        - or a mapping whose keys are HTTP header names.
+
+        ``request_origin`` should be supplied when the original request
+        contained an Origin header. This enables reflected-origin detection.
         """
 
-        target = str(
-            evidence.get(
-                "target",
-                "",
-            )
-        ).strip()
-
-        headers = evidence.get(
-            "headers",
-            {},
+        headers = self._extract_headers(
+            response
         )
 
-        if not isinstance(
-            headers,
-            Mapping,
-        ):
+        if not headers:
             return []
 
-        normalized = self._normalize_headers(
-            headers
+        effective_url = (
+            url
+            or self._extract_url(
+                response
+            )
+            or (
+                target
+                if self._is_url(target)
+                else None
+            )
         )
 
-        findings: list[CORSFinding] = []
+        effective_host = (
+            host
+            or self._extract_host(
+                effective_url
+            )
+            or self._extract_host(
+                target
+            )
+        )
 
-        allow_origin = normalized.get(
+        effective_port = (
+            port
+            if port is not None
+            else self._extract_port(
+                effective_url
+            )
+        )
+
+        effective_origin = (
+            request_origin
+            or self._extract_request_origin(
+                response
+            )
+        )
+
+        allow_origin = headers.get(
             "access-control-allow-origin"
         )
 
-        allow_credentials = normalized.get(
+        allow_credentials = headers.get(
             "access-control-allow-credentials"
         )
 
-        allow_methods = normalized.get(
-            "access-control-allow-methods"
-        )
+        if not allow_origin:
+            return []
 
-        allow_headers = normalized.get(
-            "access-control-allow-headers"
-        )
+        observations: list[CORSObservation] = []
 
-        #######################################################################
-        # Wildcard origin with credentials
-        #######################################################################
-
-        if (
-            allow_origin == "*"
-            and self._is_true(
+        wildcard_credentials = (
+            allow_origin.strip() == "*"
+            and self._is_true_value(
                 allow_credentials
             )
-        ):
+        )
 
-            findings.append(
-                self._finding(
+        if wildcard_credentials:
+
+            observations.append(
+                self._wildcard_credentials_observation(
                     target=target,
-                    title=(
-                        "CORS Allows Wildcard Origin With Credentials"
-                    ),
-                    severity="high",
-                    confidence="high",
-                    description=(
-                        "The response permits all origins through a "
-                        "wildcard Access-Control-Allow-Origin value while "
-                        "also enabling credentials."
-                    ),
-                    evidence={
-                        "access_control_allow_origin": allow_origin,
-                        "access_control_allow_credentials": (
-                            allow_credentials
-                        ),
-                    },
-                    remediation=(
-                        "Do not combine a wildcard origin with credentialed "
-                        "cross-origin access. Restrict allowed origins to "
-                        "trusted origins."
-                    ),
+                    host=effective_host,
+                    port=effective_port,
+                    url=effective_url,
+                    allow_origin=allow_origin,
+                    allow_credentials=allow_credentials,
                 )
             )
 
-        #######################################################################
-        # Origin reflection indicator
-        #######################################################################
+        reflected_origin = (
+            effective_origin is not None
+            and self._origin_is_reflected(
+                allow_origin,
+                effective_origin,
+            )
+        )
 
-        if self._looks_like_reflection(
+        if reflected_origin:
+
+            observations.append(
+                self._reflected_origin_observation(
+                    target=target,
+                    host=effective_host,
+                    port=effective_port,
+                    url=effective_url,
+                    request_origin=effective_origin,
+                    allow_origin=allow_origin,
+                    allow_credentials=allow_credentials,
+                )
+            )
+
+        unsafe_origin = self._is_unsafe_origin(
             allow_origin
-        ):
-
-            findings.append(
-                self._finding(
-                    target=target,
-                    title=(
-                        "Potentially Reflected CORS Origin"
-                    ),
-                    severity="medium",
-                    confidence="medium",
-                    description=(
-                        "The collected CORS evidence indicates that the "
-                        "Access-Control-Allow-Origin value may reflect an "
-                        "origin supplied by the requester."
-                    ),
-                    evidence={
-                        "access_control_allow_origin": allow_origin,
-                        "access_control_allow_credentials": (
-                            allow_credentials
-                        ),
-                    },
-                    remediation=(
-                        "Validate the request Origin against an explicit "
-                        "allowlist of trusted origins rather than blindly "
-                        "reflecting arbitrary origins."
-                    ),
-                )
-            )
-
-        #######################################################################
-        # Wildcard origin
-        #######################################################################
-
-        elif allow_origin == "*":
-
-            findings.append(
-                self._finding(
-                    target=target,
-                    title=(
-                        "Permissive CORS Wildcard Origin"
-                    ),
-                    severity="low",
-                    confidence="high",
-                    description=(
-                        "The response permits requests from arbitrary "
-                        "origins through Access-Control-Allow-Origin: *."
-                    ),
-                    evidence={
-                        "access_control_allow_origin": allow_origin,
-                        "access_control_allow_credentials": (
-                            allow_credentials
-                        ),
-                    },
-                    remediation=(
-                        "If cross-origin access is not intentionally "
-                        "public, restrict Access-Control-Allow-Origin to "
-                        "specific trusted origins."
-                    ),
-                )
-            )
-
-        #######################################################################
-        # Credentialed arbitrary origin indicator
-        #######################################################################
+        )
 
         if (
-            allow_origin
-            and allow_origin != "*"
-            and self._is_true(
-                allow_credentials
-            )
+            unsafe_origin
+            and not wildcard_credentials
+            and not reflected_origin
         ):
-
-            findings.append(
-                self._finding(
+            observations.append(
+                self._permissive_origin_observation(
                     target=target,
-                    title=(
-                        "Credentialed Cross-Origin Access Requires "
-                        "Origin Validation"
-                    ),
-                    severity="informational",
-                    confidence="medium",
-                    description=(
-                        "The response enables credentialed cross-origin "
-                        "requests for a specific origin. The origin should "
-                        "be verified as trusted and intentionally permitted."
-                    ),
-                    evidence={
-                        "access_control_allow_origin": allow_origin,
-                        "access_control_allow_credentials": (
-                            allow_credentials
-                        ),
-                    },
-                    remediation=(
-                        "Ensure credentialed CORS is limited to explicitly "
-                        "trusted origins and required application flows."
-                    ),
+                    host=effective_host,
+                    port=effective_port,
+                    url=effective_url,
+                    allow_origin=allow_origin,
+                    allow_credentials=allow_credentials,
                 )
             )
 
-        #######################################################################
-        # Broad methods
-        #######################################################################
+        return self._deduplicate(
+            observations
+        )
 
-        if allow_methods:
+    ###########################################################################
+    # Response extraction
+    ###########################################################################
 
-            methods = self._split_values(
-                allow_methods
-            )
-
-            dangerous_methods = {
-                "PUT",
-                "DELETE",
-                "PATCH",
-            }
-
-            exposed_dangerous = sorted(
-                methods.intersection(
-                    dangerous_methods
-                )
-            )
-
-            if exposed_dangerous:
-
-                findings.append(
-                    self._finding(
-                        target=target,
-                        title=(
-                            "CORS Exposes State-Changing HTTP Methods"
-                        ),
-                        severity="low",
-                        confidence="medium",
-                        description=(
-                            "The CORS policy permits one or more "
-                            "state-changing HTTP methods."
-                        ),
-                        evidence={
-                            "access_control_allow_methods": (
-                                allow_methods
-                            ),
-                            "state_changing_methods": (
-                                exposed_dangerous
-                            ),
-                        },
-                        remediation=(
-                            "Allow only the HTTP methods required by the "
-                            "cross-origin application workflow."
-                        ),
-                    )
-                )
-
-        #######################################################################
-        # Broad request headers
-        #######################################################################
-
-        if allow_headers:
-
-            if "*" in self._split_values(
-                allow_headers
-            ):
-
-                findings.append(
-                    self._finding(
-                        target=target,
-                        title=(
-                            "CORS Allows Wildcard Request Headers"
-                        ),
-                        severity="low",
-                        confidence="medium",
-                        description=(
-                            "The CORS policy permits arbitrary request "
-                            "headers through a wildcard "
-                            "Access-Control-Allow-Headers value."
-                        ),
-                        evidence={
-                            "access_control_allow_headers": (
-                                allow_headers
-                            ),
-                        },
-                        remediation=(
-                            "Restrict allowed request headers to those "
-                            "required by the application."
-                        ),
-                    )
-                )
-
-        return findings
-
-    # ------------------------------------------------------------------
-    # Header normalization
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _normalize_headers(
-        headers: Mapping[str, Any],
+    @classmethod
+    def _extract_headers(
+        cls,
+        response: Any,
     ) -> dict[str, str]:
         """
-        Normalize HTTP header names and values.
+        Extract HTTP headers from common response representations.
         """
 
-        normalized: dict[str, str] = {}
+        if response is None:
+            return {}
 
-        for name, value in headers.items():
+        if isinstance(response, Mapping):
 
-            if name is None:
-                continue
+            for key in (
+                "headers",
+                "response_headers",
+                "http_headers",
+            ):
+                if key in response:
+                    return _normalize_headers(
+                        response.get(key)
+                    )
 
-            key = str(
-                name
-            ).strip().lower()
+            # A mapping containing actual HTTP header names.
+            header_candidates = {
+                str(key).lower()
+                for key in response.keys()
+            }
 
-            if not key:
-                continue
+            if (
+                "access-control-allow-origin"
+                in header_candidates
+                or "access-control-allow-credentials"
+                in header_candidates
+            ):
+                return _normalize_headers(
+                    response
+                )
 
-            normalized[key] = str(
-                value
-            ).strip()
+            return {}
 
-        return normalized
+        for attribute in (
+            "headers",
+            "response_headers",
+        ):
+            value = getattr(
+                response,
+                attribute,
+                None,
+            )
 
-    # ------------------------------------------------------------------
-    # Value helpers
-    # ------------------------------------------------------------------
+            if value is not None:
+                return _normalize_headers(
+                    value
+                )
+
+        return {}
 
     @staticmethod
-    def _is_true(
-        value: str | None,
-    ) -> bool:
+    def _extract_url(
+        response: Any,
+    ) -> str | None:
+        """Extract a response URL when available."""
+
+        if isinstance(response, Mapping):
+
+            for key in (
+                "url",
+                "response_url",
+                "final_url",
+            ):
+                value = response.get(
+                    key
+                )
+
+                if value:
+                    return _text(value)
+
+            return None
+
+        for attribute in (
+            "url",
+            "response_url",
+        ):
+            value = getattr(
+                response,
+                attribute,
+                None,
+            )
+
+            if value:
+                return _text(value)
+
+        return None
+
+    @classmethod
+    def _extract_request_origin(
+        cls,
+        response: Any,
+    ) -> str | None:
         """
-        Determine whether a header value represents true.
+        Extract the request Origin header when the response evidence retains
+        request headers.
         """
 
-        if value is None:
+        if isinstance(response, Mapping):
+
+            for key in (
+                "request_headers",
+                "requestHeaders",
+            ):
+                if key in response:
+                    headers = _normalize_headers(
+                        response.get(key)
+                    )
+
+                    return headers.get(
+                        "origin"
+                    )
+
+            return None
+
+        request_headers = getattr(
+            response,
+            "request_headers",
+            None,
+        )
+
+        if request_headers is not None:
+            headers = _normalize_headers(
+                request_headers
+            )
+
+            return headers.get(
+                "origin"
+            )
+
+        return None
+
+    ###########################################################################
+    # Detection
+    ###########################################################################
+
+    @staticmethod
+    def _is_true_value(
+        value: str | None,
+    ) -> bool:
+        """Determine whether a CORS boolean directive is explicitly true."""
+
+        if not value:
             return False
 
         return value.strip().lower() == "true"
 
     @staticmethod
-    def _split_values(
-        value: str,
-    ) -> set[str]:
-        """
-        Split comma-separated CORS values.
-        """
-
-        return {
-            item.strip().upper()
-            for item in value.split(",")
-            if item.strip()
-        }
-
-    @staticmethod
-    def _looks_like_reflection(
-        value: str | None,
+    def _origin_is_reflected(
+        allow_origin: str,
+        request_origin: str,
     ) -> bool:
         """
-        Detect obvious origin-reflection indicators in collected evidence.
-
-        A literal reflected value cannot be proven from a single response
-        unless the captured evidence explicitly records request-origin
-        information. This method therefore only recognizes explicit markers
-        rather than claiming that every specific origin is vulnerable.
+        Determine whether the response appears to reflect the supplied
+        request Origin.
         """
+
+        return (
+            allow_origin.strip().lower()
+            == request_origin.strip().lower()
+            and request_origin.strip() != ""
+        )
+
+    @staticmethod
+    def _is_unsafe_origin(
+        allow_origin: str,
+    ) -> bool:
+        """
+        Identify broadly permissive CORS origin policies.
+
+        Wildcard origin is considered potentially risky, but it is only
+        promoted to the strongest finding when credentialed access is also
+        explicitly enabled.
+        """
+
+        normalized = allow_origin.strip().lower()
+
+        if normalized == "*":
+            return True
+
+        # Multiple origins are not valid according to the normal CORS
+        # response-header semantics and therefore warrant attention.
+        if "," in normalized:
+            return True
+
+        return False
+
+    ###########################################################################
+    # Observation builders
+    ###########################################################################
+
+    @classmethod
+    def _wildcard_credentials_observation(
+        cls,
+        *,
+        target: str,
+        host: str | None,
+        port: int | None,
+        url: str | None,
+        allow_origin: str,
+        allow_credentials: str | None,
+    ) -> CORSObservation:
+        """Build a credentialed wildcard CORS observation."""
+
+        return CORSObservation(
+            title="CORS Allows Wildcard Origin with Credentials",
+            description=(
+                "The HTTP response permits a wildcard cross-origin origin "
+                "while also enabling credentialed CORS requests. This is an "
+                "unsafe CORS configuration and should be reviewed for "
+                "authentication or sensitive-data exposure."
+            ),
+            target=target,
+            host=host,
+            port=port,
+            url=url,
+            severity="High",
+            confidence="High",
+            evidence={
+                "access_control_allow_origin": allow_origin,
+                "access_control_allow_credentials": allow_credentials,
+            },
+            metadata={
+                "issue": "wildcard_origin_with_credentials",
+            },
+        )
+
+    @classmethod
+    def _reflected_origin_observation(
+        cls,
+        *,
+        target: str,
+        host: str | None,
+        port: int | None,
+        url: str | None,
+        request_origin: str,
+        allow_origin: str,
+        allow_credentials: str | None,
+    ) -> CORSObservation:
+        """Build a reflected-origin CORS observation."""
+
+        credentials_enabled = cls._is_true_value(
+            allow_credentials
+        )
+
+        if credentials_enabled:
+            severity = "High"
+            confidence = "High"
+            title = (
+                "CORS Reflects Origin with Credentials"
+            )
+            description = (
+                "The response reflects the supplied Origin value in "
+                "Access-Control-Allow-Origin while allowing credentials. "
+                "This configuration can permit a malicious origin to make "
+                "credentialed cross-origin requests if the origin is not "
+                "properly validated."
+            )
+        else:
+            severity = "Medium"
+            confidence = "Medium"
+            title = (
+                "CORS Reflects Request Origin"
+            )
+            description = (
+                "The response reflects the supplied Origin value in "
+                "Access-Control-Allow-Origin. Dynamic origin reflection "
+                "should be validated against an explicit trusted-origin "
+                "allowlist."
+            )
+
+        return CORSObservation(
+            title=title,
+            description=description,
+            target=target,
+            host=host,
+            port=port,
+            url=url,
+            severity=severity,
+            confidence=confidence,
+            evidence={
+                "request_origin": request_origin,
+                "access_control_allow_origin": allow_origin,
+                "access_control_allow_credentials": allow_credentials,
+            },
+            metadata={
+                "issue": "origin_reflection",
+                "credentials_enabled": credentials_enabled,
+            },
+        )
+
+    @classmethod
+    def _permissive_origin_observation(
+        cls,
+        *,
+        target: str,
+        host: str | None,
+        port: int | None,
+        url: str | None,
+        allow_origin: str,
+        allow_credentials: str | None,
+    ) -> CORSObservation:
+        """Build a generic permissive-origin observation."""
+
+        return CORSObservation(
+            title="Permissive CORS Origin Configuration",
+            description=(
+                "The response exposes a broadly permissive "
+                "Access-Control-Allow-Origin policy. The security impact "
+                "depends on the resources exposed and whether credentials "
+                "or sensitive data are involved."
+            ),
+            target=target,
+            host=host,
+            port=port,
+            url=url,
+            severity="Medium",
+            confidence="Medium",
+            evidence={
+                "access_control_allow_origin": allow_origin,
+                "access_control_allow_credentials": allow_credentials,
+            },
+            metadata={
+                "issue": "permissive_origin",
+            },
+        )
+
+    ###########################################################################
+    # Target helpers
+    ###########################################################################
+
+    @staticmethod
+    def _is_url(
+        value: str | None,
+    ) -> bool:
+        """Return whether a value appears to be an HTTP(S) URL."""
 
         if not value:
             return False
 
-        lowered = value.strip().lower()
+        normalized = _text(value).lower()
 
-        return lowered in {
-            "reflected",
-            "$origin",
-            "${origin}",
-            "{{origin}}",
-            "<origin>",
-            "request-origin",
-        }
-
-    # ------------------------------------------------------------------
-    # Finding construction
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _finding(
-        *,
-        target: str,
-        title: str,
-        severity: str,
-        confidence: str,
-        description: str,
-        evidence: dict[str, Any],
-        remediation: str,
-    ) -> CORSFinding:
-        """
-        Construct a normalized CORS finding.
-        """
-
-        return CORSFinding(
-            finding_type="CORS_MISCONFIGURATION",
-            title=title,
-            severity=severity,
-            confidence=confidence,
-            target=target,
-            description=description,
-            evidence=evidence,
-            remediation=remediation,
+        return (
+            normalized.startswith("http://")
+            or normalized.startswith("https://")
         )
 
+    @classmethod
+    def _extract_host(
+        cls,
+        target: str | None,
+    ) -> str | None:
+        """Extract hostname from an HTTP(S) URL."""
+
+        if not cls._is_url(target):
+            return None
+
+        value = _text(target)
+
+        without_scheme = value.split(
+            "://",
+            1,
+        )[1]
+
+        authority = without_scheme.split(
+            "/",
+            1,
+        )[0]
+
+        authority = authority.split(
+            "?",
+            1,
+        )[0]
+
+        authority = authority.split(
+            "#",
+            1,
+        )[0]
+
+        if "@" in authority:
+            authority = authority.rsplit(
+                "@",
+                1,
+            )[1]
+
+        if authority.startswith("["):
+
+            closing = authority.find("]")
+
+            if closing != -1:
+                return authority[
+                    1:closing
+                ]
+
+        return authority.split(
+            ":",
+            1,
+        )[0] or None
+
+    @classmethod
+    def _extract_port(
+        cls,
+        target: str | None,
+    ) -> int | None:
+        """Extract an explicitly specified HTTP(S) port."""
+
+        if not cls._is_url(target):
+            return None
+
+        value = _text(target)
+
+        authority = value.split(
+            "://",
+            1,
+        )[1].split(
+            "/",
+            1,
+        )[0]
+
+        authority = authority.split(
+            "?",
+            1,
+        )[0]
+
+        authority = authority.split(
+            "#",
+            1,
+        )[0]
+
+        if "@" in authority:
+            authority = authority.rsplit(
+                "@",
+                1,
+            )[1]
+
+        if authority.startswith("["):
+
+            closing = authority.find("]")
+
+            if closing != -1:
+
+                remainder = authority[
+                    closing + 1:
+                ]
+
+                if remainder.startswith(":"):
+
+                    try:
+                        return int(
+                            remainder[1:]
+                        )
+                    except ValueError:
+                        return None
+
+                return None
+
+        if ":" not in authority:
+            return None
+
+        port_text = authority.rsplit(
+            ":",
+            1,
+        )[1]
+
+        try:
+            return int(
+                port_text
+            )
+        except ValueError:
+            return None
+
+    ###########################################################################
+    # Deduplication
+    ###########################################################################
+
+    @staticmethod
+    def _deduplicate(
+        observations: list[CORSObservation],
+    ) -> list[CORSObservation]:
+        """Remove duplicate observations generated from the same response."""
+
+        unique: list[CORSObservation] = []
+        seen: set[tuple[Any, ...]] = set()
+
+        for observation in observations:
+
+            evidence = observation.evidence
+
+            fingerprint = (
+                observation.category
+                if hasattr(
+                    observation,
+                    "category",
+                )
+                else CATEGORY_CORS,
+                observation.target,
+                observation.url,
+                observation.title,
+                evidence.get(
+                    "access_control_allow_origin"
+                ),
+                evidence.get(
+                    "access_control_allow_credentials"
+                ),
+                evidence.get(
+                    "request_origin"
+                ),
+            )
+
+            if fingerprint in seen:
+                continue
+
+            seen.add(
+                fingerprint
+            )
+            unique.append(
+                observation
+            )
+
+        return unique
+
 
 ###############################################################################
-# Convenience Function
+# Compatibility aliases
 ###############################################################################
 
 
-def analyze_cors(
-    evidence: Mapping[str, Any],
-) -> list[CORSFinding]:
-    """
-    Analyze CORS configuration using the default analyzer.
-    """
-
-    analyzer = CORSSecurityAnalyzer()
-
-    return analyzer.analyze(
-        evidence
-    )
+Analyzer = CORSAnalyzer
 
 
 ###############################################################################
@@ -564,7 +968,10 @@ def analyze_cors(
 
 
 __all__ = [
-    "CORSFinding",
-    "CORSSecurityAnalyzer",
-    "analyze_cors",
+    "CORSAnalyzer",
+    "CORSObservation",
+    "Analyzer",
+    "ANALYZER_NAME",
+    "CATEGORY_CORS",
+    "DETECTION_METHOD",
 ]

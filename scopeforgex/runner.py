@@ -17,7 +17,7 @@ Responsibilities:
 
 Tool adapters remain responsible for constructing their commands.
 
-v1.1.0
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations

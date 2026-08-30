@@ -1,263 +1,330 @@
 """
-ScopeForgeX Severity Engine
-===========================
+ScopeForgeX Severity & Normalization
+====================================
 
-Severity classification and risk calculation engine.
+Canonical normalization helpers for:
 
-v1.0.0
+- Finding severity
+- Finding confidence
+- Finding validation status
 
-Responsibilities:
-    - Normalize severity values
-    - Map CVSS scores to severity
-    - Calculate severity distribution
-    - Calculate overall risk rating
+The reporting layer uses these helpers to ensure that findings originating
+from external tools, native analyzers, validators, correlation logic and
+manual analysts use a consistent vocabulary.
+
+Design Principles
+-----------------
+
+- Severity represents technical/business impact.
+- Confidence represents strength of supporting evidence.
+- Status represents finding validation lifecycle.
+- Input values are normalized into canonical ScopeForgeX values.
+- Unknown values fail safely into conservative defaults.
+- Normalization is deterministic and case-insensitive.
+
+Canonical Severity Values
+--------------------------
+
+    Critical
+    High
+    Medium
+    Low
+    Informational
+
+Canonical Confidence Values
+---------------------------
+
+    Confirmed
+    High
+    Medium
+    Low
+
+Canonical Finding Status Values
+--------------------------------
+
+    Confirmed
+    Pending
+    False Positive
+
+v1.3.0
 """
 
 from __future__ import annotations
 
-from reporting.models import (
-    Finding,
-    SeveritySummary,
-)
-
 
 ###############################################################################
-# Severity Constants
+# Canonical Values
 ###############################################################################
 
 
-SEVERITY_LEVELS = (
-    "Critical",
-    "High",
-    "Medium",
-    "Low",
-    "Informational",
-)
+CRITICAL = "Critical"
+HIGH = "High"
+MEDIUM = "Medium"
+LOW = "Low"
+INFORMATIONAL = "Informational"
+
+
+CONFIRMED = "Confirmed"
+PENDING = "Pending"
+FALSE_POSITIVE = "False Positive"
 
 
 ###############################################################################
-# Normalization
+# Severity Normalization
 ###############################################################################
 
 
 def normalize_severity(
-    severity: str | None,
+    value: object,
 ) -> str:
     """
-    Normalize severity labels.
+    Normalize a severity value into the canonical ScopeForgeX vocabulary.
+
+    Parameters
+    ----------
+    value:
+        Severity value supplied by a scanner, analyzer, collector or analyst.
+
+    Returns
+    -------
+    str
+        One of:
+
+        - Critical
+        - High
+        - Medium
+        - Low
+        - Informational
+
+    Unknown or missing values are treated as Informational.
     """
 
-    if not severity:
+    if value is None:
+        return INFORMATIONAL
 
-        return "Informational"
+    normalized = str(
+        value
+    ).strip().lower()
 
+    if not normalized:
+        return INFORMATIONAL
 
-    value = (
-        severity
-        .strip()
-        .lower()
-    )
+    aliases = {
+        "critical": CRITICAL,
+        "crit": CRITICAL,
 
+        "high": HIGH,
+        "hi": HIGH,
 
-    mapping = {
+        "medium": MEDIUM,
+        "moderate": MEDIUM,
+        "med": MEDIUM,
 
-        "critical":
-            "Critical",
+        "low": LOW,
+        "lo": LOW,
 
-        "crit":
-            "Critical",
-
-        "high":
-            "High",
-
-        "medium":
-            "Medium",
-
-        "moderate":
-            "Medium",
-
-        "med":
-            "Medium",
-
-        "low":
-            "Low",
-
-        "info":
-            "Informational",
-
-        "informational":
-            "Informational",
-
+        "informational": INFORMATIONAL,
+        "information": INFORMATIONAL,
+        "info": INFORMATIONAL,
+        "informative": INFORMATIONAL,
+        "none": INFORMATIONAL,
+        "unknown": INFORMATIONAL,
     }
 
-
-    return mapping.get(
-        value,
-        "Informational",
+    return aliases.get(
+        normalized,
+        INFORMATIONAL,
     )
 
 
-
 ###############################################################################
-# CVSS Mapping
+# Confidence Normalization
 ###############################################################################
 
 
-def cvss_to_severity(
-    score: float | None,
+def normalize_confidence(
+    value: object,
 ) -> str:
     """
-    Convert CVSS score into severity.
+    Normalize a confidence value into the canonical ScopeForgeX vocabulary.
+
+    Parameters
+    ----------
+    value:
+        Confidence supplied by a scanner, analyzer, validator or analyst.
+
+    Returns
+    -------
+    str
+        One of:
+
+        - Confirmed
+        - High
+        - Medium
+        - Low
+
+    Unknown or missing values are treated as Medium.
     """
 
-    if score is None:
+    if value is None:
+        return MEDIUM
 
-        return "Informational"
+    normalized = str(
+        value
+    ).strip().lower()
 
+    if not normalized:
+        return MEDIUM
 
-    if score >= 9.0:
+    aliases = {
+        "confirmed": CONFIRMED,
+        "confirm": CONFIRMED,
+        "verified": CONFIRMED,
+        "validated": CONFIRMED,
 
-        return "Critical"
+        "high": HIGH,
+        "hi": HIGH,
+        "strong": HIGH,
 
+        "medium": MEDIUM,
+        "moderate": MEDIUM,
+        "med": MEDIUM,
 
-    if score >= 7.0:
+        "low": LOW,
+        "lo": LOW,
+        "weak": LOW,
 
-        return "High"
+        "unknown": MEDIUM,
+    }
 
-
-    if score >= 4.0:
-
-        return "Medium"
-
-
-    if score > 0:
-
-        return "Low"
-
-
-    return "Informational"
-
-
-
-###############################################################################
-# Summary Calculation
-###############################################################################
-
-
-def calculate_summary(
-    findings: list[Finding],
-) -> SeveritySummary:
-    """
-    Build severity distribution.
-    """
-
-    summary = SeveritySummary()
-
-
-    for finding in findings:
-
-        severity = normalize_severity(
-            finding.severity
-        )
-
-
-        if severity == "Critical":
-
-            summary.critical += 1
-
-
-        elif severity == "High":
-
-            summary.high += 1
-
-
-        elif severity == "Medium":
-
-            summary.medium += 1
-
-
-        elif severity == "Low":
-
-            summary.low += 1
-
-
-        else:
-
-            summary.informational += 1
-
-
-    return summary
-
+    return aliases.get(
+        normalized,
+        MEDIUM,
+    )
 
 
 ###############################################################################
-# Risk Rating
+# Finding Status Normalization
 ###############################################################################
 
 
-def calculate_risk_rating(
-    summary: SeveritySummary,
+def normalize_finding_status(
+    value: object,
 ) -> str:
     """
-    Calculate overall assessment risk.
+    Normalize a finding validation status.
+
+    Parameters
+    ----------
+    value:
+        Status supplied by a collector, validator, correlation engine or
+        analyst.
+
+    Returns
+    -------
+    str
+        One of:
+
+        - Confirmed
+        - Pending
+        - False Positive
+
+    Unknown or missing values are treated as Pending.
     """
 
-    if summary.critical > 0:
+    if value is None:
+        return PENDING
 
-        return "Critical"
+    normalized = str(
+        value
+    ).strip().lower()
 
+    if not normalized:
+        return PENDING
 
-    if summary.high > 0:
+    aliases = {
+        "confirmed": CONFIRMED,
+        "confirm": CONFIRMED,
+        "verified": CONFIRMED,
+        "validated": CONFIRMED,
+        "true positive": CONFIRMED,
+        "true_positive": CONFIRMED,
 
-        return "High"
+        "pending": PENDING,
+        "unconfirmed": PENDING,
+        "unknown": PENDING,
+        "review": PENDING,
+        "needs review": PENDING,
+        "needs_review": PENDING,
 
+        "false positive": FALSE_POSITIVE,
+        "false_positive": FALSE_POSITIVE,
+        "false-positive": FALSE_POSITIVE,
+        "fp": FALSE_POSITIVE,
+        "false": FALSE_POSITIVE,
+    }
 
-    if summary.medium > 0:
-
-        return "Medium"
-
-
-    if summary.low > 0:
-
-        return "Low"
-
-
-    return "Informational"
-
+    return aliases.get(
+        normalized,
+        PENDING,
+    )
 
 
 ###############################################################################
-# Finding Helpers
+# Severity Ordering
 ###############################################################################
 
 
-def apply_cvss_severity(
-    finding: Finding,
-) -> Finding:
+SEVERITY_ORDER: dict[str, int] = {
+    CRITICAL: 5,
+    HIGH: 4,
+    MEDIUM: 3,
+    LOW: 2,
+    INFORMATIONAL: 1,
+}
+
+
+def severity_rank(
+    value: object,
+) -> int:
     """
-    Update finding severity from CVSS.
+    Return the numeric rank of a severity.
+
+    Higher values represent greater severity.
     """
 
-    if finding.cvss is not None:
+    normalized = normalize_severity(
+        value
+    )
 
-        finding.severity = (
-            cvss_to_severity(
-                finding.cvss
-            )
-        )
-
-
-    else:
-
-        finding.severity = (
-            normalize_severity(
-                finding.severity
-            )
-        )
+    return SEVERITY_ORDER[
+        normalized
+    ]
 
 
-    return finding
+def higher_severity(
+    first: object,
+    second: object,
+) -> str:
+    """
+    Return the higher of two severity values.
+    """
 
+    first_normalized = normalize_severity(
+        first
+    )
+
+    second_normalized = normalize_severity(
+        second
+    )
+
+    if (
+        severity_rank(first_normalized)
+        >= severity_rank(second_normalized)
+    ):
+        return first_normalized
+
+    return second_normalized
 
 
 ###############################################################################
@@ -266,17 +333,18 @@ def apply_cvss_severity(
 
 
 __all__ = [
-
-    "SEVERITY_LEVELS",
-
+    "CRITICAL",
+    "HIGH",
+    "MEDIUM",
+    "LOW",
+    "INFORMATIONAL",
+    "CONFIRMED",
+    "PENDING",
+    "FALSE_POSITIVE",
+    "SEVERITY_ORDER",
     "normalize_severity",
-
-    "cvss_to_severity",
-
-    "calculate_summary",
-
-    "calculate_risk_rating",
-
-    "apply_cvss_severity",
-
+    "normalize_confidence",
+    "normalize_finding_status",
+    "severity_rank",
+    "higher_severity",
 ]

@@ -150,8 +150,6 @@ def analyze_common_blocks(log_text: str) -> list[str]:
             "DNS resolution failure detected.",
         ),
         (
-            ("indexerror", "sublist3r"),
-            "Sublist3r crashed (source blocking/page change).",
         ),
     )
 

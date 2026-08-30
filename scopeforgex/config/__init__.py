@@ -2,38 +2,49 @@
 ScopeForgeX Configuration Package
 =================================
 
-Canonical configuration interfaces for ScopeForgeX.
+Canonical configuration layer for ScopeForgeX.
 
-The configuration layer defines:
+The configuration system is responsible for:
 
-- Assessment profiles
-- Per-tool configuration
+- Assessment profile selection
+- Target configuration
+- Target type
+- Scope restrictions
+- Authorization metadata
+- Allowed tools
+- Excluded tools
+- Per-tool enablement
+- Per-tool options
+- Rate limits
+- Authentication information
 - Profile defaults
 - User overrides
 - Configuration validation
-- Configuration merging
 
-Configuration is intentionally independent from:
+The configuration layer does NOT:
 
-- CLI/UI
-- Workflow execution
-- Tool command construction
-- Reporting
+- Execute tools
+- Construct tool-specific commands
+- Parse tool output
+- Generate findings
+- Correlate findings
+- Generate reports
 
-The workflow consumes resolved configuration. Tool adapters consume only
-their own resolved options.
+Those responsibilities belong to their respective architecture layers.
 
 Final architecture principle:
 
+    Scope
+        ↓
     Profile
+        ↓
+    Tool Selection
         ↓
     Tool Configuration
         ↓
-    Resolved Execution Context
+    Workflow Engine
         ↓
     Tool Adapter
-        ↓
-    Command
 
 Supported assessment profiles:
 
@@ -41,17 +52,63 @@ Supported assessment profiles:
 - STANDARD
 - FULL
 
-v1.3.0
+The profile determines defaults, not permanent limits. Individual tool
+enablement and options may be overridden by the assessment configuration.
+
+Final ScopeForgeX core toolset:
+
+Reconnaissance:
+    - amass
+    - subhunt
+    - nmap
+    - dig
+
+Enumeration:
+    - httpx
+    - katana
+    - ffuf
+    - whatweb
+    - kiterunner
+    - jsluice
+
+Vulnerability Assessment:
+    - nuclei
+    - nikto
+    - testssl.sh
+
+Vulnerability Validation:
+    - sqlmap
+    - dalfox
+    - jwt_tool
+    - sstimap
+
+Credential Assessment:
+    - hydra
+    - hashcat
+
+The configuration layer deliberately excludes tools removed from the final
+architecture, including:
+
+- subfinder
+- gobuster
+- naabu
+- rustscan
+- sslscan
+- sslyze
+- metasploit
+
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 
 ###############################################################################
-# Constants
+# Profile Constants
 ###############################################################################
 
 
@@ -63,6 +120,76 @@ SUPPORTED_PROFILES = (
     PROFILE_FAST,
     PROFILE_STANDARD,
     PROFILE_FULL,
+)
+
+
+###############################################################################
+# Final Core Tool Set
+###############################################################################
+
+
+RECONNAISSANCE_TOOLS = (
+    "amass",
+    "subhunt",
+    "nmap",
+    "dig",
+)
+
+ENUMERATION_TOOLS = (
+    "httpx",
+    "katana",
+    "ffuf",
+    "whatweb",
+    "kiterunner",
+    "jsluice",
+)
+
+VULNERABILITY_ASSESSMENT_TOOLS = (
+    "nuclei",
+    "nikto",
+    "testssl.sh",
+)
+
+VULNERABILITY_VALIDATION_TOOLS = (
+    "sqlmap",
+    "dalfox",
+    "jwt_tool",
+    "sstimap",
+)
+
+CREDENTIAL_ASSESSMENT_TOOLS = (
+    "hydra",
+    "hashcat",
+)
+
+CORE_TOOLS = (
+    *RECONNAISSANCE_TOOLS,
+    *ENUMERATION_TOOLS,
+    *VULNERABILITY_ASSESSMENT_TOOLS,
+    *VULNERABILITY_VALIDATION_TOOLS,
+    *CREDENTIAL_ASSESSMENT_TOOLS,
+)
+
+CORE_TOOL_SET = frozenset(
+    CORE_TOOLS
+)
+
+
+###############################################################################
+# Assessment Phases
+###############################################################################
+
+
+PHASE_RECONNAISSANCE = "reconnaissance"
+PHASE_ENUMERATION = "enumeration"
+PHASE_VULNERABILITY_ASSESSMENT = (
+    "vulnerability_assessment"
+)
+PHASE_VULNERABILITY_VALIDATION = (
+    "vulnerability_validation"
+)
+PHASE_CREDENTIAL_ASSESSMENT = (
+    "credential_assessment"
 )
 
 
@@ -85,21 +212,22 @@ class ConfigurationError(ValueError):
 @dataclass(slots=True)
 class ToolConfiguration:
     """
-    Resolved configuration for one ScopeForgeX tool.
+    Configuration for one ScopeForgeX tool.
 
     Attributes:
         enabled:
-            Whether the tool may execute.
+            Whether the tool is selected for execution.
 
         options:
-            Tool-specific options passed to the tool adapter.
+            Tool-specific options. These are passed to the tool adapter.
+            The configuration layer does not construct commands.
 
         requires_confirmation:
-            Whether execution requires explicit user confirmation.
+            Whether execution requires explicit confirmation.
 
         safe:
-            Whether the selected configuration is considered safe for the
-            active assessment profile.
+            Whether the configuration represents a safe/default execution
+            mode.
     """
 
     enabled: bool = True
@@ -112,15 +240,21 @@ class ToolConfiguration:
 
     safe: bool = True
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
         """
         Return a serializable representation.
         """
 
         return {
             "enabled": self.enabled,
-            "options": dict(self.options),
-            "requires_confirmation": self.requires_confirmation,
+            "options": deepcopy(
+                self.options
+            ),
+            "requires_confirmation": (
+                self.requires_confirmation
+            ),
             "safe": self.safe,
         }
 
@@ -133,21 +267,30 @@ class ToolConfiguration:
 @dataclass(slots=True)
 class AssessmentProfile:
     """
-    Configuration for one assessment profile.
+    Default configuration for one assessment profile.
 
-    A profile determines defaults and enabled capabilities. It does not
-    prevent individual tool or option overrides.
+    Profiles provide defaults. They do not permanently restrict what the
+    assessment may execute.
+
+    Individual tool enablement and options can be overridden in the resolved
+    assessment configuration.
     """
 
     name: str
 
     description: str = ""
 
-    tools: dict[str, ToolConfiguration] = field(
+    tools: dict[
+        str,
+        ToolConfiguration,
+    ] = field(
         default_factory=dict
     )
 
-    global_options: dict[str, Any] = field(
+    global_options: dict[
+        str,
+        Any,
+    ] = field(
         default_factory=dict
     )
 
@@ -156,25 +299,61 @@ class AssessmentProfile:
         name: str,
     ) -> ToolConfiguration:
         """
-        Return configuration for a specific tool.
+        Return the profile configuration for a tool.
 
-        Unknown tools receive a default configuration so that the profile
-        remains extensible.
+        Tools outside the final ScopeForgeX core set are rejected.
         """
 
-        normalized = str(name).strip().lower()
-
-        if not normalized:
-            raise ConfigurationError(
-                "Tool name cannot be empty."
-            )
-
-        return self.tools.get(
-            normalized,
-            ToolConfiguration(),
+        normalized = normalize_tool_name(
+            name
         )
 
-    def as_dict(self) -> dict[str, Any]:
+        if normalized not in CORE_TOOL_SET:
+            raise ConfigurationError(
+                f"Tool is not part of the ScopeForgeX core toolset: "
+                f"{name!r}"
+            )
+
+        configuration = self.tools.get(
+            normalized
+        )
+
+        if configuration is None:
+            return ToolConfiguration(
+                enabled=False
+            )
+
+        return configuration
+
+    def is_enabled(
+        self,
+        name: str,
+    ) -> bool:
+        """
+        Return whether a tool is enabled by this profile.
+        """
+
+        return self.tool(
+            name
+        ).enabled
+
+    def options(
+        self,
+        name: str,
+    ) -> dict[str, Any]:
+        """
+        Return a copy of the configured options for a tool.
+        """
+
+        return deepcopy(
+            self.tool(
+                name
+            ).options
+        )
+
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
         """
         Return a serializable profile representation.
         """
@@ -187,24 +366,24 @@ class AssessmentProfile:
                 for name, configuration
                 in self.tools.items()
             },
-            "global_options": dict(
+            "global_options": deepcopy(
                 self.global_options
             ),
         }
 
 
 ###############################################################################
-# Configuration
+# Resolved ScopeForgeX Configuration
 ###############################################################################
 
 
 @dataclass(slots=True)
 class ScopeForgeXConfig:
     """
-    Complete resolved ScopeForgeX configuration.
+    Complete resolved ScopeForgeX assessment configuration.
 
-    This object is the configuration boundary between the CLI/configuration
-    layer and the workflow engine.
+    This is the configuration boundary between the CLI/configuration layer
+    and the workflow engine.
     """
 
     profile: AssessmentProfile
@@ -213,15 +392,55 @@ class ScopeForgeXConfig:
 
     target_type: str = ""
 
-    scope: dict[str, Any] = field(
+    scope_restrictions: dict[
+        str,
+        Any,
+    ] = field(
         default_factory=dict
     )
 
-    tools: dict[str, ToolConfiguration] = field(
+    authorization: dict[
+        str,
+        Any,
+    ] = field(
         default_factory=dict
     )
 
-    global_options: dict[str, Any] = field(
+    allowed_tools: tuple[
+        str,
+        ...,
+    ] = CORE_TOOLS
+
+    excluded_tools: tuple[
+        str,
+        ...,
+    ] = ()
+
+    tools: dict[
+        str,
+        ToolConfiguration,
+    ] = field(
+        default_factory=dict
+    )
+
+    rate_limits: dict[
+        str,
+        Any,
+    ] = field(
+        default_factory=dict
+    )
+
+    authentication: dict[
+        str,
+        Any,
+    ] = field(
+        default_factory=dict
+    )
+
+    global_options: dict[
+        str,
+        Any,
+    ] = field(
         default_factory=dict
     )
 
@@ -233,30 +452,67 @@ class ScopeForgeXConfig:
         Return the resolved configuration for one tool.
         """
 
-        normalized = str(name).strip().lower()
+        normalized = normalize_tool_name(
+            name
+        )
 
-        if not normalized:
+        if normalized not in CORE_TOOL_SET:
             raise ConfigurationError(
-                "Tool name cannot be empty."
+                f"Tool is not part of the ScopeForgeX core toolset: "
+                f"{name!r}"
             )
 
         if normalized in self.tools:
-            return self.tools[normalized]
+            return self.tools[
+                normalized
+            ]
 
         return self.profile.tool(
             normalized
         )
+
+    def is_tool_allowed(
+        self,
+        name: str,
+    ) -> bool:
+        """
+        Return whether the tool is allowed by the resolved assessment scope.
+        """
+
+        normalized = normalize_tool_name(
+            name
+        )
+
+        if normalized not in CORE_TOOL_SET:
+            return False
+
+        if normalized in self.excluded_tools:
+            return False
+
+        if normalized not in self.allowed_tools:
+            return False
+
+        return True
 
     def is_tool_enabled(
         self,
         name: str,
     ) -> bool:
         """
-        Return whether a tool is enabled.
+        Return whether a tool is both allowed and enabled.
         """
 
-        return self.get_tool(
+        normalized = normalize_tool_name(
             name
+        )
+
+        if not self.is_tool_allowed(
+            normalized
+        ):
+            return False
+
+        return self.get_tool(
+            normalized
         ).enabled
 
     def tool_options(
@@ -267,13 +523,30 @@ class ScopeForgeXConfig:
         Return resolved options for one tool.
         """
 
-        return dict(
+        return deepcopy(
             self.get_tool(
                 name
             ).options
         )
 
-    def as_dict(self) -> dict[str, Any]:
+    def enabled_tools(
+        self,
+    ) -> tuple[str, ...]:
+        """
+        Return enabled tools in canonical tool order.
+        """
+
+        return tuple(
+            name
+            for name in CORE_TOOLS
+            if self.is_tool_enabled(
+                name
+            )
+        )
+
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
         """
         Return a serializable configuration representation.
         """
@@ -282,20 +555,93 @@ class ScopeForgeXConfig:
             "profile": self.profile.as_dict(),
             "target": self.target,
             "target_type": self.target_type,
-            "scope": dict(self.scope),
+            "scope_restrictions": deepcopy(
+                self.scope_restrictions
+            ),
+            "authorization": deepcopy(
+                self.authorization
+            ),
+            "allowed_tools": list(
+                self.allowed_tools
+            ),
+            "excluded_tools": list(
+                self.excluded_tools
+            ),
             "tools": {
                 name: configuration.as_dict()
                 for name, configuration
                 in self.tools.items()
             },
-            "global_options": dict(
+            "rate_limits": deepcopy(
+                self.rate_limits
+            ),
+            "authentication": deepcopy(
+                self.authentication
+            ),
+            "global_options": deepcopy(
                 self.global_options
             ),
         }
 
 
 ###############################################################################
-# Profile Constructors
+# Normalization Helpers
+###############################################################################
+
+
+def normalize_tool_name(
+    name: str,
+) -> str:
+    """
+    Normalize and validate a tool name.
+    """
+
+    normalized = str(
+        name
+    ).strip().lower()
+
+    if not normalized:
+        raise ConfigurationError(
+            "Tool name cannot be empty."
+        )
+
+    return normalized
+
+
+def normalize_tool_names(
+    names: Mapping[str, Any] | list[str] | tuple[str, ...] | set[str],
+) -> tuple[str, ...]:
+    """
+    Normalize a collection of tool names.
+
+    Duplicate names are removed while preserving the original order.
+    """
+
+    result: list[str] = []
+
+    for name in names:
+        normalized = normalize_tool_name(
+            name
+        )
+
+        if normalized not in CORE_TOOL_SET:
+            raise ConfigurationError(
+                f"Tool is not part of the ScopeForgeX core toolset: "
+                f"{name!r}"
+            )
+
+        if normalized not in result:
+            result.append(
+                normalized
+            )
+
+    return tuple(
+        result
+    )
+
+
+###############################################################################
+# Tool Configuration Constructor
 ###############################################################################
 
 
@@ -307,7 +653,7 @@ def _tool(
     safe: bool = True,
 ) -> ToolConfiguration:
     """
-    Internal helper for constructing tool configuration.
+    Construct a tool configuration.
     """
 
     return ToolConfiguration(
@@ -315,21 +661,32 @@ def _tool(
         options=dict(
             options or {}
         ),
-        requires_confirmation=requires_confirmation,
+        requires_confirmation=(
+            requires_confirmation
+        ),
         safe=safe,
     )
 
 
+###############################################################################
+# FAST Profile
+###############################################################################
+
+
 def build_fast_profile() -> AssessmentProfile:
     """
-    Build the FAST assessment profile.
+    Build the FAST profile.
 
-    FAST is intended to provide minimal, high-value coverage with low request
-    volume and short execution time.
+    FAST provides:
 
-    Default vulnerability severity:
+    - Quick attack-surface discovery
+    - Low request volume
+    - Minimal high-value checks
+    - Critical/high vulnerability detection
 
-        critical, high
+    Specialized validation and credential assessment remain disabled by
+    default. They may be explicitly enabled through tool overrides when
+    relevant to the discovered attack surface.
     """
 
     return AssessmentProfile(
@@ -341,22 +698,36 @@ def build_fast_profile() -> AssessmentProfile:
             "amass": _tool(
                 options={
                     "passive": True,
+                    "active": False,
                 }
             ),
             "subhunt": _tool(
                 options={
-                    "threads": 50,
+                    "threads": 10,
                 }
             ),
             "nmap": _tool(
                 options={
+                    "ports": "default",
                     "service_detection": True,
                     "os_detection": False,
                     "timing": "T3",
                     "nse_profile": "safe",
                 }
             ),
-            "dig": _tool(),
+            "dig": _tool(
+                options={
+                    "record_types": (
+                        "A",
+                        "AAAA",
+                        "CNAME",
+                        "MX",
+                        "NS",
+                        "TXT",
+                        "SOA",
+                    ),
+                }
+            ),
             "httpx": _tool(
                 options={
                     "status_code": True,
@@ -373,7 +744,9 @@ def build_fast_profile() -> AssessmentProfile:
             "ffuf": _tool(
                 enabled=False,
             ),
-            "whatweb": _tool(),
+            "whatweb": _tool(
+                enabled=True,
+            ),
             "kiterunner": _tool(
                 enabled=False,
             ),
@@ -386,9 +759,6 @@ def build_fast_profile() -> AssessmentProfile:
                         "critical",
                         "high",
                     ),
-                    "rate_limit": 30,
-                    "timeout": 5,
-                    "retries": 1,
                 }
             ),
             "nikto": _tool(
@@ -429,46 +799,75 @@ def build_fast_profile() -> AssessmentProfile:
             ),
         },
         global_options={
-            "request_rate_limit": 30,
-            "timeout": 600,
+            "request_rate_limit": 10,
+            "timeout": 300,
         },
     )
 
 
+###############################################################################
+# STANDARD Profile
+###############################################################################
+
+
 def build_standard_profile() -> AssessmentProfile:
     """
-    Build the STANDARD assessment profile.
+    Build the STANDARD profile.
 
-    STANDARD represents normal professional assessment coverage while
-    retaining conservative defaults for potentially intrusive validation.
+    STANDARD provides normal professional assessment coverage:
+
+    - Full reconnaissance
+    - Full enumeration
+    - Broad vulnerability assessment
+    - TLS assessment
+
+    Specialized validation tools remain disabled by default because they are
+    selected based on discovered attack surface rather than blindly executed
+    against every target.
+
+    Credential assessment also remains disabled by default.
     """
 
     return AssessmentProfile(
         name=PROFILE_STANDARD,
         description=(
-            "Normal professional assessment with full enumeration and "
-            "broad vulnerability assessment."
+            "Normal professional assessment with full enumeration, "
+            "vulnerability assessment and relevant validation support."
         ),
         tools={
             "amass": _tool(
                 options={
                     "passive": True,
+                    "active": True,
                 }
             ),
             "subhunt": _tool(
                 options={
-                    "threads": 50,
+                    "threads": 25,
                 }
             ),
             "nmap": _tool(
                 options={
+                    "ports": "default",
                     "service_detection": True,
                     "os_detection": False,
                     "timing": "T3",
                     "nse_profile": "safe",
                 }
             ),
-            "dig": _tool(),
+            "dig": _tool(
+                options={
+                    "record_types": (
+                        "A",
+                        "AAAA",
+                        "CNAME",
+                        "MX",
+                        "NS",
+                        "TXT",
+                        "SOA",
+                    ),
+                }
+            ),
             "httpx": _tool(
                 options={
                     "status_code": True,
@@ -482,25 +881,33 @@ def build_standard_profile() -> AssessmentProfile:
                     "depth": 3,
                 }
             ),
-            "ffuf": _tool(),
-            "whatweb": _tool(),
-            "kiterunner": _tool(),
-            "jsluice": _tool(),
+            "ffuf": _tool(
+                enabled=True,
+            ),
+            "whatweb": _tool(
+                enabled=True,
+            ),
+            "kiterunner": _tool(
+                enabled=True,
+            ),
+            "jsluice": _tool(
+                enabled=True,
+            ),
             "nuclei": _tool(
                 options={
                     "severity": (
                         "critical",
                         "high",
                         "medium",
-                        "low",
                     ),
-                    "rate_limit": 30,
-                    "timeout": 5,
-                    "retries": 1,
                 }
             ),
-            "nikto": _tool(),
-            "testssl.sh": _tool(),
+            "nikto": _tool(
+                enabled=True,
+            ),
+            "testssl.sh": _tool(
+                enabled=True,
+            ),
             "sqlmap": _tool(
                 enabled=False,
                 requires_confirmation=True,
@@ -533,37 +940,154 @@ def build_standard_profile() -> AssessmentProfile:
             ),
         },
         global_options={
-            "request_rate_limit": 60,
-            "timeout": 900,
+            "request_rate_limit": 25,
+            "timeout": 600,
         },
     )
 
 
+###############################################################################
+# FULL Profile
+###############################################################################
+
+
 def build_full_profile() -> AssessmentProfile:
     """
-    Build the FULL assessment profile.
+    Build the FULL profile.
 
-    FULL enables maximum configured coverage. Potentially intrusive or
-    validation-oriented tools remain confirmation-gated.
+    FULL provides maximum configured coverage:
+
+    - Extended reconnaissance
+    - Extended enumeration
+    - Critical/high/medium/low vulnerability checks
+    - Relevant informational vulnerability checks
+    - Target-dependent validation support
+
+    Specialized tools remain disabled until the relevant attack surface is
+    identified and the user explicitly selects them.
+
+    Credential assessment remains opt-in.
     """
 
-    profile = build_standard_profile()
-
-    profile.name = PROFILE_FULL
-
-    profile.description = (
-        "Maximum configured assessment coverage with extended enumeration "
-        "and target-dependent validation."
+    return AssessmentProfile(
+        name=PROFILE_FULL,
+        description=(
+            "Maximum configured coverage with extended enumeration, "
+            "lower-severity checks and target-dependent validation."
+        ),
+        tools={
+            "amass": _tool(
+                options={
+                    "passive": True,
+                    "active": True,
+                    "bruteforce": True,
+                }
+            ),
+            "subhunt": _tool(
+                options={
+                    "threads": 50,
+                }
+            ),
+            "nmap": _tool(
+                options={
+                    "ports": "default",
+                    "service_detection": True,
+                    "os_detection": True,
+                    "timing": "T4",
+                    "nse_profile": "default",
+                }
+            ),
+            "dig": _tool(
+                options={
+                    "record_types": (
+                        "A",
+                        "AAAA",
+                        "CNAME",
+                        "MX",
+                        "NS",
+                        "TXT",
+                        "SOA",
+                    ),
+                }
+            ),
+            "httpx": _tool(
+                options={
+                    "status_code": True,
+                    "title": True,
+                    "server": True,
+                    "technology": True,
+                }
+            ),
+            "katana": _tool(
+                options={
+                    "depth": 5,
+                }
+            ),
+            "ffuf": _tool(
+                enabled=True,
+            ),
+            "whatweb": _tool(
+                enabled=True,
+            ),
+            "kiterunner": _tool(
+                enabled=True,
+            ),
+            "jsluice": _tool(
+                enabled=True,
+            ),
+            "nuclei": _tool(
+                options={
+                    "severity": (
+                        "critical",
+                        "high",
+                        "medium",
+                        "low",
+                        "info",
+                    ),
+                }
+            ),
+            "nikto": _tool(
+                enabled=True,
+            ),
+            "testssl.sh": _tool(
+                enabled=True,
+            ),
+            "sqlmap": _tool(
+                enabled=False,
+                requires_confirmation=True,
+                safe=False,
+            ),
+            "dalfox": _tool(
+                enabled=False,
+                requires_confirmation=True,
+                safe=False,
+            ),
+            "jwt_tool": _tool(
+                enabled=False,
+                requires_confirmation=True,
+                safe=False,
+            ),
+            "sstimap": _tool(
+                enabled=False,
+                requires_confirmation=True,
+                safe=False,
+            ),
+            "hydra": _tool(
+                enabled=False,
+                requires_confirmation=True,
+                safe=False,
+            ),
+            "hashcat": _tool(
+                enabled=False,
+                requires_confirmation=True,
+                safe=False,
+            ),
+        },
+        global_options={
+            "request_rate_limit": 50,
+            "timeout": 1200,
+        },
     )
-
-    profile.global_options.update(
-        {
-            "request_rate_limit": 100,
-            "timeout": 1800,
-        }
-    )
-
-    return profile
 
 
 ###############################################################################
@@ -571,7 +1095,10 @@ def build_full_profile() -> AssessmentProfile:
 ###############################################################################
 
 
-def build_profiles() -> dict[str, AssessmentProfile]:
+def build_profiles() -> dict[
+    str,
+    AssessmentProfile,
+]:
     """
     Build all supported assessment profiles.
     """
@@ -590,12 +1117,17 @@ def get_profile(
     Return an assessment profile by name.
     """
 
-    normalized = str(name).strip().lower()
+    normalized = str(
+        name
+    ).strip().lower()
 
     profiles = build_profiles()
 
     try:
-        return profiles[normalized]
+        return profiles[
+            normalized
+        ]
+
     except KeyError as exc:
         supported = ", ".join(
             SUPPORTED_PROFILES
@@ -608,7 +1140,7 @@ def get_profile(
 
 
 ###############################################################################
-# Configuration Resolution
+# Tool Configuration Resolution
 ###############################################################################
 
 
@@ -617,15 +1149,17 @@ def merge_tool_options(
     override: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     """
-    Merge tool options.
+    Merge profile options with explicit user options.
 
     User-provided values override profile defaults.
 
-    The merge is intentionally shallow because tool options are owned by the
-    individual adapter and may have tool-specific semantics.
+    The merge is intentionally shallow because option semantics belong to the
+    individual tool adapter.
     """
 
-    merged = dict(base)
+    merged = dict(
+        base
+    )
 
     if override:
         merged.update(
@@ -638,19 +1172,25 @@ def merge_tool_options(
 def resolve_tool_configuration(
     profile: AssessmentProfile,
     tool_name: str,
-    override: Mapping[str, Any] | None = None,
+    *,
+    enabled: bool | None = None,
+    options: Mapping[str, Any] | None = None,
 ) -> ToolConfiguration:
     """
-    Resolve one tool's configuration from a profile and optional override.
+    Resolve one tool configuration.
+
+    The profile supplies the defaults. Explicit enablement and options are
+    applied afterward.
     """
 
-    normalized = str(
+    normalized = normalize_tool_name(
         tool_name
-    ).strip().lower()
+    )
 
-    if not normalized:
+    if normalized not in CORE_TOOL_SET:
         raise ConfigurationError(
-            "Tool name cannot be empty."
+            f"Tool is not part of the ScopeForgeX core toolset: "
+            f"{tool_name!r}"
         )
 
     base = profile.tool(
@@ -658,14 +1198,25 @@ def resolve_tool_configuration(
     )
 
     return ToolConfiguration(
-        enabled=base.enabled,
+        enabled=(
+            base.enabled
+            if enabled is None
+            else bool(enabled)
+        ),
         options=merge_tool_options(
             base.options,
-            override,
+            options,
         ),
-        requires_confirmation=base.requires_confirmation,
+        requires_confirmation=(
+            base.requires_confirmation
+        ),
         safe=base.safe,
     )
+
+
+###############################################################################
+# Assessment Configuration Builder
+###############################################################################
 
 
 def build_config(
@@ -673,19 +1224,53 @@ def build_config(
     *,
     target: str = "",
     target_type: str = "",
-    scope: Mapping[str, Any] | None = None,
+    scope_restrictions: Mapping[
+        str,
+        Any,
+    ] | None = None,
+    authorization: Mapping[
+        str,
+        Any,
+    ] | None = None,
+    allowed_tools: (
+        tuple[str, ...]
+        | list[str]
+        | set[str]
+        | None
+    ) = None,
+    excluded_tools: (
+        tuple[str, ...]
+        | list[str]
+        | set[str]
+        | None
+    ) = None,
     tool_overrides: Mapping[
         str,
         Mapping[str, Any],
     ] | None = None,
-    global_options: Mapping[str, Any] | None = None,
+    tool_enablement: Mapping[
+        str,
+        bool,
+    ] | None = None,
+    rate_limits: Mapping[
+        str,
+        Any,
+    ] | None = None,
+    authentication: Mapping[
+        str,
+        Any,
+    ] | None = None,
+    global_options: Mapping[
+        str,
+        Any,
+    ] | None = None,
 ) -> ScopeForgeXConfig:
     """
     Build a complete resolved ScopeForgeX configuration.
 
     Args:
         profile:
-            Assessment profile name.
+            Assessment profile.
 
         target:
             Assessment target.
@@ -693,22 +1278,87 @@ def build_config(
         target_type:
             Target classification.
 
-        scope:
-            Scope restrictions and authorization metadata.
+        scope_restrictions:
+            Scope restrictions such as included/excluded hosts, domains,
+            ports or paths.
+
+        authorization:
+            Authorization metadata establishing that the assessment is
+            permitted.
+
+        allowed_tools:
+            Explicitly allowed tools for this assessment.
+
+        excluded_tools:
+            Explicitly excluded tools.
 
         tool_overrides:
             Per-tool option overrides.
 
+        tool_enablement:
+            Explicit per-tool enable/disable overrides.
+
+        rate_limits:
+            Assessment and tool rate-limit configuration.
+
+        authentication:
+            Authentication information required by the assessment.
+
         global_options:
-            Global execution overrides.
+            Global execution options.
+
+    Returns:
+        A validated resolved ScopeForgeXConfig.
     """
 
     selected_profile = get_profile(
         profile
     )
 
+    explicit_allowed = (
+        CORE_TOOLS
+        if allowed_tools is None
+        else normalize_tool_names(
+            allowed_tools
+        )
+    )
+
+    explicit_excluded = (
+        ()
+        if excluded_tools is None
+        else normalize_tool_names(
+            excluded_tools
+        )
+    )
+
+    allowed_set = set(
+        explicit_allowed
+    )
+
+    excluded_set = set(
+        explicit_excluded
+    )
+
+    if allowed_set.intersection(
+        excluded_set
+    ):
+        overlap = sorted(
+            allowed_set.intersection(
+                excluded_set
+            )
+        )
+
+        raise ConfigurationError(
+            "A tool cannot be both allowed and excluded: "
+            + ", ".join(overlap)
+        )
+
     overrides = (
         tool_overrides or {}
+    )
+
+    enablement = (
+        tool_enablement or {}
     )
 
     resolved_tools: dict[
@@ -716,53 +1366,113 @@ def build_config(
         ToolConfiguration,
     ] = {}
 
-    for name, configuration in (
-        selected_profile.tools.items()
-    ):
-        override = overrides.get(
-            name,
+    for tool_name in CORE_TOOLS:
+
+        option_override = overrides.get(
+            tool_name,
             {},
         )
 
-        resolved_tools[name] = (
+        explicit_enabled = enablement.get(
+            tool_name
+        )
+
+        configuration = (
             resolve_tool_configuration(
                 selected_profile,
-                name,
-                override,
+                tool_name,
+                enabled=explicit_enabled,
+                options=option_override,
             )
         )
 
-    for name, override in overrides.items():
-        normalized = str(
-            name
-        ).strip().lower()
+        if tool_name not in allowed_set:
+            configuration.enabled = False
 
-        if normalized not in resolved_tools:
-            resolved_tools[normalized] = (
-                resolve_tool_configuration(
-                    selected_profile,
-                    normalized,
-                    override,
-                )
+        if tool_name in excluded_set:
+            configuration.enabled = False
+
+        resolved_tools[
+            tool_name
+        ] = configuration
+
+    for name in overrides:
+        normalized = normalize_tool_name(
+            name
+        )
+
+        if normalized not in CORE_TOOL_SET:
+            raise ConfigurationError(
+                f"Tool override references a tool outside the "
+                f"ScopeForgeX core toolset: {name!r}"
             )
 
-    resolved_global_options = dict(
+    for name in enablement:
+        normalized = normalize_tool_name(
+            name
+        )
+
+        if normalized not in CORE_TOOL_SET:
+            raise ConfigurationError(
+                f"Tool enablement references a tool outside the "
+                f"ScopeForgeX core toolset: {name!r}"
+            )
+
+    resolved_rate_limits = {
+        "request_rate_limit": (
+            selected_profile.global_options.get(
+                "request_rate_limit"
+            )
+        ),
+    }
+
+    if rate_limits:
+        resolved_rate_limits.update(
+            deepcopy(
+                dict(rate_limits)
+            )
+        )
+
+    resolved_global_options = deepcopy(
         selected_profile.global_options
     )
 
     if global_options:
         resolved_global_options.update(
-            global_options
+            deepcopy(
+                dict(global_options)
+            )
         )
 
     configuration = ScopeForgeXConfig(
         profile=selected_profile,
-        target=target,
-        target_type=target_type,
-        scope=dict(
-            scope or {}
+        target=str(target).strip(),
+        target_type=str(
+            target_type
+        ).strip(),
+        scope_restrictions=deepcopy(
+            dict(
+                scope_restrictions or {}
+            )
+        ),
+        authorization=deepcopy(
+            dict(
+                authorization or {}
+            )
+        ),
+        allowed_tools=tuple(
+            explicit_allowed
+        ),
+        excluded_tools=tuple(
+            explicit_excluded
         ),
         tools=resolved_tools,
+        rate_limits=resolved_rate_limits,
+        authentication=deepcopy(
+            dict(
+                authentication or {}
+            )
+        ),
         global_options=resolved_global_options,
     )
 
@@ -774,7 +1484,7 @@ def build_config(
 
 
 ###############################################################################
-# Validation
+# Configuration Validation
 ###############################################################################
 
 
@@ -784,23 +1494,116 @@ def validate_config(
     """
     Validate a resolved ScopeForgeX configuration.
 
-    Raises:
-        ConfigurationError:
-            When configuration violates the configuration contract.
+    Validation occurs before workflow execution.
     """
 
-    profile_name = config.profile.name.lower()
+    profile_name = str(
+        config.profile.name
+    ).strip().lower()
 
     if profile_name not in SUPPORTED_PROFILES:
         raise ConfigurationError(
-            f"Unsupported profile: {config.profile.name!r}"
+            f"Unsupported assessment profile: "
+            f"{config.profile.name!r}"
+        )
+
+    if not config.target:
+        raise ConfigurationError(
+            "Assessment target is required."
+        )
+
+    if not config.target_type:
+        raise ConfigurationError(
+            "Assessment target type is required."
+        )
+
+    allowed = set(
+        config.allowed_tools
+    )
+
+    excluded = set(
+        config.excluded_tools
+    )
+
+    if not allowed.issubset(
+        CORE_TOOL_SET
+    ):
+        invalid = sorted(
+            allowed.difference(
+                CORE_TOOL_SET
+            )
+        )
+
+        raise ConfigurationError(
+            "Allowed tools contain tools outside the final core toolset: "
+            + ", ".join(invalid)
+        )
+
+    if not excluded.issubset(
+        CORE_TOOL_SET
+    ):
+        invalid = sorted(
+            excluded.difference(
+                CORE_TOOL_SET
+            )
+        )
+
+        raise ConfigurationError(
+            "Excluded tools contain tools outside the final core toolset: "
+            + ", ".join(invalid)
+        )
+
+    overlap = allowed.intersection(
+        excluded
+    )
+
+    if overlap:
+        raise ConfigurationError(
+            "A tool cannot be both allowed and excluded: "
+            + ", ".join(
+                sorted(overlap)
+            )
+        )
+
+    if set(
+        config.tools
+    ) != CORE_TOOL_SET:
+        missing = sorted(
+            CORE_TOOL_SET.difference(
+                config.tools
+            )
+        )
+
+        extra = sorted(
+            set(config.tools).difference(
+                CORE_TOOL_SET
+            )
+        )
+
+        message = (
+            "Resolved tool configuration must contain exactly "
+            "the final ScopeForgeX core toolset."
+        )
+
+        if missing:
+            message += (
+                f" Missing: {', '.join(missing)}."
+            )
+
+        if extra:
+            message += (
+                f" Extra: {', '.join(extra)}."
+            )
+
+        raise ConfigurationError(
+            message
         )
 
     for name, tool in config.tools.items():
 
-        if not str(name).strip():
+        if name not in CORE_TOOL_SET:
             raise ConfigurationError(
-                "Tool configuration contains an empty tool name."
+                f"Unknown ScopeForgeX tool: {name!r}"
             )
 
         if not isinstance(
@@ -819,6 +1622,22 @@ def validate_config(
                 f"Invalid options for tool {name!r}."
             )
 
+        if not isinstance(
+            tool.requires_confirmation,
+            bool,
+        ):
+            raise ConfigurationError(
+                f"Invalid confirmation setting for tool {name!r}."
+            )
+
+        if not isinstance(
+            tool.safe,
+            bool,
+        ):
+            raise ConfigurationError(
+                f"Invalid safety setting for tool {name!r}."
+            )
+
         if (
             tool.requires_confirmation
             and tool.safe
@@ -828,6 +1647,91 @@ def validate_config(
                 "confirmation and be marked safe."
             )
 
+        if (
+            tool.enabled
+            and not config.is_tool_allowed(
+                name
+            )
+        ):
+            raise ConfigurationError(
+                f"Tool {name!r} is enabled but is not allowed "
+                "by the assessment configuration."
+            )
+
+    for value_name, value in (
+        config.rate_limits.items()
+    ):
+        if value is None:
+            continue
+
+        if isinstance(
+            value,
+            bool,
+        ):
+            raise ConfigurationError(
+                f"Rate limit {value_name!r} must be numeric."
+            )
+
+        if not isinstance(
+            value,
+            (int, float),
+        ):
+            raise ConfigurationError(
+                f"Rate limit {value_name!r} must be numeric."
+            )
+
+        if value <= 0:
+            raise ConfigurationError(
+                f"Rate limit {value_name!r} must be greater than zero."
+            )
+
+
+###############################################################################
+# Default Configuration
+###############################################################################
+
+
+def get_default_configuration() -> ScopeForgeXConfig:
+    """
+    Return the default STANDARD configuration.
+
+    A target must be supplied before execution. Therefore this helper builds
+    the configuration with an empty target only for inspection and is not
+    suitable for workflow execution until a target is provided.
+    """
+
+    profile = get_profile(
+        PROFILE_STANDARD
+    )
+
+    tools = {
+        name: deepcopy(
+            configuration
+        )
+        for name, configuration
+        in profile.tools.items()
+    }
+
+    return ScopeForgeXConfig(
+        profile=profile,
+        target="",
+        target_type="",
+        scope_restrictions={},
+        authorization={},
+        allowed_tools=CORE_TOOLS,
+        excluded_tools=(),
+        tools=tools,
+        rate_limits={
+            "request_rate_limit": profile.global_options.get(
+                "request_rate_limit"
+            ),
+        },
+        authentication={},
+        global_options=deepcopy(
+            profile.global_options
+        ),
+    )
+
 
 ###############################################################################
 # Public API
@@ -835,21 +1739,55 @@ def validate_config(
 
 
 __all__ = [
+    # Profiles
     "PROFILE_FAST",
     "PROFILE_STANDARD",
     "PROFILE_FULL",
     "SUPPORTED_PROFILES",
+
+    # Tool groups
+    "RECONNAISSANCE_TOOLS",
+    "ENUMERATION_TOOLS",
+    "VULNERABILITY_ASSESSMENT_TOOLS",
+    "VULNERABILITY_VALIDATION_TOOLS",
+    "CREDENTIAL_ASSESSMENT_TOOLS",
+    "CORE_TOOLS",
+    "CORE_TOOL_SET",
+
+    # Phases
+    "PHASE_RECONNAISSANCE",
+    "PHASE_ENUMERATION",
+    "PHASE_VULNERABILITY_ASSESSMENT",
+    "PHASE_VULNERABILITY_VALIDATION",
+    "PHASE_CREDENTIAL_ASSESSMENT",
+
+    # Exceptions
     "ConfigurationError",
+
+    # Models
     "ToolConfiguration",
     "AssessmentProfile",
     "ScopeForgeXConfig",
+
+    # Helpers
+    "normalize_tool_name",
+    "normalize_tool_names",
+
+    # Profiles
     "build_fast_profile",
     "build_standard_profile",
     "build_full_profile",
     "build_profiles",
     "get_profile",
+
+    # Resolution
     "merge_tool_options",
     "resolve_tool_configuration",
     "build_config",
+
+    # Validation
     "validate_config",
+
+    # Defaults
+    "get_default_configuration",
 ]

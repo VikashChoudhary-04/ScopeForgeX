@@ -4,54 +4,46 @@ ScopeForgeX Tool Execution Layer
 
 Canonical execution layer for ScopeForgeX tool adapters.
 
-The execution layer is responsible for:
+Responsibilities:
 
-- starting tool execution
-- measuring execution duration
-- applying execution context
-- capturing execution status
-- handling unexpected adapter failures
-- recording results in RuntimeState
-- preserving tool-generated artifacts
-- maintaining a consistent execution contract
+- Execute new-style ToolAdapter commands
+- Preserve legacy ToolBase compatibility during migration
+- Measure execution duration
+- Apply execution context
+- Capture execution status
+- Convert unexpected adapter failures into ExecutionResult failures
+- Invoke adapter result collection hooks after process execution
+- Record results in RuntimeState
+- Preserve tool-generated artifacts
+- Maintain a consistent execution contract
 
 Architecture
 ------------
 
 Workflow
     ↓
-Tool Selection
-    ↓
 Tool Registry
-    ↓
-Tool Executor
     ↓
 Tool Adapter
     ↓
+Tool Executor
+    ↓
+Command Execution
+    ↓
 ExecutionResult
+    ↓
+Adapter Collection
     ↓
 RuntimeState
 
-Important
----------
-The executor does NOT construct tool-specific commands.
+New-style adapters own command construction and post-execution collection.
 
-Command construction remains the responsibility of each tool adapter.
+ToolExecutor owns process execution.
 
-The executor also avoids importing the registry at module import time.
-This prevents the circular dependency:
+Legacy ToolBase adapters may continue to expose run(ctx) until migration
+is complete.
 
-    registry
-        ↓
-    tool_base
-        ↓
-    runtime
-        ↓
-    tool_executor
-        ↓
-    registry
-
-v1.2.0
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations
@@ -59,6 +51,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any, Mapping
+
+from scopeforgex.models.execution_result import ExecutionResult
 
 
 ###############################################################################
@@ -117,10 +111,18 @@ class ToolExecutor:
     """
     Canonical ScopeForgeX tool execution coordinator.
 
-    ToolExecutor deliberately knows nothing about individual tools.
+    ToolExecutor coordinates execution but does not construct
+    tool-specific arguments.
 
-    It receives a tool adapter from the registry and delegates execution
-    to that adapter.
+    New-style ToolAdapter instances expose build_command() and are
+    executed through the canonical command runner.
+
+    After command execution, an optional adapter collect(result) hook is
+    invoked so adapters can preserve artifacts and perform tool-specific
+    result collection without owning subprocess execution.
+
+    Legacy ToolBase instances may still expose run(ctx) and are
+    temporarily supported through the compatibility path.
     """
 
     def __init__(
@@ -137,8 +139,22 @@ class ToolExecutor:
                 Optional RuntimeState instance used to record execution.
 
             default_timeout:
-                Default execution timeout exposed to adapters through ctx.
+                Default command timeout exposed to adapters through ctx.
         """
+
+        if (
+            not isinstance(
+                default_timeout,
+                int,
+            )
+            or isinstance(
+                default_timeout,
+                bool,
+            )
+        ):
+            raise TypeError(
+                "default_timeout must be an integer."
+            )
 
         if default_timeout <= 0:
             raise ValueError(
@@ -179,11 +195,20 @@ class ToolExecutor:
         Resolve the canonical capability name.
         """
 
+        capability = getattr(
+            adapter,
+            "capability",
+            None,
+        )
+
+        if capability is None:
+            return "unknown"
+
         return str(
             getattr(
-                adapter,
-                "capability",
-                "unknown",
+                capability,
+                "value",
+                capability,
             )
         )
 
@@ -193,9 +218,6 @@ class ToolExecutor:
     ) -> str:
         """
         Resolve an execution result status.
-
-        Existing ExecutionResult implementations may expose status as
-        either a string or an enum-like object.
         """
 
         value = getattr(
@@ -274,6 +296,29 @@ class ToolExecutor:
             value
         )
 
+    @staticmethod
+    def _is_new_adapter(
+        adapter: Any,
+    ) -> bool:
+        """
+        Return True when the adapter exposes the new ToolAdapter command
+        construction contract.
+        """
+
+        return callable(
+            getattr(
+                adapter,
+                "build_command",
+                None,
+            )
+        ) and callable(
+            getattr(
+                adapter,
+                "build_arguments",
+                None,
+            )
+        )
+
     # ------------------------------------------------------------------
     # Context
     # ------------------------------------------------------------------
@@ -286,7 +331,7 @@ class ToolExecutor:
         """
         Prepare an isolated execution context.
 
-        The executor never mutates the caller's original dictionary.
+        The executor never mutates the caller's original mapping.
         """
 
         context = dict(
@@ -334,8 +379,7 @@ class ToolExecutor:
         """
         Record an ExecutionResult in RuntimeState when available.
 
-        RuntimeState is intentionally treated through its public API rather
-        than through direct mutation.
+        RuntimeState is intentionally accessed through its public API.
         """
 
         if self.runtime_state is None:
@@ -360,7 +404,7 @@ class ToolExecutor:
 
     @staticmethod
     def _add_execution_metadata(
-        result: Any,
+        result: ExecutionResult,
         *,
         tool: str,
         capability: str,
@@ -369,7 +413,7 @@ class ToolExecutor:
         duration: float,
     ) -> None:
         """
-        Add standardized execution metadata when supported by the result.
+        Add standardized execution metadata.
         """
 
         metadata = getattr(
@@ -405,8 +449,215 @@ class ToolExecutor:
                     "exit_code": ToolExecutor._exit_code(
                         result
                     ),
+                    "error": ToolExecutor._error(
+                        result
+                    ),
                 }
             }
+        )
+
+    # ------------------------------------------------------------------
+    # Adapter Collection
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _collect_result(
+        adapter: Any,
+        result: ExecutionResult,
+    ) -> ExecutionResult:
+        """
+        Invoke an optional adapter-side result collection hook.
+
+        The hook executes after process completion and therefore may:
+
+        - preserve raw output artifacts
+        - copy or transform generated files
+        - invoke a dedicated collector
+        - attach collection metadata
+        - add collection warnings
+
+        The hook must not become a second subprocess execution path.
+
+        If the adapter returns an ExecutionResult, that result replaces the
+        original result. Returning None or another value leaves the original
+        result unchanged.
+        """
+
+        collect = getattr(
+            adapter,
+            "collect",
+            None,
+        )
+
+        if not callable(
+            collect
+        ):
+            return result
+
+        try:
+            collected = collect(
+                result
+            )
+
+        except Exception as exc:
+            result.add_warning(
+                (
+                    "Tool result collection failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+            )
+
+            return result
+
+        if isinstance(
+            collected,
+            ExecutionResult,
+        ):
+            return collected
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Canonical Command Execution
+    # ------------------------------------------------------------------
+
+    def _execute_command(
+        self,
+        adapter: Any,
+        context: dict[str, Any],
+    ) -> ExecutionResult:
+        """
+        Build and execute a new-style adapter command.
+
+        Tool-specific command construction remains entirely inside
+        the adapter.
+        """
+
+        tool = self._tool_name(
+            adapter
+        )
+
+        capability = self._capability(
+            adapter
+        )
+
+        try:
+            command = adapter.build_command()
+
+        except Exception as exc:
+            return self._failure_result(
+                tool=tool,
+                capability=capability,
+                error=(
+                    "Tool command construction failed: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            )
+
+        if not isinstance(
+            command,
+            (list, tuple),
+        ):
+            return self._failure_result(
+                tool=tool,
+                capability=capability,
+                error=(
+                    "Tool adapter build_command() must return "
+                    "a list or tuple of command arguments."
+                ),
+            )
+
+        command = [
+            str(argument)
+            for argument in command
+        ]
+
+        if not command:
+            return self._failure_result(
+                tool=tool,
+                capability=capability,
+                error=(
+                    "Tool adapter produced an empty command."
+                ),
+            )
+
+        return self._run_process(
+            tool=tool,
+            capability=capability,
+            command=command,
+            context=context,
+        )
+
+    # ------------------------------------------------------------------
+    # Process Execution
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _run_process(
+        *,
+        tool: str,
+        capability: str,
+        command: list[str],
+        context: Mapping[str, Any],
+    ) -> ExecutionResult:
+        """
+        Execute a fully constructed command.
+
+        This method delegates process execution to the existing command
+        runner while keeping the public execution contract centralized.
+        """
+
+        from scopeforgex.runner import run_command
+
+        timeout = context.get(
+            "tool_timeout",
+            context.get(
+                "timeout",
+                600,
+            ),
+        )
+
+        outfile = context.get(
+            "outfile"
+        )
+
+        cwd = context.get(
+            "cwd"
+        )
+
+        env = context.get(
+            "env"
+        )
+
+        command_text = _command_to_string(
+            command
+        )
+
+        return run_command(
+            tool=tool,
+            capability=capability,
+            cmd=command_text,
+            outfile=(
+                str(outfile)
+                if outfile is not None
+                else None
+            ),
+            timeout=int(
+                timeout
+            ),
+            cwd=(
+                str(cwd)
+                if cwd is not None
+                else None
+            ),
+            env=(
+                dict(env)
+                if isinstance(
+                    env,
+                    Mapping,
+                )
+                else None
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -417,38 +668,22 @@ class ToolExecutor:
         self,
         adapter: Any,
         ctx: Mapping[str, Any] | None = None,
-    ) -> Any:
+    ) -> ExecutionResult:
         """
         Execute one ScopeForgeX tool adapter.
 
-        Args:
-            adapter:
-                Registered ScopeForgeX tool adapter.
+        New-style ToolAdapter instances use build_command() and the
+        canonical command execution path.
 
-            ctx:
-                Shared workflow execution context.
+        After successful or failed process execution, an optional adapter
+        collect(result) hook is invoked to preserve artifacts and perform
+        tool-specific result collection.
 
-        Returns:
-            ExecutionResult returned by the adapter.
+        Legacy adapters continue to use run(ctx) until migrated.
 
-        Raises:
-            TypeError:
-                If the adapter does not expose a callable run() method.
-
-        Unexpected adapter exceptions are converted into an ExecutionResult
-        failure so one broken tool does not crash the complete assessment.
+        Unexpected adapter exceptions are converted into an
+        ExecutionResult failure.
         """
-
-        if not callable(
-            getattr(
-                adapter,
-                "run",
-                None,
-            )
-        ):
-            raise TypeError(
-                "Tool adapter must expose a callable run(ctx) method."
-            )
 
         tool = self._tool_name(
             adapter
@@ -466,18 +701,42 @@ class ToolExecutor:
         started_at = monotonic()
 
         try:
-            result = adapter.run(
-                context
-            )
+            if self._is_new_adapter(
+                adapter
+            ):
+                result = self._execute_command(
+                    adapter,
+                    context,
+                )
+
+                result = self._collect_result(
+                    adapter,
+                    result,
+                )
+
+            else:
+                run = getattr(
+                    adapter,
+                    "run",
+                    None,
+                )
+
+                if not callable(
+                    run
+                ):
+                    raise TypeError(
+                        "Tool adapter must expose either "
+                        "build_command() or run(ctx)."
+                    )
+
+                result = run(
+                    context
+                )
+
+        except KeyboardInterrupt:
+            raise
 
         except Exception as exc:
-            finished_at = monotonic()
-
-            duration = (
-                finished_at
-                - started_at
-            )
-
             result = self._failure_result(
                 tool=tool,
                 capability=capability,
@@ -487,27 +746,22 @@ class ToolExecutor:
                 ),
             )
 
-            self._add_execution_metadata(
-                result,
-                tool=tool,
-                capability=capability,
-                started_at=started_at,
-                finished_at=finished_at,
-                duration=duration,
-            )
-
-            self._record_result(
-                result
-            )
-
-            return result
-
         finished_at = monotonic()
 
         duration = (
             finished_at
             - started_at
         )
+
+        if isinstance(
+            result,
+            ExecutionResult,
+        ):
+            result.duration = (
+                duration
+                if result.duration <= 0
+                else result.duration
+            )
 
         self._add_execution_metadata(
             result,
@@ -532,17 +786,17 @@ class ToolExecutor:
         self,
         adapters: list[Any] | tuple[Any, ...],
         ctx: Mapping[str, Any] | None = None,
-    ) -> list[Any]:
+    ) -> list[ExecutionResult]:
         """
         Execute multiple tool adapters sequentially.
 
         Execution order is preserved.
 
         Individual adapter failures are represented by their
-        ExecutionResult and do not automatically abort the complete batch.
+        ExecutionResult and do not automatically abort the batch.
         """
 
-        results: list[Any] = []
+        results: list[ExecutionResult] = []
 
         for adapter in adapters:
             result = self.execute(
@@ -566,21 +820,35 @@ class ToolExecutor:
         tool: str,
         capability: str,
         error: str,
-    ) -> Any:
+    ) -> ExecutionResult:
         """
-        Construct an ExecutionResult failure without importing the runtime
-        package at module import time.
+        Construct a canonical ExecutionResult failure.
         """
-
-        from scopeforgex.models.execution_result import (
-            ExecutionResult,
-        )
 
         return ExecutionResult.failure(
             tool=tool,
             capability=capability,
             error=error,
         )
+
+
+###############################################################################
+# Command Formatting
+###############################################################################
+
+
+def _command_to_string(
+    command: list[str],
+) -> str:
+    """
+    Convert a structured command into a safely quoted shell command.
+    """
+
+    import shlex
+
+    return shlex.join(
+        command
+    )
 
 
 ###############################################################################
@@ -594,7 +862,7 @@ def execute_tool(
     *,
     runtime_state: Any | None = None,
     timeout: int = 600,
-) -> Any:
+) -> ExecutionResult:
     """
     Execute one tool through the canonical ToolExecutor.
     """

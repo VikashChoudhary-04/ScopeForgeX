@@ -1,71 +1,469 @@
+# ScopeForgeX — Assessment Profiles
+# ==================================
+#
+# Runtime assessment profiles.
+#
+# Profile configuration controls:
+# - Tool enablement
+# - Runtime tool options
+# - Execution policy
+# - Native analyzer enablement
+#
+# Tool metadata and supported option contracts are defined separately in:
+#
+#     config/tools.yaml
+#
+# Command construction remains owned by the corresponding ToolAdapter.
+#
+# v1.2.0
+
+
 profiles:
+
+  ###########################################################################
+  # FAST
+  ###########################################################################
+
   fast:
+
     description: >
-      Fast, low-volume assessment focused on high-value attack-surface
-      discovery, web enumeration and critical/high vulnerability detection.
+      Minimal high-value assessment focused on active subdomain discovery,
+      HTTP service enumeration, and critical/high-risk vulnerability checks.
 
-    tools:
-      - subhunt
-      - nmap
-      - httpx
-      - katana
-      - nuclei
+    execution:
+      continue_on_error: true
 
-    tool_options:
+    reconnaissance:
+
+      amass:
+        enabled: false
+
+      subhunt:
+        enabled: true
+        options:
+          wordlist: /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+          threads: 25
+
+      nmap:
+        enabled: false
+
+      dig:
+        enabled: false
+
+    enumeration:
+
+      httpx:
+        enabled: true
+
+      katana:
+        enabled: false
+
+      ffuf:
+        enabled: false
+
+      whatweb:
+        enabled: false
+
+      kiterunner:
+        enabled: false
+
+      jsluice:
+        enabled: false
+
+    vulnerability:
+
       nuclei:
-        severity:
-          - critical
-          - high
+        enabled: true
+        options:
+          severity:
+            - critical
+            - high
+          rate_limit: 30
+          timeout: 5
+          retries: 1
 
+      nikto:
+        enabled: false
+
+      testssl:
+        enabled: false
+
+    validation:
+
+      sqlmap:
+        enabled: false
+
+      dalfox:
+        enabled: false
+
+      jwt_tool:
+        enabled: false
+
+      sstimap:
+        enabled: false
+
+    credential:
+
+      hydra:
+        enabled: false
+
+      hashcat:
+        enabled: false
+
+    native_analyzers:
+
+      security_headers:
+        enabled: true
+
+      cookies:
+        enabled: true
+
+      cors:
+        enabled: true
+
+      http_methods:
+        enabled: true
+
+      sensitive_files:
+        enabled: true
+
+      api:
+        enabled: true
+
+
+  ###########################################################################
+  # STANDARD
+  ###########################################################################
 
   standard:
+
     description: >
-      Standard professional assessment covering attack-surface discovery,
-      service enumeration, web/API enumeration, technology fingerprinting,
-      vulnerability assessment and TLS assessment.
+      Normal professional security assessment with full reconnaissance,
+      enumeration, broad vulnerability assessment, and native evidence
+      analysis.
 
-    tools:
-      - amass
-      - subhunt
-      - nmap
-      - dig
+    execution:
+      continue_on_error: true
 
-      - httpx
-      - katana
-      - ffuf
-      - whatweb
-      - kiterunner
-      - jsluice
+    reconnaissance:
 
-      - nuclei
-      - nikto
-      - testssl.sh
+      amass:
+        enabled: true
+        options:
+          passive: true
+          active: false
+          brute: false
 
+      subhunt:
+        enabled: true
+        options:
+          wordlist: /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+          threads: 50
+
+      nmap:
+        enabled: true
+        options:
+          service_detection: true
+          os_detection: false
+          timing: T3
+          nse_profile: safe
+
+      dig:
+        enabled: true
+        options:
+          record_types:
+            - A
+            - AAAA
+            - CNAME
+            - MX
+            - NS
+            - TXT
+            - SOA
+
+    enumeration:
+
+      httpx:
+        enabled: true
+        options:
+          status_code: true
+          title: true
+          server: true
+          technology: true
+          follow_redirects: false
+
+      katana:
+        enabled: true
+        options:
+          depth: 2
+          js_crawl: false
+          known_files: false
+
+      ffuf:
+        enabled: true
+        options:
+          threads: 20
+          rate: 10
+
+      whatweb:
+        enabled: true
+        options:
+          aggression: 1
+
+      kiterunner:
+        enabled: true
+        options:
+          wordlist: /home/kali/tools/kiterunner/wordlists/routes-small.kite
+          threads: 10
+          full_scan: true
+          quiet: true
+
+      jsluice:
+        enabled: true
+        options:
+          concurrency: 1
+          include_source: true
+          ignore_strings: false
+          secrets: true
+          resolve_paths: true
+
+    vulnerability:
+
+      nuclei:
+        enabled: true
+        options:
+          severity:
+            - info
+            - low
+            - medium
+            - high
+            - critical
+          rate_limit: 100
+          timeout: 10
+          retries: 2
+
+      nikto:
+        enabled: true
+        options:
+          tuning: default
+          timeout: 10
+
+      testssl:
+        enabled: true
+        options:
+          connect_timeout: 10
+          openssl_timeout: 10
+
+    validation:
+
+      sqlmap:
+        enabled: false
+
+      dalfox:
+        enabled: false
+
+      jwt_tool:
+        enabled: false
+
+      sstimap:
+        enabled: false
+
+    credential:
+
+      hydra:
+        enabled: false
+
+      hashcat:
+        enabled: false
+
+    native_analyzers:
+
+      security_headers:
+        enabled: true
+
+      cookies:
+        enabled: true
+
+      cors:
+        enabled: true
+
+      http_methods:
+        enabled: true
+
+      sensitive_files:
+        enabled: true
+
+      api:
+        enabled: true
+
+
+  ###########################################################################
+  # FULL
+  ###########################################################################
 
   full:
+
     description: >
-      Full configured assessment covering reconnaissance, enumeration,
-      vulnerability assessment and specialized vulnerability validation.
-      Credential assessment remains opt-in and is not executed automatically.
+      Maximum configured assessment coverage including extended enumeration,
+      lower-severity vulnerability checks, native analysis, and target-dependent
+      validation capabilities.
 
-    tools:
-      - amass
-      - subhunt
-      - nmap
-      - dig
+    execution:
+      continue_on_error: true
 
-      - httpx
-      - katana
-      - ffuf
-      - whatweb
-      - kiterunner
-      - jsluice
+    reconnaissance:
 
-      - nuclei
-      - nikto
-      - testssl.sh
+      amass:
+        enabled: true
+        options:
+          passive: false
+          active: true
+          brute: true
 
-      - sqlmap
-      - dalfox
-      - jwt_tool
-      - sstimap
+      subhunt:
+        enabled: true
+        options:
+          wordlist: /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+          threads: 100
+
+      nmap:
+        enabled: true
+        options:
+          service_detection: true
+          os_detection: true
+          timing: T4
+          nse_profile: default
+
+      dig:
+        enabled: true
+        options:
+          record_types:
+            - A
+            - AAAA
+            - CNAME
+            - MX
+            - NS
+            - TXT
+            - SOA
+
+    enumeration:
+
+      httpx:
+        enabled: true
+        options:
+          status_code: true
+          title: true
+          server: true
+          technology: true
+          follow_redirects: true
+
+      katana:
+        enabled: true
+        options:
+          depth: 5
+          js_crawl: true
+          known_files: true
+
+      ffuf:
+        enabled: true
+        options:
+          threads: 50
+          rate: 50
+
+      whatweb:
+        enabled: true
+        options:
+          aggression: 3
+
+      kiterunner:
+        enabled: true
+        options:
+          wordlist: /home/kali/tools/kiterunner/wordlists/routes-small.kite
+          threads: 25
+          full_scan: true
+          quiet: true
+
+      jsluice:
+        enabled: true
+        options:
+          concurrency: 4
+          include_source: true
+          ignore_strings: false
+          secrets: true
+          resolve_paths: true
+
+    vulnerability:
+
+      nuclei:
+        enabled: true
+        options:
+          severity:
+            - critical
+            - high
+            - medium
+            - low
+            - info
+          rate_limit: 100
+          timeout: 10
+          retries: 2
+
+      nikto:
+        enabled: true
+        options:
+          tuning: default
+          timeout: 10
+
+      testssl:
+        enabled: true
+        options:
+          connect_timeout: 10
+          openssl_timeout: 10
+
+    validation:
+
+      sqlmap:
+        enabled: true
+        mode: conditional
+
+      dalfox:
+        enabled: true
+        mode: conditional
+
+      jwt_tool:
+        enabled: true
+        mode: conditional
+
+      sstimap:
+        enabled: true
+        mode: conditional
+
+    credential:
+
+      # Credential assessment remains deliberately opt-in even under FULL.
+
+      hydra:
+        enabled: false
+        mode: explicit
+
+      hashcat:
+        enabled: false
+        mode: explicit
+
+    native_analyzers:
+
+      security_headers:
+        enabled: true
+
+      cookies:
+        enabled: true
+
+      cors:
+        enabled: true
+
+      http_methods:
+        enabled: true
+
+      sensitive_files:
+        enabled: true
+
+      api:
+        enabled: true

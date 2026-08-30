@@ -1,40 +1,66 @@
 """
-ScopeForgeX Stage 6
-===================
+ScopeForgeX — Stage 6 Reporting & Cleanup
+=========================================
 
-Reporting & Cleanup Stage
+Stage 6 of the ScopeForgeX ethical hacking workflow.
 
 Responsibilities
 ----------------
-- Collect workflow metadata
-- Discover generated artifacts
-- Parse vulnerability scanner output
-- Convert canonical runtime phase results into reporting results
-- Build ReportData
-- Generate Markdown + JSON reports
 
-RuntimeState is the authoritative source of workflow execution history.
+- Collect final workflow metadata.
+- Aggregate execution results and assessment findings.
+- Generate the final Markdown and JSON reports.
+- Preserve generated artifacts.
+- Present a concise completion summary.
+- Perform safe workflow cleanup without deleting assessment evidence.
 
-v1.1.0
+Architecture
+------------
+
+Stages 0–5
+    |
+    v
+Stage 6
+    |
+    +--> Findings
+    +--> Execution Results
+    +--> Statistics
+    +--> Warnings / Errors
+    +--> ReportData
+            |
+            +--> Markdown
+            +--> JSON
+
+Design Principles
+-----------------
+
+- Reporting consumes structured workflow data.
+- Reporting does not execute assessment tools.
+- Reporting does not perform network requests.
+- Reporting does not independently classify vulnerabilities.
+- Original findings remain available.
+- Generated evidence is preserved.
+- Report generation failures are reported explicitly.
+- Cleanup must never silently remove assessment evidence.
+- Markdown and JSON reports represent the same final assessment state.
+
+v1.3.0
 """
 
 from __future__ import annotations
 
-import time
-from datetime import datetime
-from pathlib import Path
+import json
+import os
+from datetime import datetime, timezone
+from typing import Any
 
-from reporting.models import (
-    ReportData,
-    ScanStatistics,
-    StageResult,
+from scopeforgex.ui import (
+    err,
+    info,
+    ok,
+    stage,
+    warn,
 )
-from reporting.report_generator import ReportGenerator
-from reporting.json_exporter import export_json_report
-from reporting.parsers.nuclei_parser import parse_nuclei
-
-from scopeforgex.runtime import AssessmentPhase
-from scopeforgex.ui import ok, stage
 
 
 ###############################################################################
@@ -42,506 +68,617 @@ from scopeforgex.ui import ok, stage
 ###############################################################################
 
 
+def _utc_now() -> datetime:
+    """
+    Return the current UTC timestamp.
+    """
+
+    return datetime.now(
+        timezone.utc
+    )
+
+
 def _count_lines(
-    path: Path | None,
+    path: str,
 ) -> int:
     """
-    Count non-empty lines in a file.
+    Count non-empty lines in a text file.
+
+    Missing or unreadable files return zero so reporting can continue when an
+    optional tool did not produce an artifact.
     """
 
-    if path is None:
+    if not os.path.isfile(
+        path
+    ):
         return 0
 
-    if not path.exists():
+    try:
+
+        with open(
+            path,
+            "r",
+            encoding="utf-8",
+            errors="replace",
+        ) as handle:
+
+            return sum(
+                1
+                for line in handle
+                if line.strip()
+            )
+
+    except OSError:
         return 0
 
-    with path.open(
-        "r",
-        encoding="utf-8",
-        errors="ignore",
-    ) as handle:
 
-        return sum(
-            1
-            for line in handle
-            if line.strip()
-        )
-
-
-def _discover_artifacts(
-    outdir: Path,
+def _read_preview(
+    path: str,
+    limit: int = 30,
 ) -> list[str]:
     """
-    Discover generated files inside the workflow output directory.
-
-    Report files themselves are excluded so that files_generated represents
-    scan artifacts rather than the reports currently being generated.
+    Read a bounded preview from a text artifact.
     """
 
-    if not outdir.exists():
+    if not os.path.isfile(
+        path
+    ):
         return []
 
-    artifacts: list[str] = []
+    lines: list[str] = []
 
-    excluded = {
-        "report.md",
-        "report.json",
-    }
+    try:
 
-    for path in outdir.rglob("*"):
+        with open(
+            path,
+            "r",
+            encoding="utf-8",
+            errors="replace",
+        ) as handle:
 
-        if not path.is_file():
-            continue
+            for line in handle:
 
-        if ".gitkeep" in str(path):
-            continue
+                value = line.rstrip()
 
-        relative = path.relative_to(
-            outdir
-        )
+                if not value:
+                    continue
 
-        if relative.name in excluded:
-            continue
+                lines.append(
+                    value
+                )
 
-        artifacts.append(
-            str(relative)
-        )
+                if len(
+                    lines
+                ) >= limit:
+                    break
 
-    return sorted(
-        artifacts
-    )
+    except OSError:
+        return []
 
-
-###############################################################################
-# Reporting Stage
-###############################################################################
+    return lines
 
 
-class ReportingStage:
+def _json_default(
+    value: Any,
+) -> Any:
     """
-    Builds final ScopeForgeX reports.
+    Convert common ScopeForgeX values into JSON-compatible values.
     """
 
-    def __init__(
-        self,
-        ctx: dict,
-    ) -> None:
-
-        self.ctx = ctx
-
-        self.outdir = Path(
-            ctx["outdir"]
-        )
-
-        self.report_path = (
-            self.outdir / "report.md"
-        )
-
-        self.json_path = (
-            self.outdir / "report.json"
-        )
-
-        self.artifacts: list[str] = []
-
-    ###########################################################################
-    # Artifact Paths
-    ###########################################################################
-
-    def artifact_paths(
-        self,
-    ) -> dict[str, Path]:
-
-        recon = self.outdir / "recon"
-        vuln = self.outdir / "vuln"
-
-        return {
-            "hosts_raw":
-                recon / "hosts_raw.txt",
-
-            "hosts_alive":
-                recon / "hosts_alive.txt",
-
-            "hosts_final":
-                recon / "hosts_final.txt",
-
-            "urls_final":
-                recon / "urls_final.txt",
-
-            "nuclei":
-                vuln / "nuclei.txt",
-        }
-
-    ###########################################################################
-    # Statistics
-    ###########################################################################
-
-    def statistics(
-        self,
-    ) -> ScanStatistics:
-        """
-        Build workflow statistics.
-
-        Filesystem-derived metrics describe generated scan artifacts.
-
-        Runtime-derived metrics describe actual execution history.
-
-        RuntimeState is the authoritative source for execution metrics.
-        """
-
-        files = self.artifact_paths()
-
-        self.artifacts = _discover_artifacts(
-            self.outdir
-        )
-
-        runtime = self.ctx.get(
-            "runtime"
-        )
-
-        tools_executed = 0
-        stages_executed = 0
-        stages_skipped = 0
-
-        if runtime is not None:
-
-            tool_results = getattr(
-                runtime,
-                "tool_results",
-                [],
-            )
-
-            stage_results = getattr(
-                runtime,
-                "stage_results",
-                [],
-            )
-
-            tools_executed = len(
-                tool_results
-            )
-
-            for result in stage_results:
-
-                if getattr(
-                    result,
-                    "success",
-                    False,
-                ):
-                    stages_executed += 1
-                else:
-                    stages_skipped += 1
-
-        return ScanStatistics(
-            subdomains_found=_count_lines(
-                files["hosts_raw"]
-            ),
-
-            alive_hosts=_count_lines(
-                files["hosts_alive"]
-            ),
-
-            final_hosts=_count_lines(
-                files["hosts_final"]
-            ),
-
-            urls_discovered=_count_lines(
-                files["urls_final"]
-            ),
-
-            nuclei_findings=_count_lines(
-                files["nuclei"]
-            ),
-
-            files_generated=len(
-                self.artifacts
-            ),
-
-            stages_executed=stages_executed,
-
-            stages_skipped=stages_skipped,
-
-            tools_executed=tools_executed,
-        )
-
-    ###########################################################################
-    # Findings
-    ###########################################################################
-
-    def findings(
-        self,
+    if isinstance(
+        value,
+        datetime,
     ):
-        """
-        Parse vulnerability scanner findings.
-        """
+        return value.isoformat()
 
-        nuclei_file = (
-            self.artifact_paths()["nuclei"]
+    if hasattr(
+        value,
+        "as_dict",
+    ):
+        return value.as_dict()
+
+    if hasattr(
+        value,
+        "__dict__",
+    ):
+        return vars(
+            value
         )
 
-        if not nuclei_file.exists():
-            return []
-
-        return parse_nuclei(
-            str(
-                nuclei_file
-            )
-        )
-
-    ###########################################################################
-    # Stage Results
-    ###########################################################################
-
-    def _stage_results(
-        self,
-    ) -> list[StageResult]:
-        """
-        Convert canonical runtime phase results into reporting results.
-
-        RuntimeState is the authoritative source of execution history.
-
-        Stage 6 does not reconstruct phases from filesystem artifacts and
-        does not consume legacy ctx["stage_results"] data.
-
-        The runtime StageResult and reporting StageResult are deliberately
-        separate models: runtime owns execution state, while reporting owns
-        the report representation.
-        """
-
-        runtime = self.ctx.get(
-            "runtime"
-        )
-
-        if runtime is None:
-            return []
-
-        runtime_results = getattr(
-            runtime,
-            "stage_results",
-            [],
-        )
-
-        output: list[StageResult] = []
-
-        for result in runtime_results:
-
-            phase = getattr(
-                result,
-                "phase",
-                None,
-            )
-
-            if phase is None:
-                continue
-
-            if not isinstance(
-                phase,
-                AssessmentPhase,
-            ):
-                continue
-
-            status = (
-                "Completed"
-                if getattr(
-                    result,
-                    "success",
-                    False,
-                )
-                else "Failed"
-            )
-
-            output.append(
-                StageResult(
-                    phase=phase,
-                    status=status,
-                )
-            )
-
-        return output
-
-    ###########################################################################
-    # Tool Results
-    ###########################################################################
-
-    def _tool_results(
-        self,
-    ) -> dict[str, str]:
-        """
-        Build a report-friendly tool execution summary from RuntimeState.
-
-        RuntimeState is the authoritative source of tool execution history.
-        """
-
-        runtime = self.ctx.get(
-            "runtime"
-        )
-
-        if runtime is None:
-            return {}
-
-        results = getattr(
-            runtime,
-            "tool_results",
-            [],
-        )
-
-        output: dict[str, str] = {}
-
-        for result in results:
-
-            tool = str(
-                getattr(
-                    result,
-                    "tool",
-                    "",
-                )
-            ).strip()
-
-            if not tool:
-                continue
-
-            output[tool] = (
-                "Completed"
-                if getattr(
-                    result,
-                    "success",
-                    False,
-                )
-                else "Failed"
-            )
-
-        return output
-
-    ###########################################################################
-    # Build Report
-    ###########################################################################
-
-    def build_report(
-        self,
-    ) -> ReportData:
-        """
-        Build the canonical ReportData object.
-
-        RuntimeState supplies execution history while filesystem artifacts
-        supply scan-specific discovery and finding data.
-        """
-
-        start = self.ctx.get(
-            "workflow_start_time",
-            time.time(),
-        )
-
-        end = self.ctx.get(
-            "workflow_end_time",
-            time.time(),
-        )
-
-        statistics = self.statistics()
-
-        findings = self.findings()
-
-        report = ReportData(
-            target=self.ctx.get(
-                "target",
-                "-",
-            ),
-
-            profile=self.ctx.get(
-                "profile",
-                "-",
-            ),
-
-            target_type=self.ctx.get(
-                "target_type",
-                "-",
-            ),
-
-            start_time=datetime.fromtimestamp(
-                start
-            ),
-
-            end_time=datetime.fromtimestamp(
-                end
-            ),
-
-            statistics=statistics,
-
-            generated_files=list(
-                self.artifacts
-            ),
-
-            stages=self._stage_results(),
-
-            tool_results=self._tool_results(),
-        )
-
-        report.duration_seconds = (
-            end - start
-        )
-
-        report.findings = findings
-
-        return report
-
-    ###########################################################################
-    # Generate
-    ###########################################################################
-
-    def generate(
-        self,
-    ) -> ReportData:
-        """
-        Generate Markdown and JSON reports.
-        """
-
-        report = self.build_report()
-
-        ReportGenerator(
-            report
-        ).generate_markdown(
-            str(
-                self.report_path
-            )
-        )
-
-        export_json_report(
-            report,
-            str(
-                self.json_path
-            ),
-        )
-
-        return report
-
-
-###############################################################################
-# Public Stage Entry Point
-###############################################################################
-
-
-def stage6_reporting(
-    ctx: dict,
-) -> None:
-    """
-    Execute the ScopeForgeX-native reporting phase.
-    """
-
-    stage(
-        "PHASE 6 — REPORTING",
-        "green",
+    return str(
+        value
     )
 
-    reporting = ReportingStage(
+
+###############################################################################
+# Report Data Collection
+###############################################################################
+
+
+def _collect_report_data(
+    ctx: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Build a serializable report data structure from workflow context.
+
+    Existing structured report data is preferred when available. Additional
+    runtime metadata is included without mutating the original context.
+    """
+
+    report_data: dict[str, Any] = {}
+
+    existing = ctx.get(
+        "report_data"
+    )
+
+    if isinstance(
+        existing,
+        dict,
+    ):
+        report_data.update(
+            existing
+        )
+
+    report_data.setdefault(
+        "target",
+        ctx.get(
+            "target",
+            "",
+        ),
+    )
+
+    report_data.setdefault(
+        "profile",
+        ctx.get(
+            "profile",
+            "",
+        ),
+    )
+
+    report_data.setdefault(
+        "target_type",
+        ctx.get(
+            "target_type",
+            "",
+        ),
+    )
+
+    report_data.setdefault(
+        "generated_at",
+        _utc_now().isoformat(),
+    )
+
+    return report_data
+
+
+###############################################################################
+# Markdown Report
+###############################################################################
+
+
+def _build_markdown_report(
+    ctx: dict[str, Any],
+) -> str:
+    """
+    Build the final Markdown report.
+
+    The renderer remains intentionally conservative: it summarizes known
+    structured workflow data and selected artifact statistics without
+    inventing vulnerability findings.
+    """
+
+    outdir = str(
+        ctx.get(
+            "outdir",
+            ".",
+        )
+    )
+
+    target = str(
+        ctx.get(
+            "target",
+            "",
+        )
+    )
+
+    profile = str(
+        ctx.get(
+            "profile",
+            "",
+        )
+    )
+
+    recon_dir = os.path.join(
+        outdir,
+        "recon",
+    )
+
+    vuln_dir = os.path.join(
+        outdir,
+        "vuln",
+    )
+
+    hosts_alive = os.path.join(
+        recon_dir,
+        "hosts_alive.txt",
+    )
+
+    nuclei_txt = os.path.join(
+        vuln_dir,
+        "nuclei.txt",
+    )
+
+    nuclei_log = os.path.join(
+        vuln_dir,
+        "nuclei.log",
+    )
+
+    alive_count = _count_lines(
+        hosts_alive
+    )
+
+    nuclei_count = _count_lines(
+        nuclei_txt
+    )
+
+    nuclei_preview = _read_preview(
+        nuclei_txt,
+        30,
+    )
+
+    report_data = _collect_report_data(
         ctx
     )
 
-    reporting.generate()
+    md: list[str] = []
 
-    ok(
-        f"Reports written to {reporting.outdir}"
+    md.append(
+        "# ScopeForgeX Assessment Report\n"
+    )
+
+    md.append(
+        f"- **Target:** {target}\n"
+    )
+
+    md.append(
+        f"- **Profile:** {profile}\n"
+    )
+
+    md.append(
+        f"- **Generated:** "
+        f"{report_data.get('generated_at', '')}\n"
+    )
+
+    md.append(
+        "\n## Reconnaissance\n"
+    )
+
+    md.append(
+        f"- Alive hosts (httpx): **{alive_count}**\n"
+    )
+
+    md.append(
+        "\n## Vulnerability Identification\n"
+    )
+
+    md.append(
+        f"- Findings count: **{nuclei_count}**\n"
+    )
+
+    if nuclei_count > 0:
+
+        md.append(
+            "\n### Nuclei Findings Preview\n"
+        )
+
+        md.append(
+            "```text\n"
+        )
+
+        md.extend(
+            f"{line}\n"
+            for line in nuclei_preview
+        )
+
+        md.append(
+            "```\n"
+        )
+
+    else:
+
+        md.append(
+            "\n- No Nuclei findings were recorded in the "
+            "available text artifact.\n"
+        )
+
+    if os.path.exists(
+        nuclei_log
+    ):
+
+        md.append(
+            "\n## Vulnerability Scanner Log\n"
+        )
+
+        md.append(
+            f"- `{nuclei_log}`\n"
+        )
+
+    warnings = ctx.get(
+        "warnings",
+        [],
+    )
+
+    errors = ctx.get(
+        "errors",
+        [],
+    )
+
+    if warnings:
+
+        md.append(
+            "\n## Warnings\n"
+        )
+
+        for warning in warnings:
+
+            md.append(
+                f"- {warning}\n"
+            )
+
+    if errors:
+
+        md.append(
+            "\n## Errors\n"
+        )
+
+        for error in errors:
+
+            md.append(
+                f"- {error}\n"
+            )
+
+    md.append(
+        "\n## Artifacts\n"
+    )
+
+    md.append(
+        f"- Output directory: `{outdir}`\n"
+    )
+
+    return "".join(
+        md
     )
 
 
+###############################################################################
+# JSON Report
+###############################################################################
+
+
+def _build_json_report(
+    ctx: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Build the final JSON report structure.
+
+    Structured result objects are serialized through their ``as_dict`` method
+    when available.
+    """
+
+    report_data = _collect_report_data(
+        ctx
+    )
+
+    report: dict[str, Any] = dict(
+        report_data
+    )
+
+    for key in (
+        "findings",
+        "results",
+        "warnings",
+        "errors",
+        "artifacts",
+        "statistics",
+        "stage_results",
+    ):
+
+        value = ctx.get(
+            key
+        )
+
+        if value is None:
+            continue
+
+        if isinstance(
+            value,
+            list,
+        ):
+
+            report[key] = [
+                item.as_dict()
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
+                else item
+                for item in value
+            ]
+
+        elif hasattr(
+            value,
+            "as_dict",
+        ):
+
+            report[key] = value.as_dict()
+
+        else:
+
+            report[key] = value
+
+    return report
+
+
+###############################################################################
+# Report Generation
+###############################################################################
+
+
+def _write_report_files(
+    ctx: dict[str, Any],
+) -> tuple[str, str]:
+    """
+    Write Markdown and JSON reports.
+
+    Returns:
+        Tuple containing Markdown and JSON report paths.
+    """
+
+    outdir = str(
+        ctx.get(
+            "outdir",
+            ".",
+        )
+    )
+
+    os.makedirs(
+        outdir,
+        exist_ok=True,
+    )
+
+    markdown_path = os.path.join(
+        outdir,
+        "report.md",
+    )
+
+    json_path = os.path.join(
+        outdir,
+        "report.json",
+    )
+
+    markdown = _build_markdown_report(
+        ctx
+    )
+
+    report_json = _build_json_report(
+        ctx
+    )
+
+    with open(
+        markdown_path,
+        "w",
+        encoding="utf-8",
+    ) as handle:
+
+        handle.write(
+            markdown
+        )
+
+    with open(
+        json_path,
+        "w",
+        encoding="utf-8",
+    ) as handle:
+
+        json.dump(
+            report_json,
+            handle,
+            indent=2,
+            ensure_ascii=False,
+            default=_json_default,
+        )
+
+    return (
+        markdown_path,
+        json_path,
+    )
+
+
+###############################################################################
+# Stage 6
+###############################################################################
+
+
+def stage6_report_cleanup(
+    ctx: dict[str, Any],
+) -> None:
+    """
+    Execute Stage 6 reporting and safe cleanup.
+
+    Reporting is performed before cleanup so that all available workflow
+    information is represented in the final artifacts.
+    """
+
+    stage(
+        "STAGE 6 — REPORTING & CLEANUP",
+        "green",
+    )
+
+    try:
+
+        markdown_path, json_path = _write_report_files(
+            ctx
+        )
+
+        info(
+            f"Markdown report: {markdown_path}"
+        )
+
+        info(
+            f"JSON report: {json_path}"
+        )
+
+        generated_files = ctx.setdefault(
+            "generated_files",
+            [],
+        )
+
+        for path in (
+            markdown_path,
+            json_path,
+        ):
+
+            if path not in generated_files:
+                generated_files.append(
+                    path
+                )
+
+        ok(
+            "Reports generated successfully."
+        )
+
+    except Exception as exc:
+
+        err(
+            f"Report generation failed: {exc}"
+        )
+
+        ctx.setdefault(
+            "errors",
+            [],
+        ).append(
+            f"Stage 6 reporting failed: {exc}"
+        )
+
+        return
+
+    # Cleanup is intentionally conservative. Assessment artifacts are retained
+    # by default because they may be required for validation, reproduction,
+    # reporting, or audit purposes.
+    warn(
+        "Cleanup skipped: assessment artifacts are preserved."
+    )
+
+    ok(
+        "Stage 6 reporting and cleanup finished."
+    )
+
+
+###############################################################################
+# Public API
+###############################################################################
+
+
 __all__ = [
-    "ReportingStage",
-    "stage6_reporting",
+    "stage6_report_cleanup",
 ]

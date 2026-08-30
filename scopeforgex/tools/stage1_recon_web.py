@@ -2,255 +2,75 @@
 ScopeForgeX Web Reconnaissance Tools
 ====================================
 
-Capability-oriented web reconnaissance adapters.
+Native 3.0 adapters for web-oriented reconnaissance tools.
 
-Integrated capabilities:
-    - Active subdomain discovery
-    - HTTP service probing
-    - Web crawling and endpoint discovery
+Tools
+-----
+
+- Subhunt
 
 Architecture
 ------------
-Tool adapters own:
 
-    - tool metadata
-    - option handling
-    - command construction
-    - execution delegation
-    - artifact collection
+Workflow Engine
+    |
+    v
+Tool Registry
+    |
+    v
+ToolContext
+    |
+    v
+Subhunt ToolAdapter
+    |
+    +-- ToolDefinition
+    +-- option validation
+    +-- target normalization
+    +-- command construction
+    +-- result normalization
+    +-- artifact preservation
+    |
+    v
+ToolExecutor
+    |
+    v
+Execution Layer
 
-The workflow engine must not construct tool-specific commands.
+The adapter owns Subhunt-specific command construction and the narrowly
+defined normalization of Subhunt's known completed-scan exit status.
 
-Assessment-phase classification is owned by the canonical tool registry.
-Legacy ``stage`` metadata is intentionally not used.
+Subprocess execution remains the responsibility of the ScopeForgeX execution
+layer.
 
-v1.2.0
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations
 
-import shlex
+import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from scopeforgex.models.execution_result import ExecutionResult
-from scopeforgex.registry.tool_base import ToolBase
+from scopeforgex.registry.tool_base import (
+    ToolAdapter,
+    ToolDefinition,
+    ToolOption,
+)
 from scopeforgex.runner import run_command
 from scopeforgex.toolcheck import is_tool_installed
-from scopeforgex.validators import looks_like_hostname
-from scopeforgex.wordlists import (
-    find_default_subdomain_wordlist,
+
+
+###############################################################################
+# Constants
+###############################################################################
+
+
+DEFAULT_WORDLIST = (
+    "/usr/share/wordlists/seclists/"
+    "Discovery/DNS/subdomains-top1million-5000.txt"
 )
-
-
-###############################################################################
-# Helpers
-###############################################################################
-
-
-def _recon_dir(ctx: dict[str, Any]) -> Path:
-    """
-    Return the reconnaissance output directory.
-    """
-
-    directory = Path(ctx["outdir"]) / "recon"
-
-    directory.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    return directory
-
-
-def _quote(value: str) -> str:
-    """
-    Safely quote a shell argument.
-    """
-
-    return shlex.quote(value)
-
-
-def _empty_file(path: str | Path) -> None:
-    """
-    Create or truncate a file.
-    """
-
-    output = Path(path)
-
-    output.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    output.write_text(
-        "",
-        encoding="utf-8",
-    )
-
-
-def _dedupe_file(path: str | Path) -> int:
-    """
-    Remove duplicate non-empty lines while preserving order.
-
-    Returns:
-        Number of unique entries.
-    """
-
-    output = Path(path)
-
-    if not output.exists():
-        return 0
-
-    try:
-        with output.open(
-            "r",
-            encoding="utf-8",
-            errors="ignore",
-        ) as infile:
-
-            lines = [
-                line.strip()
-                for line in infile
-                if line.strip()
-            ]
-
-        unique = list(
-            dict.fromkeys(lines)
-        )
-
-        with output.open(
-            "w",
-            encoding="utf-8",
-        ) as outfile:
-
-            if unique:
-                outfile.write(
-                    "\n".join(unique)
-                    + "\n"
-                )
-
-    except OSError:
-        return 0
-
-    return len(unique)
-
-
-def _append_clean_hosts(
-    input_path: str | Path,
-    output_path: str | Path,
-) -> None:
-    """
-    Append valid hostnames from input_path into output_path.
-    """
-
-    input_file = Path(input_path)
-    output_file = Path(output_path)
-
-    if not input_file.exists():
-        return
-
-    try:
-        with input_file.open(
-            "r",
-            encoding="utf-8",
-            errors="ignore",
-        ) as infile:
-
-            hosts = [
-                line.strip().lower()
-                for line in infile
-                if looks_like_hostname(
-                    line.strip()
-                )
-            ]
-
-    except OSError:
-        return
-
-    output_file.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    with output_file.open(
-        "a",
-        encoding="utf-8",
-    ) as outfile:
-
-        for host in hosts:
-            outfile.write(
-                host + "\n"
-            )
-
-
-def _append_clean_urls(
-    input_path: str | Path,
-    output_path: str | Path,
-) -> None:
-    """
-    Append HTTP/HTTPS URLs from input_path into output_path.
-    """
-
-    input_file = Path(input_path)
-    output_file = Path(output_path)
-
-    if not input_file.exists():
-        return
-
-    try:
-        with input_file.open(
-            "r",
-            encoding="utf-8",
-            errors="ignore",
-        ) as infile:
-
-            urls = [
-                line.strip()
-                for line in infile
-                if line.strip().startswith(
-                    (
-                        "http://",
-                        "https://",
-                    )
-                )
-            ]
-
-    except OSError:
-        return
-
-    output_file.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    with output_file.open(
-        "a",
-        encoding="utf-8",
-    ) as outfile:
-
-        for url in urls:
-            outfile.write(
-                url + "\n"
-            )
-
-
-def _tool_missing(
-    tool_name: str,
-    capability: str,
-) -> ExecutionResult | None:
-    """
-    Return a failure result when an executable is unavailable.
-    """
-
-    if is_tool_installed(tool_name):
-        return None
-
-    return ExecutionResult.failure(
-        tool=tool_name,
-        capability=capability,
-        error=f"{tool_name} not installed",
-    )
 
 
 ###############################################################################
@@ -258,794 +78,483 @@ def _tool_missing(
 ###############################################################################
 
 
-class SubhuntTool(ToolBase):
+class SubhuntTool(
+    ToolAdapter
+):
     """
-    Perform active wordlist-based subdomain discovery with Subhunt.
+    Subhunt active subdomain-enumeration adapter.
+
+    Workflow targets may be supplied as URLs, hostnames, or host:port values.
+    Subhunt itself expects a hostname/domain, so the adapter normalizes the
+    target before constructing the command.
+
+    Subhunt v1.1.0 may return exit code 1 after a completed scan, including
+    the valid zero-findings case. ``normalize_result()`` handles that
+    tool-specific execution contract when Subhunt reports that its scan
+    actually completed.
     """
 
-    name = "subhunt"
-    display_name = "Subhunt"
-
-    description = (
-        "Active wordlist-based subdomain discovery."
+    definition = ToolDefinition(
+        name="subhunt",
+        capability="subdomain_discovery",
+        phase="reconnaissance",
+        purpose="Active wordlist-based subdomain discovery.",
+        executable="subhunt",
+        input_type="domain",
+        output_type="raw",
+        finding_types=(
+            "SUBDOMAIN",
+        ),
+        dependencies=(
+            "subhunt",
+        ),
+        options=(
+            ToolOption(
+                name="wordlist",
+                flag="--bruteforce",
+                description=(
+                    "Wordlist used for active subdomain discovery."
+                ),
+                option_type="path",
+                default=DEFAULT_WORDLIST,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="threads",
+                flag="--threads",
+                description="Number of concurrent Subhunt workers.",
+                option_type="integer",
+                default=None,
+                safe=True,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="timeout",
+                flag="--timeout",
+                description="Subhunt execution timeout.",
+                option_type="integer",
+                default=None,
+                safe=True,
+                aggressive=False,
+            ),
+        ),
+        safe=True,
+        aggressive=False,
     )
 
-    capability = (
-        "active_subdomain_discovery"
-    )
-
-    input_type = "domain"
-    output_type = "discovery"
-
-    finding_types = (
-        "SUBDOMAIN",
-    )
-
-    risk = "low"
-
-    supported_options = (
-        "wordlist",
-        "threads",
-        "quiet",
-    )
-
-    default_options = {
-        "wordlist": None,
-        "threads": 50,
-        "quiet": True,
-    }
-
-    def _resolve_options(
-        self,
-        ctx: dict[str, Any],
-    ) -> dict[str, Any]:
-        """
-        Resolve Subhunt options from the execution context.
-        """
-
-        configured = ctx.get(
-            "tool_options",
-            {},
-        )
-
-        if not isinstance(
-            configured,
-            dict,
-        ):
-            configured = {}
-
-        tool_options = configured.get(
-            self.name,
-            {},
-        )
-
-        if not isinstance(
-            tool_options,
-            dict,
-        ):
-            tool_options = {}
-
-        return self.validate_options(
-            tool_options
-        )
-
-    def _resolve_wordlist(
-        self,
-        options: dict[str, Any],
-    ) -> str | None:
-        """
-        Resolve the configured or default Subhunt wordlist.
-        """
-
-        configured = options.get(
-            "wordlist"
-        )
-
-        if configured:
-            return str(
-                configured
-            )
-
-        return find_default_subdomain_wordlist()
-
-    def build_command(
-        self,
-        ctx: dict[str, Any],
+    @staticmethod
+    def _target_hostname(
+        target: str,
     ) -> str:
         """
-        Build the Subhunt command.
+        Normalize a workflow target into the hostname expected by Subhunt.
+
+        Examples:
+
+            http://example.com -> example.com
+            https://example.com -> example.com
+            example.com        -> example.com
+            example.com:443    -> example.com
         """
 
-        options = self._resolve_options(
-            ctx
-        )
-
-        target = str(
-            ctx.get(
-                "target",
-                "",
-            )
+        value = str(
+            target
         ).strip()
 
-        if not target:
+        if not value:
             raise ValueError(
-                "Subhunt requires a target domain."
+                "Subhunt target cannot be empty."
             )
 
-        command = [
-            "subhunt",
-            "-d",
-            target,
-        ]
-
-        wordlist = self._resolve_wordlist(
-            options
+        parsed = (
+            urlparse(
+                value
+            )
+            if "://" in value
+            else urlparse(
+                f"//{value}"
+            )
         )
 
-        if wordlist:
-            command.extend(
-                [
-                    "--bruteforce",
-                    wordlist,
-                ]
+        hostname = parsed.hostname
+
+        if not hostname:
+            raise ValueError(
+                f"Could not determine hostname from Subhunt target: "
+                f"{target!r}"
             )
 
-        threads = options.get(
+        return hostname
+
+    def validate_options(
+        self,
+    ) -> None:
+        """
+        Validate Subhunt-specific options.
+        """
+
+        super().validate_options()
+
+        wordlist = self.get_option(
+            "wordlist",
+        )
+
+        if wordlist is None:
+            wordlist = DEFAULT_WORDLIST
+
+        if not str(
+            wordlist
+        ).strip():
+            raise ValueError(
+                "Subhunt wordlist cannot be empty."
+            )
+
+        for name in (
+            "threads",
+            "timeout",
+        ):
+            value = self.get_option(
+                name
+            )
+
+            if value is None:
+                continue
+
+            self._validate_positive_integer(
+                name,
+                value,
+            )
+
+    def build_arguments(
+        self,
+    ) -> list[str]:
+        """
+        Build Subhunt-specific command-line arguments.
+        """
+
+        self.validate_options()
+
+        arguments: list[str] = [
+            "-d",
+            self._target_hostname(
+                self.context.target
+            ),
+        ]
+
+        wordlist = self.get_option(
+            "wordlist",
+        )
+
+        if wordlist is None:
+            wordlist = DEFAULT_WORDLIST
+
+        arguments.extend(
+            [
+                "--bruteforce",
+                str(wordlist),
+            ]
+        )
+
+        threads = self.get_option(
             "threads"
         )
 
         if threads is not None:
-            command.extend(
+            arguments.extend(
                 [
                     "--threads",
                     str(threads),
                 ]
             )
 
-        if options.get(
-            "quiet",
-            False,
-        ):
-            command.append(
-                "--quiet"
+        timeout = self.get_option(
+            "timeout"
+        )
+
+        if timeout is not None:
+            arguments.extend(
+                [
+                    "--timeout",
+                    str(timeout),
+                ]
             )
 
-        return " ".join(
-            _quote(part)
-            for part in command
+        return arguments
+
+    @staticmethod
+    def _validate_positive_integer(
+        name: str,
+        value: Any,
+    ) -> None:
+        """
+        Validate an integer execution-control option.
+        """
+
+        if (
+            not isinstance(
+                value,
+                int,
+            )
+            or isinstance(
+                value,
+                bool,
+            )
+        ):
+            raise TypeError(
+                f"Subhunt {name} must be an integer."
+            )
+
+        if value <= 0:
+            raise ValueError(
+                f"Subhunt {name} must be greater than zero."
+            )
+
+    @staticmethod
+    def _strip_ansi(
+        value: str,
+    ) -> str:
+        """
+        Remove ANSI terminal escape sequences from text.
+        """
+
+        return re.sub(
+            r"\x1b\[[0-9;?]*[ -/]*[@-~]",
+            "",
+            value,
         )
+
+    @classmethod
+    def normalize_result(
+        cls,
+        result: ExecutionResult,
+    ) -> ExecutionResult:
+        """
+        Normalize Subhunt's completed-scan exit status.
+
+        Subhunt v1.1.0 can return exit code 1 after a completed scan,
+        including the zero-findings case.
+
+        ToolExecutor invokes this hook after centralized process execution.
+
+        Only exit code 1 accompanied by the explicit ``Scan Finished`` marker
+        is normalized. Other non-zero results remain failures.
+        """
+
+        exit_code = result.metadata.get(
+            "exit_code"
+        )
+
+        if exit_code != 1:
+            return result
+
+        output_parts = [
+            str(
+                getattr(
+                    result,
+                    "stdout",
+                    "",
+                )
+                or ""
+            ),
+            str(
+                getattr(
+                    result,
+                    "stderr",
+                    "",
+                )
+                or ""
+            ),
+        ]
+
+        outfile = result.metadata.get(
+            "outfile"
+        )
+
+        if outfile:
+            try:
+                output_parts.append(
+                    Path(
+                        str(outfile)
+                    ).read_text(
+                        encoding="utf-8",
+                        errors="replace",
+                    )
+                )
+            except OSError:
+                pass
+
+        normalized_output = cls._strip_ansi(
+            "\n".join(
+                output_parts
+            )
+        )
+
+        if "Scan Finished" not in normalized_output:
+            return result
+
+        result.success = True
+
+        result.errors = [
+            error
+            for error in result.errors
+            if error != "Command exited with status 1."
+        ]
+
+        result.metadata.update(
+            {
+                "subhunt_exit_code_normalized": True,
+                "subhunt_original_exit_code": 1,
+                "subhunt_completion_detected": True,
+            }
+        )
+
+        return result
 
     def run(
         self,
-        ctx: dict[str, Any],
     ) -> ExecutionResult:
         """
-        Execute Subhunt active subdomain discovery.
+        Execute Subhunt through the ScopeForgeX execution layer.
+
+        This method remains available for direct adapter execution and
+        delegates result normalization through ``normalize_result()``.
         """
 
-        capability = self.capability
-
-        if ctx.get(
-            "target_type"
-        ) != "web":
-
-            return ExecutionResult.skipped(
+        if not is_tool_installed(
+            self.executable
+        ):
+            return ExecutionResult.failure(
                 tool=self.name,
-                capability=capability,
-                reason="Skipped (not web target)",
+                capability=self.capability,
+                error="subhunt not installed",
             )
 
-        missing = _tool_missing(
-            self.name,
-            capability,
+        recon_dir = (
+            self.context.output_dir
+            / "recon"
         )
 
-        if missing:
-            return missing
-
-        recon_dir = _recon_dir(
-            ctx
+        recon_dir.mkdir(
+            parents=True,
+            exist_ok=True,
         )
 
-        output = (
+        output_file = (
             recon_dir
             / "subhunt.txt"
         )
 
-        log = (
+        log_file = (
             recon_dir
             / "subhunt.log"
         )
 
-        _empty_file(
-            output
-        )
-
         try:
-            command = self.build_command(
-                ctx
-            )
-        except ValueError as exc:
+            command = self.build_command()
+
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
             return ExecutionResult.failure(
                 tool=self.name,
-                capability=capability,
+                capability=self.capability,
                 error=str(exc),
             )
 
         result = run_command(
             tool=self.name,
-            capability=capability,
-            cmd=(
-                f"{command} "
-                f"> {_quote(str(output))}"
+            capability=self.capability,
+            cmd=" ".join(
+                _shell_quote(
+                    argument
+                )
+                for argument in command
             ),
-            outfile=str(log),
+            outfile=str(log_file),
             timeout=600,
         )
 
-        result.add_artifact(
-            output
+        result.metadata.setdefault(
+            "outfile",
+            str(log_file),
+        )
+
+        result = self.normalize_result(
+            result
+        )
+
+        if log_file.exists():
+            try:
+                log_output = log_file.read_text(
+                    encoding="utf-8",
+                    errors="replace",
+                )
+            except OSError:
+                log_output = ""
+        else:
+            log_output = ""
+
+        output_content = (
+            result.stdout
+            or result.stderr
+            or log_output
+            or ""
+        )
+
+        output_file.write_text(
+            str(
+                output_content
+            ),
+            encoding="utf-8",
         )
 
         result.add_artifact(
-            log
+            str(
+                log_file
+            )
         )
 
-        count = _dedupe_file(
-            output
+        result.add_artifact(
+            str(
+                output_file
+            )
         )
 
         result.metadata.update(
             {
-                "subdomains": count,
-                "output_file": str(output),
-            }
-        )
-
-        return result
-
-
-###############################################################################
-# HTTPX
-###############################################################################
-
-
-class HttpxTool(ToolBase):
-    """
-    Probe hosts for reachable HTTP services.
-    """
-
-    name = "httpx"
-    display_name = "httpx"
-
-    description = (
-        "Identify reachable HTTP services and collect HTTP status, "
-        "title, server and technology metadata."
-    )
-
-    capability = (
-        "http_service_probing"
-    )
-
-    input_type = "host_list"
-    output_type = "http_services"
-
-    finding_types = (
-        "HTTP_SERVICE",
-        "HTTP_STATUS",
-        "WEB_SERVER",
-    )
-
-    risk = "low"
-
-    supported_options = (
-        "ports",
-        "status_code",
-        "title",
-        "server",
-        "technology",
-    )
-
-    default_options = {
-        "status_code": True,
-        "title": True,
-        "server": True,
-        "technology": True,
-    }
-
-    def _resolve_options(
-        self,
-        ctx: dict[str, Any],
-    ) -> dict[str, Any]:
-        configured = ctx.get(
-            "tool_options",
-            {},
-        )
-
-        if not isinstance(
-            configured,
-            dict,
-        ):
-            configured = {}
-
-        options = configured.get(
-            self.name,
-            {},
-        )
-
-        if not isinstance(
-            options,
-            dict,
-        ):
-            options = {}
-
-        return self.validate_options(
-            options
-        )
-
-    def build_command(
-        self,
-        ctx: dict[str, Any],
-    ) -> str:
-        """
-        Build the httpx command from structured options.
-        """
-
-        input_file = ctx.get(
-            "input_file"
-        )
-
-        if not input_file:
-            raise ValueError(
-                "httpx requires an input_file."
-            )
-
-        options = self._resolve_options(
-            ctx
-        )
-
-        command = [
-            "httpx",
-            "-l",
-            str(input_file),
-            "-silent",
-        ]
-
-        ports = options.get(
-            "ports"
-        )
-
-        if ports:
-            command.extend(
-                [
-                    "-ports",
-                    str(ports),
-                ]
-            )
-
-        if options.get(
-            "status_code",
-            False,
-        ):
-            command.append(
-                "-status-code"
-            )
-
-        if options.get(
-            "title",
-            False,
-        ):
-            command.append(
-                "-title"
-            )
-
-        if options.get(
-            "server",
-            False,
-        ):
-            command.append(
-                "-server"
-            )
-
-        if options.get(
-            "technology",
-            False,
-        ):
-            command.append(
-                "-tech-detect"
-            )
-
-        return " ".join(
-            _quote(part)
-            for part in command
-        )
-
-    def run(
-        self,
-        ctx: dict[str, Any],
-    ) -> ExecutionResult:
-        """
-        Execute httpx against a host list.
-        """
-
-        capability = self.capability
-
-        missing = _tool_missing(
-            self.name,
-            capability,
-        )
-
-        if missing:
-            return missing
-
-        input_file = ctx.get(
-            "input_file"
-        )
-
-        if not input_file:
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability=capability,
-                error="httpx input_file is missing.",
-            )
-
-        input_path = Path(
-            input_file
-        )
-
-        if not input_path.exists():
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability=capability,
-                error=(
-                    f"httpx input file does not exist: "
-                    f"{input_path}"
+                "target": self.context.target,
+                "normalized_target": self._target_hostname(
+                    self.context.target
                 ),
-            )
-
-        recon_dir = _recon_dir(
-            ctx
-        )
-
-        output = (
-            recon_dir
-            / "httpx.txt"
-        )
-
-        log = (
-            recon_dir
-            / "httpx.log"
-        )
-
-        _empty_file(
-            output
-        )
-
-        local_ctx = dict(
-            ctx
-        )
-
-        local_ctx["input_file"] = str(
-            input_path
-        )
-
-        try:
-            command = self.build_command(
-                local_ctx
-            )
-        except ValueError as exc:
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability=capability,
-                error=str(exc),
-            )
-
-        result = run_command(
-            tool=self.name,
-            capability=capability,
-            cmd=(
-                f"{command} "
-                f"-o {_quote(str(output))}"
-            ),
-            outfile=str(log),
-            timeout=600,
-        )
-
-        result.add_artifact(
-            input_path
-        )
-
-        result.add_artifact(
-            output
-        )
-
-        result.add_artifact(
-            log
-        )
-
-        services = _dedupe_file(
-            output
-        )
-
-        result.metadata.update(
-            {
-                "input_file": str(input_path),
-                "output_file": str(output),
-                "http_services": services,
-            }
-        )
-
-        return result
-
-
-###############################################################################
-# Katana
-###############################################################################
-
-
-class KatanaTool(ToolBase):
-    """
-    Crawl reachable web services and discover URLs/endpoints.
-    """
-
-    name = "katana"
-    display_name = "Katana"
-
-    description = (
-        "Web crawling and application endpoint discovery."
-    )
-
-    capability = (
-        "web_crawling"
-    )
-
-    input_type = "url_list"
-    output_type = "web_crawl"
-
-    finding_types = (
-        "URL",
-        "ENDPOINT",
-        "PARAMETER",
-        "FORM",
-        "RESOURCE",
-    )
-
-    risk = "medium"
-
-    supported_options = (
-        "depth",
-        "concurrency",
-        "rate_limit",
-        "headless",
-    )
-
-    default_options = {
-        "depth": 3,
-    }
-
-    def _resolve_options(
-        self,
-        ctx: dict[str, Any],
-    ) -> dict[str, Any]:
-        configured = ctx.get(
-            "tool_options",
-            {},
-        )
-
-        if not isinstance(
-            configured,
-            dict,
-        ):
-            configured = {}
-
-        options = configured.get(
-            self.name,
-            {},
-        )
-
-        if not isinstance(
-            options,
-            dict,
-        ):
-            options = {}
-
-        return self.validate_options(
-            options
-        )
-
-    def build_command(
-        self,
-        ctx: dict[str, Any],
-    ) -> str:
-        """
-        Build the Katana crawling command.
-        """
-
-        input_file = ctx.get(
-            "input_file"
-        )
-
-        if not input_file:
-            raise ValueError(
-                "Katana requires an input_file."
-            )
-
-        options = self._resolve_options(
-            ctx
-        )
-
-        command = [
-            "katana",
-            "-list",
-            str(input_file),
-            "-silent",
-        ]
-
-        depth = options.get(
-            "depth"
-        )
-
-        if depth is not None:
-            command.extend(
-                [
-                    "-depth",
-                    str(depth),
-                ]
-            )
-
-        concurrency = options.get(
-            "concurrency"
-        )
-
-        if concurrency is not None:
-            command.extend(
-                [
-                    "-c",
-                    str(concurrency),
-                ]
-            )
-
-        rate_limit = options.get(
-            "rate_limit"
-        )
-
-        if rate_limit is not None:
-            command.extend(
-                [
-                    "-rl",
-                    str(rate_limit),
-                ]
-            )
-
-        if options.get(
-            "headless",
-            False,
-        ):
-            command.append(
-                "-headless"
-            )
-
-        return " ".join(
-            _quote(part)
-            for part in command
-        )
-
-    def run(
-        self,
-        ctx: dict[str, Any],
-    ) -> ExecutionResult:
-        """
-        Execute Katana crawling.
-        """
-
-        capability = self.capability
-
-        missing = _tool_missing(
-            self.name,
-            capability,
-        )
-
-        if missing:
-            return missing
-
-        input_file = ctx.get(
-            "input_file"
-        )
-
-        if not input_file:
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability=capability,
-                error="Katana input_file is missing.",
-            )
-
-        input_path = Path(
-            input_file
-        )
-
-        if not input_path.exists():
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability=capability,
-                error=(
-                    f"Katana input file does not exist: "
-                    f"{input_path}"
+                "output_file": str(
+                    output_file
                 ),
-            )
-
-        recon_dir = _recon_dir(
-            ctx
-        )
-
-        output = (
-            recon_dir
-            / "katana.txt"
-        )
-
-        log = (
-            recon_dir
-            / "katana.log"
-        )
-
-        _empty_file(
-            output
-        )
-
-        local_ctx = dict(
-            ctx
-        )
-
-        local_ctx["input_file"] = str(
-            input_path
-        )
-
-        try:
-            command = self.build_command(
-                local_ctx
-            )
-        except ValueError as exc:
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability=capability,
-                error=str(exc),
-            )
-
-        result = run_command(
-            tool=self.name,
-            capability=capability,
-            cmd=(
-                f"{command} "
-                f"-o {_quote(str(output))}"
-            ),
-            outfile=str(log),
-            timeout=600,
-        )
-
-        result.add_artifact(
-            input_path
-        )
-
-        result.add_artifact(
-            output
-        )
-
-        result.add_artifact(
-            log
-        )
-
-        urls = _dedupe_file(
-            output
-        )
-
-        result.metadata.update(
-            {
-                "input_file": str(input_path),
-                "output_file": str(output),
-                "urls": urls,
+                "command": command,
             }
         )
 
         return result
+
+
+###############################################################################
+# Command Quoting
+###############################################################################
+
+
+def _shell_quote(
+    value: str,
+) -> str:
+    """
+    Quote one command argument for the legacy string-based runner.
+    """
+
+    import shlex
+
+    return shlex.quote(
+        str(value)
+    )
 
 
 ###############################################################################
@@ -1053,16 +562,6 @@ class KatanaTool(ToolBase):
 ###############################################################################
 
 
-ALL_STAGE1_WEB_TOOLS = [
-    SubhuntTool(),
-    HttpxTool(),
-    KatanaTool(),
-]
-
-
 __all__ = [
     "SubhuntTool",
-    "HttpxTool",
-    "KatanaTool",
-    "ALL_STAGE1_WEB_TOOLS",
-]
+    ]

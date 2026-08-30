@@ -1,59 +1,1090 @@
+# ScopeForgeX — Tool Definitions
+# ==============================
+#
+# Declarative metadata for the final ScopeForgeX external tool set.
+#
+# Command construction remains owned by the corresponding tool adapters.
+# Workflow code must not construct tool-specific commands directly.
+#
+# v1.2.0
+
+
+###############################################################################
+# Reconnaissance
+###############################################################################
+
 tools:
-  # Stage 1 Web Recon (CLI)
-  sublist3r: "sublist3r"
-  dnsrecon: "dnsrecon"
-  knockpy: "knockpy"
-  httpx: "httpx"
-  subhunt: "subhunt"
-  gau: "gau"
-  katana: "katana"
 
-  # Stage 1 Network Recon (CLI)
-  naabu: "naabu"
-  rustscan: "rustscan"
-  nmap: "nmap"
+  amass:
 
-  # Stage 2 Enumeration (CLI)
-  gobuster: "gobuster"
-  ffuf: "ffuf"
-  feroxbuster: "feroxbuster"
-  whatweb: "whatweb"
-  wafw00f: "wafw00f"
-  lbd: "lbd"
+    name: amass
+    executable: amass
+    phase: reconnaissance
+    capability: attack_surface_discovery
 
-  # SMB Enum (CLI)
-  enum4linuxng: "enum4linux-ng"
-  smbclient: "smbclient"
-  smbmap: "smbmap"
-  nbtstat: "nbtstat"
+    purpose: >
+      Broad attack-surface discovery including subdomains, DNS relationships,
+      hosts, and infrastructure relationships.
 
-  # SNMP Enum (CLI)
-  onesixtyone: "onesixtyone"
-  snmpwalk: "snmpwalk"
-  snmpcheck: "snmp-check"
+    input:
+      types:
+        - domain
+        - hostname
 
-  # DNS Enum (CLI)
-  dnsenum: "dnsenum"
-  dig: "dig"
+    output:
+      formats:
+        - text
+        - json
 
-  # Stage 3 Vulnerability (CLI)
-  nuclei: "nuclei"
-  nikto: "nikto"
-  wpscan: "wpscan"
+    finding_types:
+      - SUBDOMAIN
+      - DNS_ASSET
+      - HOST
 
-  # Stage 4 Exploit Prep (CLI)
-  sqlmap: "sqlmap"
-  dalfox: "dalfox"
-  xsstrike: "xsstrike"
-  sstimap: "sstimap"
-  searchsploit: "searchsploit"
-  msfvenom: "msfvenom"
-  netcat: "nc"
+    dependencies:
+      - amass
 
-  # Stage 5 Post/Creds Prep (CLI)
-  chisel: "chisel"
-  ssh: "ssh"
-  hydra: "hydra"
-  medusa: "medusa"
-  hashcat: "hashcat"
-  john: "john"
+    options:
+
+      default:
+        passive: true
+        active: false
+        brute: false
+
+      safe:
+        passive: true
+        active: false
+        brute: false
+
+      aggressive:
+        passive: false
+        active: true
+        brute: true
+
+    parser:
+      module: reporting.parsers.amass_parser
+
+    input_type: target
+    output_type: raw
+
+
+  subhunt:
+
+    name: subhunt
+    executable: subhunt
+    phase: reconnaissance
+    capability: subdomain_discovery
+
+    purpose: >
+      Active wordlist-based DNS subdomain enumeration.
+
+    input:
+      types:
+        - domain
+        - wordlist
+
+    output:
+      formats:
+        - text
+
+    finding_types:
+      - SUBDOMAIN
+
+    dependencies:
+      - subhunt
+
+    options:
+
+      default:
+        wordlist: /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+        threads: 50
+
+      safe:
+        wordlist: /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+        threads: 25
+
+      aggressive:
+        wordlist: /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+        threads: 100
+
+    parser:
+      module: reporting.parsers.subhunt_parser
+
+    input_type: domain
+    output_type: raw
+
+
+  nmap:
+
+    name: nmap
+    executable: nmap
+    phase: reconnaissance
+    capability: network_service_discovery
+
+    purpose: >
+      Port discovery, service detection, version detection, OS detection,
+      and NSE-based security checks.
+
+    input:
+      types:
+        - host
+        - ip
+        - cidr
+        - target_list
+
+    output:
+      formats:
+        - normal
+        - xml
+        - grepable
+
+    finding_types:
+      - OPEN_PORT
+      - SERVICE
+      - SERVICE_VERSION
+      - NETWORK_CONFIGURATION
+      - NSE_SECURITY_FINDING
+
+    dependencies:
+      - nmap
+
+    options:
+
+      default:
+        service_detection: true
+        os_detection: false
+        timing: T3
+        nse_profile: safe
+
+      safe:
+        service_detection: true
+        os_detection: false
+        timing: T3
+        nse_profile: safe
+
+      aggressive:
+        service_detection: true
+        os_detection: true
+        timing: T4
+        nse_profile: default
+
+    parser:
+      module: reporting.parsers.nmap_parser
+
+    input_type: host
+    output_type: raw
+
+
+  dig:
+
+    name: dig
+    executable: dig
+    phase: reconnaissance
+    capability: dns_enumeration
+
+    purpose: >
+      Deterministic DNS record and configuration inspection.
+
+    input:
+      types:
+        - domain
+        - hostname
+
+    output:
+      formats:
+        - text
+
+    finding_types:
+      - DNS_RECORD
+      - DNS_CONFIGURATION
+
+    dependencies:
+      - dig
+
+    options:
+
+      default:
+        record_types:
+          - A
+          - AAAA
+          - CNAME
+          - MX
+          - NS
+          - TXT
+          - SOA
+
+      safe:
+        record_types:
+          - A
+          - AAAA
+          - CNAME
+          - MX
+          - NS
+          - TXT
+          - SOA
+
+      aggressive:
+        record_types:
+          - A
+          - AAAA
+          - CNAME
+          - MX
+          - NS
+          - TXT
+          - SOA
+
+    parser:
+      module: reporting.parsers.dig_parser
+
+    input_type: domain
+    output_type: raw
+
+
+###############################################################################
+# Enumeration
+###############################################################################
+
+  httpx:
+
+    name: httpx
+    executable: httpx
+    phase: enumeration
+    capability: http_service_enumeration
+
+    purpose: >
+      Identify responsive HTTP services and collect HTTP status, title,
+      server, and technology information.
+
+    input:
+      types:
+        - host
+        - url
+        - target_list
+
+    output:
+      formats:
+        - text
+        - json
+
+    finding_types:
+      - HTTP_SERVICE
+      - HTTP_STATUS
+      - WEB_SERVER
+
+    dependencies:
+      - httpx
+
+    options:
+
+      default:
+        status_code: true
+        title: true
+        server: true
+        technology: true
+
+      safe:
+        status_code: true
+        title: true
+        server: true
+        technology: true
+
+      aggressive:
+        status_code: true
+        title: true
+        server: true
+        technology: true
+        follow_redirects: true
+
+    parser:
+      module: reporting.parsers.httpx_parser
+
+    input_type: url
+    output_type: raw
+
+
+  katana:
+
+    name: katana
+    executable: katana
+    phase: enumeration
+    capability: web_crawling
+
+    purpose: >
+      Crawl discovered web applications and identify URLs, endpoints,
+      parameters, forms, and resources.
+
+    input:
+      types:
+        - url
+        - url_list
+
+    output:
+      formats:
+        - text
+        - json
+
+    finding_types:
+      - URL
+      - ENDPOINT
+      - PARAMETER
+      - FORM
+      - RESOURCE
+
+    dependencies:
+      - katana
+
+    options:
+
+      default:
+        depth: 2
+        js_crawl: false
+        known_files: false
+
+      safe:
+        depth: 2
+        js_crawl: false
+        known_files: false
+
+      aggressive:
+        depth: 5
+        js_crawl: true
+        known_files: true
+
+    parser:
+      module: reporting.parsers.katana_parser
+
+    input_type: url
+    output_type: raw
+
+
+  ffuf:
+
+    name: ffuf
+    executable: ffuf
+    phase: enumeration
+    capability: content_discovery
+
+    purpose: >
+      Discover hidden content, directories, files, parameters, and virtual
+      hosts.
+
+    input:
+      types:
+        - url
+        - wordlist
+        - url_list
+
+    output:
+      formats:
+        - text
+        - json
+
+    finding_types:
+      - HIDDEN_ENDPOINT
+      - DIRECTORY
+      - FILE
+      - PARAMETER
+      - VHOST
+
+    dependencies:
+      - ffuf
+
+    options:
+
+      default:
+        threads: 20
+        rate: 10
+
+      safe:
+        threads: 10
+        rate: 5
+
+      aggressive:
+        threads: 50
+        rate: 50
+
+    parser:
+      module: reporting.parsers.ffuf_parser
+
+    input_type: url
+    output_type: raw
+
+
+  whatweb:
+
+    name: whatweb
+    executable: whatweb
+    phase: enumeration
+    capability: technology_fingerprinting
+
+    purpose: >
+      Identify web technologies, frameworks, CMS platforms, servers,
+      and libraries.
+
+    input:
+      types:
+        - url
+        - url_list
+
+    output:
+      formats:
+        - text
+        - json
+
+    finding_types:
+      - TECHNOLOGY
+      - FRAMEWORK
+      - CMS
+      - SERVER
+      - LIBRARY
+
+    dependencies:
+      - whatweb
+
+    options:
+
+      default:
+        aggression: 1
+
+      safe:
+        aggression: 1
+
+      aggressive:
+        aggression: 3
+
+    parser:
+      module: reporting.parsers.whatweb_parser
+
+    input_type: url
+    output_type: raw
+
+
+  kiterunner:
+
+    name: kiterunner
+    executable: kr
+    phase: enumeration
+    capability: api_route_discovery
+
+    purpose: >
+      Discover API routes and API endpoints using route wordlists.
+
+    input:
+      types:
+        - url
+        - host
+        - api_target
+
+    output:
+      formats:
+        - text
+        - json
+
+    finding_types:
+      - API_ENDPOINT
+      - API_ROUTE
+
+    dependencies:
+      - kr
+
+    options:
+
+      default:
+        threads: 10
+
+      safe:
+        threads: 5
+
+      aggressive:
+        threads: 25
+
+    parser:
+      module: reporting.parsers.kiterunner_parser
+
+    input_type: url
+    output_type: raw
+
+
+  jsluice:
+
+    name: jsluice
+    executable: jsluice
+    phase: enumeration
+    capability: javascript_attack_surface_analysis
+
+    purpose: >
+      Analyze JavaScript resources for endpoints, URLs, API references,
+      and potential secrets.
+
+    input:
+      types:
+        - url
+        - url_list
+        - javascript_file
+
+    output:
+      formats:
+        - text
+        - json
+
+    finding_types:
+      - JS_ENDPOINT
+      - JS_URL
+      - SECRET_CANDIDATE
+      - API_REFERENCE
+
+    dependencies:
+      - jsluice
+
+    options:
+
+      default:
+        concurrency: 1
+        include_source: true
+        ignore_strings: false
+        secrets: true
+        resolve_paths: true
+
+      safe:
+        concurrency: 1
+        include_source: true
+        ignore_strings: false
+        secrets: true
+        resolve_paths: true
+
+      aggressive:
+        concurrency: 4
+        include_source: true
+        ignore_strings: false
+        secrets: true
+        resolve_paths: true
+
+    parser:
+      module: reporting.parsers.jsluice_parser
+
+    input_type: url
+    output_type: raw
+
+
+###############################################################################
+# Vulnerability Assessment
+###############################################################################
+
+  nuclei:
+
+    name: nuclei
+    executable: nuclei
+    phase: vulnerability_assessment
+    capability: broad_vulnerability_detection
+
+    purpose: >
+      Broad template-based vulnerability, exposure, and misconfiguration
+      detection.
+
+    input:
+      types:
+        - url
+        - host
+        - target_list
+
+    output:
+      formats:
+        - jsonl
+        - text
+
+    finding_types:
+      - VULNERABILITY
+      - MISCONFIGURATION
+      - EXPOSED_RESOURCE
+      - CVE
+      - SECURITY_ISSUE
+
+    dependencies:
+      - nuclei
+
+    options:
+
+      default:
+        severity:
+          - critical
+          - high
+          - medium
+        rate_limit: 100
+        timeout: 10
+        retries: 2
+
+      safe:
+        severity:
+          - critical
+          - high
+        rate_limit: 30
+        timeout: 5
+        retries: 1
+
+      aggressive:
+        severity:
+          - critical
+          - high
+          - medium
+          - low
+          - info
+        rate_limit: 100
+        timeout: 10
+        retries: 2
+
+    parser:
+      module: reporting.parsers.nuclei_parser
+
+    input_type: host_or_url_list
+    output_type: vulnerability_findings
+
+
+  nikto:
+
+    name: nikto
+    executable: nikto
+    phase: vulnerability_assessment
+    capability: web_server_security_assessment
+
+    purpose: >
+      Web-server-specific security assessment including exposed files,
+      configuration issues, and known server vulnerabilities.
+
+    input:
+      types:
+        - url
+        - host
+
+    output:
+      formats:
+        - text
+
+    finding_types:
+      - WEB_SERVER_ISSUE
+      - MISCONFIGURATION
+      - EXPOSED_FILE
+      - SERVER_VULNERABILITY
+
+    dependencies:
+      - nikto
+
+    options:
+
+      default:
+        tuning: default
+        timeout: 10
+
+      safe:
+        tuning: safe
+        timeout: 10
+
+      aggressive:
+        tuning: comprehensive
+        timeout: 10
+
+    parser:
+      module: reporting.parsers.nikto_parser
+
+    input_type: url
+    output_type: vulnerability_findings
+
+
+  testssl:
+
+    name: testssl.sh
+    executable: testssl.sh
+    phase: vulnerability_assessment
+    capability: tls_security_assessment
+
+    purpose: >
+      TLS/SSL protocol, cipher, certificate, and configuration assessment.
+
+    input:
+      types:
+        - host
+        - url
+        - host_port
+
+    output:
+      formats:
+        - text
+        - json
+
+    finding_types:
+      - TLS_CONFIGURATION
+      - WEAK_PROTOCOL
+      - WEAK_CIPHER
+      - CERTIFICATE_ISSUE
+      - TLS_VULNERABILITY
+
+    dependencies:
+      - testssl.sh
+
+    options:
+
+      default: {}
+
+      safe: {}
+
+      aggressive: {}
+
+    parser:
+      module: reporting.parsers.testssl_parser
+
+    input_type: host
+    output_type: raw
+
+
+###############################################################################
+# Specialized Validation
+###############################################################################
+
+  sqlmap:
+
+    name: sqlmap
+    executable: sqlmap
+    phase: vulnerability_validation
+    capability: sql_injection_validation
+
+    purpose: >
+      Validate potential SQL injection identified during reconnaissance,
+      enumeration, or vulnerability assessment.
+
+    input:
+      types:
+        - url
+        - parameter
+        - request_file
+
+    output:
+      formats:
+        - text
+        - json
+
+    finding_types:
+      - SQL_INJECTION
+
+    dependencies:
+      - sqlmap
+
+    execution:
+      mode: conditional
+      requires_prior_observation: true
+      requires_scope_confirmation: true
+
+    options:
+
+      default:
+        level: 1
+        risk: 1
+
+      safe:
+        level: 1
+        risk: 1
+
+      aggressive:
+        level: 3
+        risk: 2
+
+    parser:
+      module: reporting.parsers.sqlmap_parser
+
+    input_type: url
+    output_type: raw
+
+
+  dalfox:
+
+    name: dalfox
+    executable: dalfox
+    phase: vulnerability_validation
+    capability: xss_validation
+
+    purpose: >
+      Validate potential reflected, stored, or DOM-related XSS attack
+      surfaces.
+
+    input:
+      types:
+        - url
+        - url_list
+        - parameter
+
+    output:
+      formats:
+        - text
+        - json
+
+    finding_types:
+      - XSS
+
+    dependencies:
+      - dalfox
+
+    execution:
+      mode: conditional
+      requires_prior_observation: true
+      requires_scope_confirmation: true
+
+    options:
+
+      default: {}
+
+      safe: {}
+
+      aggressive: {}
+
+    parser:
+      module: reporting.parsers.dalfox_parser
+
+    input_type: url
+    output_type: raw
+
+
+  jwt_tool:
+
+    name: jwt_tool
+    executable: jwt_tool
+    phase: vulnerability_validation
+    capability: jwt_security_validation
+
+    purpose: >
+      Analyze JWT-based authentication tokens for security weaknesses.
+
+    input:
+      types:
+        - jwt
+        - request_file
+        - url
+
+    output:
+      formats:
+        - text
+
+    finding_types:
+      - JWT_SECURITY_ISSUE
+
+    dependencies:
+      - jwt_tool
+
+    execution:
+      mode: conditional
+      requires_prior_observation: true
+      requires_scope_confirmation: true
+
+    options:
+
+      default: {}
+
+      safe: {}
+
+      aggressive: {}
+
+    parser:
+      module: reporting.parsers.jwt_tool_parser
+
+    input_type: jwt
+    output_type: raw
+
+
+  sstimap:
+
+    name: sstimap
+    executable: sstimap
+    phase: vulnerability_validation
+    capability: ssti_validation
+
+    purpose: >
+      Validate potential server-side template injection identified in
+      application inputs.
+
+    input:
+      types:
+        - url
+        - parameter
+        - request_file
+
+    output:
+      formats:
+        - text
+
+    finding_types:
+      - SSTI
+
+    dependencies:
+      - sstimap
+
+    execution:
+      mode: conditional
+      requires_prior_observation: true
+      requires_scope_confirmation: true
+
+    options:
+
+      default: {}
+
+      safe: {}
+
+      aggressive: {}
+
+    parser:
+      module: reporting.parsers.sstimap_parser
+
+    input_type: url
+    output_type: raw
+
+
+###############################################################################
+# Credential Assessment
+###############################################################################
+
+  hydra:
+
+    name: hydra
+    executable: hydra
+    phase: credential_assessment
+    capability: authentication_testing
+
+    purpose: >
+      Authorized online authentication testing against explicitly approved
+      services.
+
+    input:
+      types:
+        - host
+        - service
+        - username_list
+        - password_list
+
+    output:
+      formats:
+        - text
+
+    finding_types:
+      - AUTHENTICATION_TEST
+
+    dependencies:
+      - hydra
+
+    execution:
+      mode: explicit
+      requires_scope_confirmation: true
+      requires_credential_assessment_confirmation: true
+      automatic_default: false
+
+    options:
+
+      default:
+        threads: 4
+
+      safe:
+        threads: 2
+
+      aggressive:
+        threads: 8
+
+    parser:
+      module: reporting.parsers.hydra_parser
+
+    input_type: authentication_target
+    output_type: raw
+
+
+  hashcat:
+
+    name: hashcat
+    executable: hashcat
+    phase: credential_assessment
+    capability: password_hash_assessment
+
+    purpose: >
+      Authorized offline password and hash security assessment.
+
+    input:
+      types:
+        - hash_file
+        - wordlist
+        - rules
+
+    output:
+      formats:
+        - text
+
+    finding_types:
+      - PASSWORD_SECURITY
+      - HASH_SECURITY
+
+    dependencies:
+      - hashcat
+
+    execution:
+      mode: explicit
+      requires_scope_confirmation: true
+      requires_credential_assessment_confirmation: true
+      automatic_default: false
+
+    options:
+
+      default: {}
+
+      safe: {}
+
+      aggressive: {}
+
+    parser:
+      module: reporting.parsers.hashcat_parser
+
+    input_type: hash_file
+    output_type: raw
+
+
+###############################################################################
+# Registry Metadata
+###############################################################################
+
+registry:
+
+  version: "1.2.0"
+
+  tool_count: 19
+
+  phases:
+
+    reconnaissance:
+      - amass
+      - subhunt
+      - nmap
+      - dig
+
+    enumeration:
+      - httpx
+      - katana
+      - ffuf
+      - whatweb
+      - kiterunner
+      - jsluice
+
+    vulnerability_assessment:
+      - nuclei
+      - nikto
+      - testssl
+
+    vulnerability_validation:
+      - sqlmap
+      - dalfox
+      - jwt_tool
+      - sstimap
+
+    credential_assessment:
+      - hydra
+      - hashcat
+
+  removed_from_core:
+
+    - subfinder
+    - gobuster
+    - naabu
+    - rustscan
+    - sslscan
+    - sslyze
+    - metasploit

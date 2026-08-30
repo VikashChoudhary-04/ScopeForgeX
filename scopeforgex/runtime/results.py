@@ -20,7 +20,7 @@ phase.
 WorkflowResult aggregates the complete assessment execution and provides the
 final workflow-level status.
 
-v1.1.0
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations

@@ -2,12 +2,43 @@
 ScopeForgeX Tool Installer
 ==========================
 
-Installs and verifies the external tools required by ScopeForgeX.
+Installs and verifies the external tools required by the canonical
+ScopeForgeX 19-tool registry.
 
-Currently supports:
-    • Linux (APT-based distributions)
+Supported platform:
+    - Linux (APT-based distributions)
 
-v0.4.0
+Canonical tool groups
+---------------------
+
+APT packages
+    - amass
+    - nmap
+    - dig
+    - ffuf
+    - whatweb
+    - nikto
+    - testssl.sh
+    - sqlmap
+    - sstimap
+    - hydra
+    - hashcat
+
+Go-installed tools
+    - httpx
+    - katana
+    - nuclei
+    - jsluice
+
+Source-built tools
+    - kiterunner
+    - jwt_tool
+    - subhunt
+
+Cargo-installed tools
+    - dalfox
+
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations
@@ -22,66 +53,118 @@ from scopeforgex.toolcheck import is_tool_installed
 from scopeforgex.ui import err, info, ok, stage, warn
 
 
-# ----------------------------------------------------------------------
-# Required tools
-# ----------------------------------------------------------------------
+###############################################################################
+# Canonical Tool Sources
+###############################################################################
+
 
 REQUIRED_TOOLS = [
-    "sublist3r",
-    "dnsrecon",
-    "httpx",
-    "gau",
-    "katana",
+    "amass",
     "subhunt",
     "nmap",
-    "whatweb",
-    "wafw00f",
+    "dig",
+    "httpx",
+    "katana",
     "ffuf",
+    "whatweb",
+    "kiterunner",
+    "jsluice",
     "nuclei",
     "nikto",
-    "wpscan",
+    "testssl.sh",
     "sqlmap",
-    "msfvenom",
-    "nc",
-    "ssh",
+    "dalfox",
+    "jwt_tool",
+    "sstimap",
     "hydra",
-    "john",
+    "hashcat",
 ]
+
 
 APT_PACKAGES = [
+    "amass",
     "nmap",
-    "whatweb",
-    "wafw00f",
+    "bind9-dnsutils",
     "ffuf",
-    "dnsrecon",
-    "wpscan",
+    "whatweb",
     "nikto",
+    "testssl.sh",
     "sqlmap",
+    "sstimap",
     "hydra",
-    "john",
-    "netcat-openbsd",
+    "hashcat",
 ]
+
 
 GO_TOOLS = [
-    "github.com/projectdiscovery/httpx/cmd/httpx@latest",
-    "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
-    "github.com/projectdiscovery/katana/cmd/katana@latest",
-    "github.com/lc/gau/v2/cmd/gau@latest",
+    (
+        "httpx",
+        "github.com/projectdiscovery/httpx/cmd/httpx@latest",
+    ),
+    (
+        "katana",
+        "github.com/projectdiscovery/katana/cmd/katana@latest",
+    ),
+    (
+        "nuclei",
+        "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
+    ),
+    (
+        "jsluice",
+        "github.com/BishopFox/jsluice/cmd/jsluice@latest",
+    ),
 ]
 
-SUBHUNT_REPO = "https://github.com/VikashChoudhary-04/subhunt.git"
+
+DALFOX_INSTALL = (
+    "cargo install dalfox --locked"
+)
 
 
-# ----------------------------------------------------------------------
-# Helpers
-# ----------------------------------------------------------------------
+KITERUNNER_REPO = (
+    "https://github.com/assetnote/kiterunner.git"
+)
 
-def run(command: str):
+
+JWT_TOOL_REPO = (
+    "https://github.com/ticarpi/jwt_tool.git"
+)
+
+
+SSTIMAP_REPO = (
+    "https://github.com/vladko312/SSTImap.git"
+)
+
+
+SUBHUNT_REPO = (
+    "https://github.com/VikashChoudhary-04/subhunt.git"
+)
+
+
+SOURCE_TOOLS_DIR = (
+    Path.home()
+    / "ScopeForgeX-tools"
+)
+
+
+###############################################################################
+# Generic Helpers
+###############################################################################
+
+
+def run(
+    command: str,
+) -> None:
     """
-    Execute a shell command.
+    Execute a shell command and display it.
+
+    Installer commands are generated internally from fixed repository/package
+    constants rather than untrusted user input.
     """
 
-    info(f"$ {command}")
+    info(
+        f"$ {command}"
+    )
 
     subprocess.run(
         command,
@@ -92,10 +175,15 @@ def run(command: str):
 
 def detect_pkg_manager() -> str | None:
     """
-    Detect the available package manager.
+    Detect the available supported package manager.
     """
 
-    return "apt" if shutil.which("apt") else None
+    if shutil.which(
+        "apt"
+    ):
+        return "apt"
+
+    return None
 
 
 def go_bin_path() -> Path:
@@ -103,135 +191,626 @@ def go_bin_path() -> Path:
     Return the user's Go binary directory.
     """
 
-    return Path.home() / "go" / "bin"
+    return (
+        Path.home()
+        / "go"
+        / "bin"
+    )
 
 
-def check_path_for_go_bin():
+def cargo_bin_path() -> Path:
     """
-    Warn if ~/go/bin is not present in PATH.
-    """
-
-    gobin = str(go_bin_path())
-
-    if gobin not in os.environ.get("PATH", ""):
-        warn(f"Go bin directory not found in PATH: {gobin}")
-        warn("Add it with:")
-        warn("export PATH=$PATH:$HOME/go/bin")
-
-
-# ----------------------------------------------------------------------
-# Installers
-# ----------------------------------------------------------------------
-
-def install_go_tools():
-    """
-    Install ProjectDiscovery Go tools.
+    Return the user's Cargo binary directory.
     """
 
-    for tool in GO_TOOLS:
-        run(f"go install -v {tool}")
+    return (
+        Path.home()
+        / ".cargo"
+        / "bin"
+    )
 
 
-def install_subhunt_from_git():
+def check_path_for_go_bin() -> None:
     """
-    Build and install Subhunt from GitHub.
+    Warn when ~/go/bin is not present in PATH.
     """
 
-    stage("Installing Subhunt (Go Build)", "cyan")
+    gobin = str(
+        go_bin_path()
+    )
 
-    tools_dir = Path.home() / "ScopeForgeX-tools"
-    repo_dir = tools_dir / "subhunt"
+    if gobin not in os.environ.get(
+        "PATH",
+        "",
+    ):
+        warn(
+            f"Go bin directory not found in PATH: {gobin}"
+        )
+        warn(
+            "Add it with:"
+        )
+        warn(
+            "export PATH=$PATH:$HOME/go/bin"
+        )
 
-    tools_dir.mkdir(parents=True, exist_ok=True)
+
+def check_path_for_cargo_bin() -> None:
+    """
+    Warn when ~/.cargo/bin is not present in PATH.
+    """
+
+    cargo_bin = str(
+        cargo_bin_path()
+    )
+
+    if cargo_bin not in os.environ.get(
+        "PATH",
+        "",
+    ):
+        warn(
+            f"Cargo bin directory not found in PATH: {cargo_bin}"
+        )
+        warn(
+            "Add it with:"
+        )
+        warn(
+            "export PATH=$PATH:$HOME/.cargo/bin"
+        )
+
+
+def install_symlink(
+    source: Path,
+    command_name: str,
+) -> bool:
+    """
+    Expose a locally installed binary through /usr/local/bin.
+    """
+
+    if not source.is_file():
+        warn(
+            f"Binary not found: {source}"
+        )
+        return False
+
+    destination = (
+        Path("/usr/local/bin")
+        / command_name
+    )
+
+    run(
+        f"sudo ln -sf "
+        f"'{source}' "
+        f"'{destination}'"
+    )
+
+    return destination.exists() or destination.is_symlink()
+
+
+###############################################################################
+# APT Installation
+###############################################################################
+
+
+def install_apt_packages() -> None:
+    """
+    Install all canonical APT-backed dependencies.
+    """
+
+    info(
+        "Installing APT packages..."
+    )
+
+    run(
+        "sudo apt update -y"
+    )
+
+    run(
+        "sudo apt install -y "
+        + " ".join(
+            APT_PACKAGES
+        )
+    )
+
+
+###############################################################################
+# Go Installation
+###############################################################################
+
+
+def install_go_tools() -> None:
+    """
+    Install canonical Go-based tools.
+    """
+
+    if not shutil.which(
+        "go"
+    ):
+        err(
+            "Go is not installed."
+        )
+        return
+
+    for tool_name, module in GO_TOOLS:
+
+        stage(
+            f"Installing {tool_name} (Go)",
+            "cyan",
+        )
+
+        run(
+            f"go install -v {module}"
+        )
+
+        binary = (
+            go_bin_path()
+            / tool_name
+        )
+
+        if binary.exists():
+            install_symlink(
+                binary,
+                tool_name,
+            )
+        else:
+            warn(
+                f"{tool_name} was not found in {go_bin_path()}"
+            )
+
+
+###############################################################################
+# Dalfox Installation
+###############################################################################
+
+
+def install_dalfox() -> None:
+    """
+    Install Dalfox using Cargo.
+    """
+
+    stage(
+        "Installing Dalfox",
+        "cyan",
+    )
+
+    if not shutil.which(
+        "cargo"
+    ):
+        err(
+            "Cargo is not installed."
+        )
+        return
+
+    run(
+        DALFOX_INSTALL
+    )
+
+    binary = (
+        cargo_bin_path()
+        / "dalfox"
+    )
+
+    if binary.exists():
+        install_symlink(
+            binary,
+            "dalfox",
+        )
+    else:
+        warn(
+            f"Dalfox was not found in {cargo_bin_path()}"
+        )
+
+    check_path_for_cargo_bin()
+
+
+###############################################################################
+# Subhunt Installation
+###############################################################################
+
+
+def install_subhunt_from_git() -> None:
+    """
+    Build and install ScopeForgeX's native Subhunt tool.
+    """
+
+    stage(
+        "Installing Subhunt",
+        "cyan",
+    )
+
+    SOURCE_TOOLS_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    repo_dir = (
+        SOURCE_TOOLS_DIR
+        / "subhunt"
+    )
 
     if repo_dir.exists():
-        warn("Subhunt repository already exists. Pulling latest changes...")
-        run(f"cd {repo_dir} && git pull")
-    else:
-        info("Cloning Subhunt repository...")
-        run(f"cd {tools_dir} && git clone {SUBHUNT_REPO}")
+        warn(
+            "Subhunt repository already exists. Pulling latest changes..."
+        )
 
-    build_path = repo_dir / "cmd" / "subhunt"
+        run(
+            f"cd '{repo_dir}' && git pull"
+        )
+
+    else:
+        info(
+            "Cloning Subhunt repository..."
+        )
+
+        run(
+            f"cd '{SOURCE_TOOLS_DIR}' && "
+            f"git clone '{SUBHUNT_REPO}'"
+        )
+
+    build_path = (
+        repo_dir
+        / "cmd"
+        / "subhunt"
+    )
 
     if not build_path.exists():
-        err(f"Subhunt build path not found: {build_path}")
+        err(
+            f"Subhunt build path not found: {build_path}"
+        )
         return
 
-    info("Building Subhunt...")
-    run(f"cd {repo_dir} && go build -o subhunt ./cmd/subhunt")
+    info(
+        "Building Subhunt..."
+    )
 
-    binary = repo_dir / "subhunt"
+    run(
+        f"cd '{repo_dir}' && "
+        "go build -o subhunt ./cmd/subhunt"
+    )
+
+    binary = (
+        repo_dir
+        / "subhunt"
+    )
 
     if not binary.exists():
-        err("Subhunt build failed.")
+        err(
+            "Subhunt build failed."
+        )
         return
 
-    info("Installing Subhunt...")
-    run(f"sudo cp {binary} /usr/local/bin/subhunt")
-    run("sudo chmod +x /usr/local/bin/subhunt")
+    install_symlink(
+        binary,
+        "subhunt",
+    )
 
-    if is_tool_installed("subhunt"):
-        ok("Subhunt installed successfully.")
-        run("subhunt --help")
+    if is_tool_installed(
+        "subhunt"
+    ):
+        ok(
+            "Subhunt installed successfully."
+        )
     else:
-        warn("Subhunt is not currently visible in PATH.")
-        warn("Try:")
-        warn("export PATH=$PATH:/usr/local/bin")
-        warn("which subhunt")
+        warn(
+            "Subhunt is not currently visible in PATH."
+        )
 
 
-# ----------------------------------------------------------------------
-# Main installer
-# ----------------------------------------------------------------------
+###############################################################################
+# Kiterunner Installation
+###############################################################################
 
-def install_tools():
+
+def install_kiterunner() -> None:
     """
-    Install and verify all supported tools.
+    Build and install Kiterunner from source.
+
+    The canonical executable name is `kr`.
     """
 
-    stage("ScopeForgeX Tool Installer", "green")
+    stage(
+        "Installing Kiterunner",
+        "cyan",
+    )
+
+    SOURCE_TOOLS_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    repo_dir = (
+        SOURCE_TOOLS_DIR
+        / "kiterunner"
+    )
+
+    if repo_dir.exists():
+        warn(
+            "Kiterunner repository already exists. Pulling latest changes..."
+        )
+
+        run(
+            f"cd '{repo_dir}' && git pull"
+        )
+
+    else:
+        info(
+            "Cloning Kiterunner repository..."
+        )
+
+        run(
+            f"cd '{SOURCE_TOOLS_DIR}' && "
+            f"git clone '{KITERUNNER_REPO}'"
+        )
+
+    if not (
+        repo_dir
+        / "Makefile"
+    ).exists():
+        err(
+            f"Kiterunner Makefile not found: {repo_dir}"
+        )
+        return
+
+    info(
+        "Building Kiterunner..."
+    )
+
+    run(
+        f"cd '{repo_dir}' && "
+        "make build"
+    )
+
+    binary = (
+        repo_dir
+        / "dist"
+        / "kr"
+    )
+
+    if not binary.exists():
+        err(
+            f"Kiterunner binary not found: {binary}"
+        )
+        return
+
+    install_symlink(
+        binary,
+        "kr",
+    )
+
+    if is_tool_installed(
+        "kr"
+    ):
+        ok(
+            "Kiterunner installed successfully."
+        )
+    else:
+        warn(
+            "Kiterunner is not currently visible in PATH."
+        )
+
+
+###############################################################################
+# JWT Tool Installation
+###############################################################################
+
+
+def install_jwt_tool() -> None:
+    """
+    Install JWT Tool from its upstream repository.
+
+    JWT Tool is a Python script, so ScopeForgeX exposes it through the
+    canonical `jwt_tool` command.
+    """
+
+    stage(
+        "Installing JWT Tool",
+        "cyan",
+    )
+
+    SOURCE_TOOLS_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    repo_dir = (
+        SOURCE_TOOLS_DIR
+        / "jwt_tool"
+    )
+
+    if repo_dir.exists():
+        warn(
+            "JWT Tool repository already exists. Pulling latest changes..."
+        )
+
+        run(
+            f"cd '{repo_dir}' && git pull"
+        )
+
+    else:
+        info(
+            "Cloning JWT Tool repository..."
+        )
+
+        run(
+            f"cd '{SOURCE_TOOLS_DIR}' && "
+            f"git clone '{JWT_TOOL_REPO}' jwt_tool"
+        )
+
+    script = (
+        repo_dir
+        / "jwt_tool.py"
+    )
+
+    if not script.exists():
+        err(
+            f"JWT Tool script not found: {script}"
+        )
+        return
+
+    info(
+        "Installing JWT Tool Python dependencies..."
+    )
+
+    requirements = (
+        repo_dir
+        / "requirements.txt"
+    )
+
+    if requirements.exists():
+        run(
+            f"python3 -m pip install "
+            f"-r '{requirements}'"
+        )
+    else:
+        run(
+            "python3 -m pip install "
+            "termcolor cprint pycryptodomex requests"
+        )
+
+    wrapper = (
+        SOURCE_TOOLS_DIR
+        / "jwt_tool"
+        / "jwt_tool"
+    )
+
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        f'exec python3 "{script}" "$@"\n',
+        encoding="utf-8",
+    )
+
+    wrapper.chmod(
+        0o755
+    )
+
+    install_symlink(
+        wrapper,
+        "jwt_tool",
+    )
+
+    if is_tool_installed(
+        "jwt_tool"
+    ):
+        ok(
+            "JWT Tool installed successfully."
+        )
+    else:
+        warn(
+            "JWT Tool is not currently visible in PATH."
+        )
+
+
+###############################################################################
+# Main Installation
+###############################################################################
+
+
+def install_tools() -> None:
+    """
+    Install and verify all canonical ScopeForgeX tools.
+    """
+
+    stage(
+        "ScopeForgeX Tool Installer",
+        "green",
+    )
 
     if (
-        platform.system().lower() != "linux"
-        or detect_pkg_manager() != "apt"
+        platform.system().lower()
+        != "linux"
+        or detect_pkg_manager()
+        != "apt"
     ):
-        warn("Automatic installation currently supports Linux (APT) only.")
-        warn("Install the tools manually and rerun this installer.")
+        warn(
+            "Automatic installation currently supports "
+            "Linux (APT) only."
+        )
+        warn(
+            "Install missing tools manually and rerun this installer."
+        )
         return
 
-    info("Installing base dependencies...")
-    run("sudo apt update -y")
-    run("sudo apt install -y python3-pip golang git")
+    info(
+        "Installing base dependencies..."
+    )
 
-    info("Installing APT packages...")
-    run(f"sudo apt install -y {' '.join(APT_PACKAGES)}")
+    run(
+        "sudo apt update -y"
+    )
 
-    info("Installing Python packages...")
-    run("pip3 install --upgrade pip")
-    run("pip3 install sublist3r knockpy")
+    run(
+        "sudo apt install -y "
+        "python3 "
+        "python3-pip "
+        "golang "
+        "git "
+        "build-essential "
+        "cargo"
+    )
 
-    info("Installing Go packages...")
+    install_apt_packages()
+
     install_go_tools()
+
     check_path_for_go_bin()
+
+    install_dalfox()
 
     install_subhunt_from_git()
 
-    info("Verifying installation...")
+    install_kiterunner()
+
+    install_jwt_tool()
+
+    info(
+        "Verifying canonical 19-tool installation..."
+    )
 
     missing = [
         tool
         for tool in REQUIRED_TOOLS
-        if not is_tool_installed(tool)
+        if not is_tool_installed(
+            tool
+        )
     ]
 
     if not missing:
-        ok("All required tools are installed and detected.")
+        ok(
+            "All 19 canonical ScopeForgeX tools "
+            "are installed and detected."
+        )
         return
 
-    err("Some required tools are still missing:")
+    err(
+        "Some canonical ScopeForgeX tools are still missing:"
+    )
 
     for tool in missing:
-        warn(f"- {tool}")
+        warn(
+            f"- {tool}"
+        )
 
-    warn("If Go tools are missing, ensure PATH includes:")
-    warn("export PATH=$PATH:$HOME/go/bin")
+    check_path_for_go_bin()
+    check_path_for_cargo_bin()
+
+    warn(
+        "Run the installer again after correcting the "
+        "missing dependencies or PATH entries."
+    )
+
+
+###############################################################################
+# Public API
+###############################################################################
+
+
+__all__ = [
+    "REQUIRED_TOOLS",
+    "APT_PACKAGES",
+    "GO_TOOLS",
+    "install_tools",
+    "install_go_tools",
+    "install_dalfox",
+    "install_subhunt_from_git",
+    "install_kiterunner",
+    "install_jwt_tool",
+]

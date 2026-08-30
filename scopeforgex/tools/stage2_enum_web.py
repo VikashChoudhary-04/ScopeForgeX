@@ -1,275 +1,60 @@
 """
 ScopeForgeX
-Stage 2 — Web Enumeration Compatibility Tools
-==============================================
+Stage 2 — Web Enumeration Tools
+================================
 
-Provides the legacy Stage 2 web-enumeration tools:
+Native ToolAdapter implementations for the canonical Stage 2 web-enumeration
+toolset:
 
 - HTTPX
 - Katana
-- WhatWeb
-- WAFW00F
 - FFUF
+- WhatWeb
+- Kiterunner
+- JSLuice
 
-The module uses the canonical ExecutionResult model and remains compatible
-with the ScopeForgeX tool registry.
+Architecture
+------------
 
-v1.1.0
+Workflow Engine
+    |
+    v
+Tool Registry
+    |
+    v
+ToolContext
+    |
+    v
+ToolAdapter
+    |
+    +-- option validation
+    +-- command construction
+    +-- command arguments
+    |
+    v
+ToolExecutor
+    |
+    v
+ExecutionResult
+
+The adapters own tool-specific command construction.
+
+Subprocess execution remains the responsibility of the ScopeForgeX execution
+layer.
+
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations
 
-import os
-import shlex
 from pathlib import Path
+from typing import Any
 
-import questionary
-
-from scopeforgex.models.execution_result import ExecutionResult
-from scopeforgex.registry.tool_base import ToolBase
-from scopeforgex.runner import run_command
-from scopeforgex.toolcheck import is_tool_installed
-from scopeforgex.utils import build_notes_from_log
-from scopeforgex.wordlists import (
-    find_default_web_fuzz_wordlist,
-    is_valid_wordlist,
+from scopeforgex.registry.tool_base import (
+    ToolAdapter,
+    ToolDefinition,
+    ToolOption,
 )
-
-
-###############################################################################
-# Helper Functions
-###############################################################################
-
-
-def _enum_directory(
-    ctx: dict,
-) -> Path:
-    """
-    Return the Stage 2 enumeration directory.
-    """
-
-    directory = (
-        Path(ctx["outdir"])
-        / "enum"
-    )
-
-    directory.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    return directory
-
-
-def _safe_exists(
-    path: Path,
-) -> bool:
-    """
-    Return True when a path exists and contains data.
-    """
-
-    return (
-        path.exists()
-        and path.stat().st_size > 0
-    )
-
-
-def _quote(
-    value: str,
-) -> str:
-    """
-    Shell-safe quoting.
-    """
-
-    return shlex.quote(
-        value
-    )
-
-
-def _normalize_target(
-    target: str,
-) -> str:
-    """
-    Ensure targets contain a URL scheme.
-    """
-
-    target = target.strip()
-
-    if target.startswith(
-        (
-            "http://",
-            "https://",
-        )
-    ):
-        return target
-
-    return f"https://{target}"
-
-
-def _load_pipeline_targets(
-    ctx: dict,
-) -> list[str]:
-    """
-    Determine web enumeration targets.
-
-    Priority:
-
-    1. Stage 1 hosts_final
-    2. Root target
-    """
-
-    pipeline = ctx.get(
-        "pipeline",
-        {},
-    )
-
-    hosts_file = pipeline.get(
-        "hosts_final"
-    )
-
-    targets: list[str] = []
-
-    if hosts_file and os.path.exists(
-        hosts_file
-    ):
-        with open(
-            hosts_file,
-            encoding="utf-8",
-        ) as handle:
-
-            for line in handle:
-                host = line.strip()
-
-                if host:
-                    targets.append(
-                        _normalize_target(
-                            host
-                        )
-                    )
-
-    if not targets:
-        targets.append(
-            _normalize_target(
-                ctx["target"]
-            )
-        )
-
-    return sorted(
-        set(targets)
-    )
-
-
-def _build_notes(
-    logfile: Path,
-    message: str,
-) -> str:
-    """
-    Build consistent execution notes from a log file.
-    """
-
-    notes = build_notes_from_log(
-        str(logfile),
-        message,
-    )
-
-    if not _safe_exists(
-        logfile
-    ):
-        notes += (
-            " [Log file missing.]"
-        )
-
-    return notes
-
-
-def _missing_tool(
-    name: str,
-    capability: str,
-) -> ExecutionResult:
-    """
-    Return a canonical failure result for a missing executable.
-    """
-
-    return ExecutionResult.failure(
-        tool=name,
-        capability=capability,
-        error=f"{name} not installed",
-    )
-
-
-###############################################################################
-# Base Class
-###############################################################################
-
-
-class WebEnumerationTool(
-    ToolBase
-):
-    """
-    Shared functionality for legacy Stage 2 web-enumeration tools.
-    """
-
-    risk = "low"
-    stage = 2
-
-    def enum_dir(
-        self,
-        ctx: dict,
-    ) -> Path:
-        """
-        Return the Stage 2 enumeration directory.
-        """
-
-        return _enum_directory(
-            ctx
-        )
-
-    def output_file(
-        self,
-        ctx: dict,
-        filename: str,
-    ) -> Path:
-        """
-        Return a file inside the Stage 2 enumeration directory.
-        """
-
-        return (
-            self.enum_dir(
-                ctx
-            )
-            / filename
-        )
-
-    def targets(
-        self,
-        ctx: dict,
-    ) -> list[str]:
-        """
-        Return the targets selected for web enumeration.
-        """
-
-        return _load_pipeline_targets(
-            ctx
-        )
-
-    def verify_output(
-        self,
-        output: Path,
-        notes: str,
-        warning: str,
-    ) -> str:
-        """
-        Append a warning when the expected output is empty or missing.
-        """
-
-        if not _safe_exists(
-            output
-        ):
-            notes += (
-                f" [{warning}]"
-            )
-
-        return notes
 
 
 ###############################################################################
@@ -277,128 +62,159 @@ class WebEnumerationTool(
 ###############################################################################
 
 
-class HttpxTool(
-    WebEnumerationTool
-):
+class HttpxTool(ToolAdapter):
     """
-    HTTP service probing using HTTPX.
+    HTTP service probing and metadata collection.
     """
 
-    name = "httpx"
-    description = (
-        "Identify reachable HTTP services and collect web service metadata"
+    definition = ToolDefinition(
+        name="httpx",
+        capability="http_service_enumeration",
+        phase="enumeration",
+        purpose=(
+            "Determine which discovered hosts expose HTTP services and "
+            "collect status, title, server and technology information."
+        ),
+        executable="httpx",
+        input_type="url",
+        output_type="raw",
+        finding_types=(
+            "HTTP_SERVICE",
+            "HTTP_STATUS",
+            "WEB_SERVER",
+        ),
+        dependencies=(
+            "httpx",
+        ),
+        options=(
+            ToolOption(
+                name="status_code",
+                flag="-status-code",
+                description="Display HTTP response status codes.",
+                option_type="boolean",
+                default=True,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="title",
+                flag="-title",
+                description="Display page titles.",
+                option_type="boolean",
+                default=True,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="server",
+                flag="-server",
+                description="Display HTTP server information.",
+                option_type="boolean",
+                default=True,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="technology",
+                flag="-tech-detect",
+                description="Enable technology detection.",
+                option_type="boolean",
+                default=True,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="follow_redirects",
+                flag="-follow-redirects",
+                description="Follow HTTP redirects.",
+                option_type="boolean",
+                default=False,
+                safe=False,
+                aggressive=True,
+            ),
+        ),
+        safe=True,
+        aggressive=False,
     )
-    capability = "http_service_probing"
-    output_type = "http_services"
 
-    def run(
-        self,
-        ctx: dict,
-    ) -> ExecutionResult:
-        """
-        Execute HTTPX against the selected targets.
-        """
+    def validate_options(self) -> None:
+        """Validate HTTPX options."""
 
-        if not is_tool_installed(
-            "httpx"
+        super().validate_options()
+
+        for name in (
+            "status_code",
+            "title",
+            "server",
+            "technology",
+            "follow_redirects",
         ):
-            return _missing_tool(
-                self.name,
-                self.capability,
-            )
+            if not self.has_option(name):
+                continue
 
-        output = self.output_file(
-            ctx,
-            "httpx.txt",
-        )
+            value = self.get_option(name)
 
-        logfile = self.output_file(
-            ctx,
-            "httpx.log",
-        )
-
-        targets_file = self.output_file(
-            ctx,
-            "httpx_targets.txt",
-        )
-
-        targets = self.targets(
-            ctx
-        )
-
-        targets_file.write_text(
-            "\n".join(targets) + "\n",
-            encoding="utf-8",
-        )
-
-        command = (
-            "httpx "
-            f"-l {_quote(str(targets_file))} "
-            "-silent "
-            "-status-code "
-            "-title "
-            "-server "
-            "-tech-detect "
-            f"-o {_quote(str(output))}"
-        )
-
-        execution = run_command(
-            tool=self.name,
-            capability=self.capability,
-            cmd=command,
-            outfile=str(logfile),
-            timeout=600,
-        )
-
-        notes = _build_notes(
-            logfile,
-            "HTTPX completed.",
-        )
-
-        if not execution.success:
-            result = ExecutionResult.failure(
-                tool=self.name,
-                capability=self.capability,
-                error="HTTPX execution failed.",
-            )
-
-            for artifact in (
-                targets_file,
-                output,
-                logfile,
-            ):
-                result.add_artifact(
-                    artifact
+            if not isinstance(value, bool):
+                raise TypeError(
+                    f"{name} option for HTTPX must be boolean."
                 )
 
-            result.metadata.update(
-                {
-                    "targets": len(targets),
-                }
-            )
+    def build_arguments(self) -> list[str]:
+        """Build HTTPX-specific command-line arguments."""
 
-            return result
+        self.validate_options()
 
-        if not _safe_exists(
-            output
+        arguments: list[str] = []
+
+        if self.get_option(
+            "status_code",
+            True,
         ):
-            notes += (
-                " [No HTTP services detected.]"
+            arguments.append(
+                "-status-code"
             )
 
-        return ExecutionResult.success_result(
-            tool=self.name,
-            capability=self.capability,
-            artifacts=[
-                str(targets_file),
-                str(output),
-                str(logfile),
-            ],
-            metadata={
-                "notes": notes,
-                "targets": len(targets),
-            },
+        if self.get_option(
+            "title",
+            True,
+        ):
+            arguments.append(
+                "-title"
+            )
+
+        if self.get_option(
+            "server",
+            True,
+        ):
+            arguments.append(
+                "-server"
+            )
+
+        if self.get_option(
+            "technology",
+            True,
+        ):
+            arguments.append(
+                "-tech-detect"
+            )
+
+        if self.get_option(
+            "follow_redirects",
+            False,
+        ):
+            arguments.append(
+                "-follow-redirects"
+            )
+
+        arguments.extend(
+            [
+                "-silent",
+                "-u",
+                self.context.target,
+            ]
         )
+
+        return arguments
 
 
 ###############################################################################
@@ -406,372 +222,139 @@ class HttpxTool(
 ###############################################################################
 
 
-class KatanaTool(
-    WebEnumerationTool
-):
+class KatanaTool(ToolAdapter):
     """
-    Web crawling and endpoint discovery using Katana.
+    Web crawler and endpoint discovery adapter.
     """
 
-    name = "katana"
-    description = (
-        "Web crawling and application endpoint discovery"
+    definition = ToolDefinition(
+        name="katana",
+        capability="web_crawling",
+        phase="enumeration",
+        purpose=(
+            "Discover URLs, endpoints, parameters, forms and web resources."
+        ),
+        executable="katana",
+        input_type="url",
+        output_type="raw",
+        finding_types=(
+            "URL",
+            "ENDPOINT",
+            "PARAMETER",
+            "FORM",
+            "RESOURCE",
+        ),
+        dependencies=(
+            "katana",
+        ),
+        options=(
+            ToolOption(
+                name="depth",
+                flag="-d",
+                description="Maximum crawl depth.",
+                option_type="integer",
+                default=2,
+                safe=True,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="js_crawl",
+                flag="-jc",
+                description="Enable JavaScript crawling.",
+                option_type="boolean",
+                default=False,
+                safe=False,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="known_files",
+                flag="-kf",
+                description="Crawl known files.",
+                option_type="boolean",
+                default=False,
+                safe=False,
+                aggressive=True,
+            ),
+        ),
+        safe=True,
+        aggressive=True,
     )
-    capability = "web_crawling"
-    output_type = "web_crawl"
-    risk = "medium"
 
-    def run(
-        self,
-        ctx: dict,
-    ) -> ExecutionResult:
-        """
-        Execute Katana against the selected targets.
-        """
+    def validate_options(self) -> None:
+        """Validate Katana options."""
 
-        if not is_tool_installed(
-            "katana"
+        super().validate_options()
+
+        depth = self.get_option(
+            "depth",
+            2,
+        )
+
+        if (
+            not isinstance(depth, int)
+            or isinstance(depth, bool)
         ):
-            return _missing_tool(
-                self.name,
-                self.capability,
+            raise TypeError(
+                "Katana depth must be an integer."
             )
 
-        output = self.output_file(
-            ctx,
-            "katana.txt",
-        )
-
-        logfile = self.output_file(
-            ctx,
-            "katana.log",
-        )
-
-        targets_file = self.output_file(
-            ctx,
-            "katana_targets.txt",
-        )
-
-        targets = self.targets(
-            ctx
-        )
-
-        targets_file.write_text(
-            "\n".join(targets) + "\n",
-            encoding="utf-8",
-        )
-
-        command = (
-            "katana "
-            f"-list {_quote(str(targets_file))} "
-            "-silent "
-            f"-o {_quote(str(output))}"
-        )
-
-        execution = run_command(
-            tool=self.name,
-            capability=self.capability,
-            cmd=command,
-            outfile=str(logfile),
-            timeout=600,
-        )
-
-        notes = _build_notes(
-            logfile,
-            "Katana completed.",
-        )
-
-        if not execution.success:
-            result = ExecutionResult.failure(
-                tool=self.name,
-                capability=self.capability,
-                error="Katana execution failed.",
+        if depth <= 0:
+            raise ValueError(
+                "Katana depth must be greater than zero."
             )
 
-            for artifact in (
-                targets_file,
-                output,
-                logfile,
-            ):
-                result.add_artifact(
-                    artifact
-                )
-
-            result.metadata.update(
-                {
-                    "targets": len(targets),
-                }
-            )
-
-            return result
-
-        if not _safe_exists(
-            output
+        for name in (
+            "js_crawl",
+            "known_files",
         ):
-            notes += (
-                " [No endpoints discovered.]"
+            value = self.get_option(
+                name,
+                False,
             )
 
-        return ExecutionResult.success_result(
-            tool=self.name,
-            capability=self.capability,
-            artifacts=[
-                str(targets_file),
-                str(output),
-                str(logfile),
-            ],
-            metadata={
-                "notes": notes,
-                "targets": len(targets),
-            },
-        )
+            if not isinstance(value, bool):
+                raise TypeError(
+                    f"Katana {name} must be boolean."
+                )
 
+    def build_arguments(self) -> list[str]:
+        """Build Katana-specific command-line arguments."""
 
-###############################################################################
-# WhatWeb
-###############################################################################
+        self.validate_options()
 
+        arguments = [
+            "-u",
+            self.context.target,
+            "-d",
+            str(
+                self.get_option(
+                    "depth",
+                    2,
+                )
+            ),
+            "-silent",
+        ]
 
-class WhatWebTool(
-    WebEnumerationTool
-):
-    """
-    Website technology fingerprinting.
-    """
-
-    name = "whatweb"
-    description = "Website fingerprinting"
-    capability = "technology_fingerprinting"
-
-    def run(
-        self,
-        ctx: dict,
-    ) -> ExecutionResult:
-        """
-        Execute WhatWeb against the selected targets.
-        """
-
-        if not is_tool_installed(
-            "whatweb"
+        if self.get_option(
+            "js_crawl",
+            False,
         ):
-            return _missing_tool(
-                self.name,
-                self.capability,
+            arguments.append(
+                "-jc"
             )
 
-        output = self.output_file(
-            ctx,
-            "whatweb.txt",
-        )
-
-        logfile = self.output_file(
-            ctx,
-            "whatweb.log",
-        )
-
-        targets = self.targets(
-            ctx
-        )
-
-        with output.open(
-            "w",
-            encoding="utf-8",
-        ) as report:
-
-            for target in targets:
-
-                command = (
-                    "whatweb "
-                    f"{_quote(target)}"
-                )
-
-                run_command(
-                    tool=self.name,
-                    capability=self.capability,
-                    cmd=command,
-                    outfile=str(
-                        logfile
-                    ),
-                )
-
-                report.write(
-                    f"{target}\n"
-                )
-
-        notes = _build_notes(
-            logfile,
-            "WhatWeb completed.",
-        )
-
-        notes = self.verify_output(
-            output,
-            notes,
-            "No fingerprint data generated.",
-        )
-
-        return ExecutionResult.success_result(
-            tool=self.name,
-            capability=self.capability,
-            artifacts=[
-                str(output),
-                str(logfile),
-            ],
-            metadata={
-                "notes": notes,
-                "targets": len(
-                    targets
-                ),
-            },
-        )
-
-
-###############################################################################
-# WAFW00F
-###############################################################################
-
-
-class Wafw00fTool(
-    WebEnumerationTool
-):
-    """
-    Web Application Firewall detection.
-    """
-
-    name = "wafw00f"
-    description = (
-        "Detect Web Application Firewalls"
-    )
-    capability = "waf_detection"
-
-    def run(
-        self,
-        ctx: dict,
-    ) -> ExecutionResult:
-        """
-        Execute WAFW00F against the selected targets.
-        """
-
-        if not is_tool_installed(
-            "wafw00f"
+        if self.get_option(
+            "known_files",
+            False,
         ):
-            return _missing_tool(
-                self.name,
-                self.capability,
+            arguments.extend(
+                [
+                    "-kf",
+                    "all",
+                ]
             )
 
-        output = self.output_file(
-            ctx,
-            "wafw00f.txt",
-        )
-
-        logfile = self.output_file(
-            ctx,
-            "wafw00f.log",
-        )
-
-        targets = self.targets(
-            ctx
-        )
-
-        with output.open(
-            "w",
-            encoding="utf-8",
-        ) as report:
-
-            for target in targets:
-
-                command = (
-                    "wafw00f "
-                    f"{_quote(target)}"
-                )
-
-                run_command(
-                    tool=self.name,
-                    capability=self.capability,
-                    cmd=command,
-                    outfile=str(
-                        logfile
-                    ),
-                )
-
-                report.write(
-                    f"{target}\n"
-                )
-
-        notes = _build_notes(
-            logfile,
-            "WAF detection completed.",
-        )
-
-        notes = self.verify_output(
-            output,
-            notes,
-            "No WAF information collected.",
-        )
-
-        return ExecutionResult.success_result(
-            tool=self.name,
-            capability=self.capability,
-            artifacts=[
-                str(output),
-                str(logfile),
-            ],
-            metadata={
-                "notes": notes,
-                "targets": len(
-                    targets
-                ),
-            },
-        )
-
-
-###############################################################################
-# FFUF Helpers
-###############################################################################
-
-
-def _select_wordlist() -> str | None:
-    """
-    Interactively select an FFUF wordlist.
-
-    Returns:
-        Valid wordlist path or None.
-    """
-
-    mode = questionary.select(
-        "Choose FFUF wordlist:",
-        choices=[
-            "Auto-detect default",
-            "Specify custom path",
-        ],
-    ).ask()
-
-    if mode == (
-        "Auto-detect default"
-    ):
-        wordlist = (
-            find_default_web_fuzz_wordlist()
-        )
-
-        if not wordlist:
-            wordlist = questionary.text(
-                "Default wordlist not found. Enter path:"
-            ).ask()
-
-    else:
-        wordlist = questionary.text(
-            "Enter wordlist path:"
-        ).ask()
-
-    if not wordlist:
-        return None
-
-    if not is_valid_wordlist(
-        wordlist
-    ):
-        return None
-
-    return wordlist
+        return arguments
 
 
 ###############################################################################
@@ -779,211 +362,907 @@ def _select_wordlist() -> str | None:
 ###############################################################################
 
 
-class FFUFTool(
-    WebEnumerationTool
-):
+def _find_default_web_fuzz_wordlist() -> Path | None:
     """
-    Directory and content discovery using FFUF.
+    Resolve the default web-content wordlist.
+
+    The helper is intentionally local to the adapter layer so FFUF remains
+    self-contained.
     """
 
-    name = "ffuf"
-    description = (
-        "Directory and content discovery"
+    candidates = (
+        Path(
+            "/usr/share/seclists/Discovery/Web-Content/"
+            "directory-list-2.3-small.txt"
+        ),
+        Path(
+            "/usr/share/wordlists/"
+            "dirb/common.txt"
+        ),
     )
-    capability = "content_discovery"
-    risk = "medium"
 
-    def run(
-        self,
-        ctx: dict,
-    ) -> ExecutionResult:
-        """
-        Execute FFUF against the selected targets.
-        """
+    for path in candidates:
+        if path.is_file():
+            return path
 
-        if not is_tool_installed(
-            "ffuf"
+    return None
+
+
+class FfufTool(ToolAdapter):
+    """
+    Content, directory and parameter discovery using FFUF.
+    """
+
+    definition = ToolDefinition(
+        name="ffuf",
+        capability="content_discovery",
+        phase="enumeration",
+        purpose=(
+            "Discover hidden endpoints, directories, files, parameters and "
+            "virtual hosts."
+        ),
+        executable="ffuf",
+        input_type="url",
+        output_type="raw",
+        finding_types=(
+            "HIDDEN_ENDPOINT",
+            "DIRECTORY",
+            "FILE",
+            "PARAMETER",
+            "VHOST",
+        ),
+        dependencies=(
+            "ffuf",
+        ),
+        options=(
+            ToolOption(
+                name="wordlist",
+                flag="-w",
+                description="Wordlist used for content discovery.",
+                option_type="path",
+                default=None,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="threads",
+                flag="-t",
+                description="Number of FFUF worker threads.",
+                option_type="integer",
+                default=None,
+                safe=True,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="match_codes",
+                flag="-mc",
+                description="HTTP status codes to match.",
+                option_type="string",
+                default=None,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="filter_codes",
+                flag="-fc",
+                description="HTTP status codes to filter.",
+                option_type="string",
+                default=None,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="rate",
+                flag="-rate",
+                description="Maximum requests per second.",
+                option_type="integer",
+                default=None,
+                safe=True,
+                aggressive=True,
+            ),
+        ),
+        safe=True,
+        aggressive=True,
+    )
+
+    def validate_options(self) -> None:
+        """Validate FFUF options."""
+
+        super().validate_options()
+
+        threads = self.get_option(
+            "threads"
+        )
+
+        if threads is not None:
+            if (
+                not isinstance(threads, int)
+                or isinstance(threads, bool)
+            ):
+                raise TypeError(
+                    "FFUF threads must be an integer."
+                )
+
+            if threads <= 0:
+                raise ValueError(
+                    "FFUF threads must be greater than zero."
+                )
+
+        rate = self.get_option(
+            "rate"
+        )
+
+        if rate is not None:
+            if (
+                not isinstance(rate, int)
+                or isinstance(rate, bool)
+            ):
+                raise TypeError(
+                    "FFUF rate must be an integer."
+                )
+
+            if rate < 0:
+                raise ValueError(
+                    "FFUF rate cannot be negative."
+                )
+
+        for name in (
+            "wordlist",
+            "match_codes",
+            "filter_codes",
         ):
-            return _missing_tool(
-                self.name,
-                self.capability,
+            value = self.get_option(
+                name
             )
 
-        confirmed = questionary.confirm(
-            "Run FFUF directory enumeration?"
-        ).ask()
+            if value is not None:
+                value = str(
+                    value
+                ).strip()
 
-        if not confirmed:
-            return ExecutionResult.skipped(
-                tool=self.name,
-                capability=self.capability,
-                reason="Skipped by user",
+                if not value:
+                    raise ValueError(
+                        f"FFUF {name} cannot be empty."
+                    )
+
+    def _resolve_wordlist(self) -> str:
+        """Resolve the configured or default FFUF wordlist."""
+
+        wordlist = self.get_option(
+            "wordlist"
+        )
+
+        if wordlist is not None:
+            path = Path(
+                str(wordlist)
+            ).expanduser()
+
+            if not path.is_file():
+                raise ValueError(
+                    f"Invalid FFUF wordlist: {path}"
+                )
+
+            return str(
+                path
             )
 
-        wordlist = _select_wordlist()
+        default = _find_default_web_fuzz_wordlist()
 
-        if not wordlist:
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability=self.capability,
-                error=(
-                    "Invalid wordlist selected."
-                ),
+        if default is None:
+            raise ValueError(
+                "FFUF requires a valid wordlist."
             )
 
-        enum_dir = self.enum_dir(
-            ctx
+        return str(
+            default
         )
 
-        logfile = (
-            enum_dir
-            / "ffuf.log"
-        )
+    def build_arguments(self) -> list[str]:
+        """Build FFUF-specific command-line arguments."""
 
-        summary = (
-            enum_dir
-            / "ffuf.md"
-        )
+        self.validate_options()
 
-        wordlist_file = (
-            enum_dir
-            / "wordlist_used.txt"
-        )
+        target = self.context.target
 
-        wordlist_file.write_text(
-            wordlist + "\n",
-            encoding="utf-8",
-        )
+        if "FUZZ" not in target:
+            if target.endswith("/"):
+                target += "FUZZ"
+            else:
+                target += "/FUZZ"
 
-        generated_outputs = [
-            summary,
-            logfile,
-            wordlist_file,
+        arguments = [
+            "-u",
+            target,
+            "-w",
+            self._resolve_wordlist(),
+            "-noninteractive",
         ]
 
-        targets = self.targets(
-            ctx
+        threads = self.get_option(
+            "threads"
         )
 
-        with summary.open(
-            "w",
-            encoding="utf-8",
-        ) as report:
-
-            report.write(
-                "# FFUF Enumeration Results\n\n"
+        if threads is not None:
+            arguments.extend(
+                [
+                    "-t",
+                    str(threads),
+                ]
             )
 
-            report.write(
-                f"Wordlist: `{wordlist}`\n\n"
+        match_codes = self.get_option(
+            "match_codes"
+        )
+
+        if match_codes:
+            arguments.extend(
+                [
+                    "-mc",
+                    str(match_codes),
+                ]
             )
 
-            for index, target in enumerate(
-                targets,
-                start=1,
-            ):
-                report.write(
-                    f"## Target {index}\n\n"
-                )
-
-                report.write(
-                    f"{target}\n\n"
-                )
-
-                outfile = (
-                    enum_dir
-                    / (
-                        f"ffuf_target_{index}.md"
-                    )
-                )
-
-                command = (
-                    "ffuf "
-                    f"-u {_quote(target)}/FUZZ "
-                    f"-w {_quote(wordlist)} "
-                    "-mc all "
-                    "-of md "
-                    f"-o {_quote(str(outfile))}"
-                )
-
-                run_command(
-                    tool=self.name,
-                    capability=self.capability,
-                    cmd=command,
-                    outfile=str(
-                        logfile
-                    ),
-                )
-
-                if _safe_exists(
-                    outfile
-                ):
-                    generated_outputs.append(
-                        outfile
-                    )
-
-                    report.write(
-                        "Output: "
-                        f"`{outfile.name}`\n\n"
-                    )
-
-                else:
-                    report.write(
-                        "No results generated.\n\n"
-                    )
-
-        notes = _build_notes(
-            logfile,
-            "FFUF completed.",
+        filter_codes = self.get_option(
+            "filter_codes"
         )
 
-        notes = self.verify_output(
-            summary,
-            notes,
-            "No FFUF results produced.",
+        if filter_codes:
+            arguments.extend(
+                [
+                    "-fc",
+                    str(filter_codes),
+                ]
+            )
+
+        rate = self.get_option(
+            "rate"
         )
 
-        return ExecutionResult.success_result(
-            tool=self.name,
-            capability=self.capability,
-            artifacts=[
-                str(path)
-                for path in generated_outputs
-            ],
-            metadata={
-                "notes": notes,
-                "targets": len(
-                    targets
-                ),
-                "wordlist": wordlist,
-            },
-        )
+        if rate:
+            arguments.extend(
+                [
+                    "-rate",
+                    str(rate),
+                ]
+            )
+
+        return arguments
 
 
 ###############################################################################
-# Tool Registration
+# WHATWEB
+###############################################################################
+
+
+class WhatWebTool(ToolAdapter):
+    """
+    Website technology fingerprinting.
+    """
+
+    definition = ToolDefinition(
+        name="whatweb",
+        capability="technology_fingerprinting",
+        phase="enumeration",
+        purpose=(
+            "Identify technologies, frameworks, CMS platforms, servers and "
+            "libraries exposed by web applications."
+        ),
+        executable="whatweb",
+        input_type="url",
+        output_type="raw",
+        finding_types=(
+            "TECHNOLOGY",
+            "FRAMEWORK",
+            "CMS",
+            "SERVER",
+            "LIBRARY",
+        ),
+        dependencies=(
+            "whatweb",
+        ),
+        options=(
+            ToolOption(
+                name="aggression",
+                flag="-a",
+                description="WhatWeb aggression level.",
+                option_type="integer",
+                default=1,
+                choices=(
+                    1,
+                    2,
+                    3,
+                    4,
+                ),
+                safe=True,
+                aggressive=True,
+            ),
+        ),
+        safe=True,
+        aggressive=True,
+    )
+
+    def validate_options(self) -> None:
+        """Validate WhatWeb options."""
+
+        super().validate_options()
+
+        aggression = self.get_option(
+            "aggression",
+            1,
+        )
+
+        if (
+            not isinstance(aggression, int)
+            or isinstance(aggression, bool)
+        ):
+            raise TypeError(
+                "WhatWeb aggression must be an integer."
+            )
+
+        if aggression < 1 or aggression > 4:
+            raise ValueError(
+                "WhatWeb aggression must be between 1 and 4."
+            )
+
+    def build_arguments(self) -> list[str]:
+        """Build WhatWeb-specific command-line arguments."""
+
+        self.validate_options()
+
+        return [
+            "-a",
+            str(
+                self.get_option(
+                    "aggression",
+                    1,
+                )
+            ),
+            self.context.target,
+        ]
+
+
+###############################################################################
+# KITERUNNER
+###############################################################################
+
+
+class KiterunnerTool(
+    ToolAdapter
+):
+    """
+    API-aware route discovery using Kiterunner.
+
+    ScopeForgeX uses a local KiteBuilder route corpus so execution does not
+    depend on Kiterunner's remote Assetnote wordlist service.
+
+    Full-scan mode is enabled by default because the normal Kiterunner
+    two-phase workflow can prompt interactively when the preflight phase
+    produces no results. ScopeForgeX workflows must remain non-interactive.
+    """
+
+    definition = ToolDefinition(
+        name="kiterunner",
+        capability="api_route_discovery",
+        phase="enumeration",
+        purpose=(
+            "Discover API routes using Kiterunner's API-aware route corpus."
+        ),
+        executable="kr",
+        input_type="url",
+        output_type="raw",
+        finding_types=(
+            "API_ENDPOINT",
+            "API_ROUTE",
+        ),
+        dependencies=(
+            "kiterunner",
+        ),
+        options=(
+            ToolOption(
+                name="wordlist",
+                flag="-w",
+                description=(
+                    "Local Kiterunner KiteBuilder route corpus."
+                ),
+                option_type="path",
+                default=(
+                    "/home/kali/tools/kiterunner/"
+                    "wordlists/routes-small.kite"
+                ),
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="threads",
+                flag="-x",
+                description=(
+                    "Maximum concurrent connections per host."
+                ),
+                option_type="integer",
+                default=10,
+                safe=True,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="full_scan",
+                flag="--kitebuilder-full-scan",
+                description=(
+                    "Run the complete KiteBuilder corpus without "
+                    "interactive two-phase continuation."
+                ),
+                option_type="boolean",
+                default=True,
+                safe=True,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="quiet",
+                flag="-q",
+                description=(
+                    "Suppress unnecessary Kiterunner terminal output."
+                ),
+                option_type="boolean",
+                default=True,
+                safe=True,
+                aggressive=False,
+            ),
+        ),
+        safe=True,
+        aggressive=True,
+    )
+
+    def validate_options(
+        self,
+    ) -> None:
+        """Validate Kiterunner options."""
+
+        super().validate_options()
+
+        wordlist = self.get_option(
+            "wordlist",
+            (
+                "/home/kali/tools/kiterunner/"
+                "wordlists/routes-small.kite"
+            ),
+        )
+
+        if wordlist is not None:
+            path = Path(
+                str(wordlist)
+            ).expanduser()
+
+            if not path.is_file():
+                raise ValueError(
+                    f"Kiterunner wordlist not found: {path}"
+                )
+
+        threads = self.get_option(
+            "threads",
+            10,
+        )
+
+        if (
+            not isinstance(
+                threads,
+                int,
+            )
+            or isinstance(
+                threads,
+                bool,
+            )
+        ):
+            raise TypeError(
+                "Kiterunner threads must be an integer."
+            )
+
+        if threads <= 0:
+            raise ValueError(
+                "Kiterunner threads must be greater than zero."
+            )
+
+        for name in (
+            "full_scan",
+            "quiet",
+        ):
+            value = self.get_option(
+                name,
+                True,
+            )
+
+            if not isinstance(
+                value,
+                bool,
+            ):
+                raise TypeError(
+                    f"Kiterunner {name} must be boolean."
+                )
+
+    def build_arguments(
+        self,
+    ) -> list[str]:
+        """Build Kiterunner-specific command-line arguments."""
+
+        self.validate_options()
+
+        wordlist = self.get_option(
+            "wordlist",
+            (
+                "/home/kali/tools/kiterunner/"
+                "wordlists/routes-small.kite"
+            ),
+        )
+
+        arguments = [
+            "scan",
+            self.context.target,
+            "-w",
+            str(wordlist),
+        ]
+
+        threads = self.get_option(
+            "threads",
+            10,
+        )
+
+        arguments.extend(
+            [
+                "-x",
+                str(threads),
+            ]
+        )
+
+        if self.get_option(
+            "full_scan",
+            True,
+        ):
+            arguments.append(
+                "--kitebuilder-full-scan"
+            )
+
+        if self.get_option(
+            "quiet",
+            True,
+        ):
+            arguments.append(
+                "-q"
+            )
+
+        return arguments
+
+
+###############################################################################
+# JSLUICE
+###############################################################################
+
+
+def _normalize_javascript_http_target(
+    target: str,
+) -> str:
+    """
+    Normalize a workflow target into an HTTP(S) URL.
+
+    JSLuice treats a bare hostname as a local filename. ScopeForgeX uses an
+    HTTPS URL for bare web targets so JSLuice receives an HTTP-based input.
+    """
+
+    value = str(
+        target
+    ).strip()
+
+    if not value:
+        raise ValueError(
+            "JSLuice requires a JavaScript target."
+        )
+
+    lowered = value.lower()
+
+    if lowered.startswith(
+        (
+            "http://",
+            "https://",
+        )
+    ):
+        return value
+
+    return (
+        "https://"
+        + value
+    )
+
+
+def _javascript_targets_from_context(
+    context: ToolContext,
+) -> list[str]:
+    """
+    Resolve JSLuice inputs from ToolContext.
+
+    Explicit input_data takes precedence over the primary workflow target.
+    When input_data is empty, the primary target is normalized to an HTTP(S)
+    URL rather than being passed as a local filename.
+    """
+
+    values = [
+        str(value).strip()
+        for value in context.input_data
+        if value is not None
+        and str(value).strip()
+    ]
+
+    if values:
+        return sorted(
+            set(
+                values
+            )
+        )
+
+    return [
+        _normalize_javascript_http_target(
+            context.target
+        )
+    ]
+
+
+class JSLuiceTool(
+    ToolAdapter
+):
+    """
+    Analyze JavaScript resources for URLs, API references and secrets.
+
+    JSLuice URL mode accepts local files and HTTP-based inputs. ScopeForgeX
+    normalizes bare workflow hostnames into HTTP(S) inputs when no explicit
+    JavaScript inputs are available.
+    """
+
+    definition = ToolDefinition(
+        name="jsluice",
+        capability="javascript_attack_surface_analysis",
+        phase="enumeration",
+        purpose=(
+            "Extract endpoints, API references and secret candidates from "
+            "JavaScript resources."
+        ),
+        executable="jsluice",
+        input_type="url",
+        output_type="raw",
+        finding_types=(
+            "JS_ENDPOINT",
+            "JS_URL",
+            "SECRET_CANDIDATE",
+            "API_REFERENCE",
+        ),
+        dependencies=(
+            "jsluice",
+        ),
+        options=(
+            ToolOption(
+                name="concurrency",
+                flag="-c",
+                description="Concurrent JSLuice workers.",
+                option_type="integer",
+                default=1,
+                safe=True,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="include_source",
+                flag="-S",
+                description="Include source references.",
+                option_type="boolean",
+                default=True,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="ignore_strings",
+                flag="-I",
+                description="Ignore string literals.",
+                option_type="boolean",
+                default=False,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="secrets",
+                flag="secrets",
+                description="Run JSLuice secret extraction.",
+                option_type="boolean",
+                default=True,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="resolve_paths",
+                flag="-R",
+                description="Resolve relative paths.",
+                option_type="boolean",
+                default=True,
+                safe=True,
+                aggressive=False,
+            ),
+        ),
+        safe=True,
+        aggressive=True,
+    )
+
+    def validate_options(self) -> None:
+        """Validate JSLuice options."""
+
+        super().validate_options()
+
+        concurrency = self.get_option(
+            "concurrency",
+            1,
+        )
+
+        if (
+            not isinstance(
+                concurrency,
+                int,
+            )
+            or isinstance(
+                concurrency,
+                bool,
+            )
+        ):
+            raise TypeError(
+                "JSLuice concurrency must be an integer."
+            )
+
+        if concurrency <= 0:
+            raise ValueError(
+                "JSLuice concurrency must be greater than zero."
+            )
+
+        for name in (
+            "include_source",
+            "ignore_strings",
+            "secrets",
+            "resolve_paths",
+        ):
+            value = self.get_option(
+                name,
+                False,
+            )
+
+            if not isinstance(
+                value,
+                bool,
+            ):
+                raise TypeError(
+                    f"JSLuice {name} must be boolean."
+                )
+
+    def build_arguments(self) -> list[str]:
+        """
+        Build the JSLuice URLs command.
+
+        Explicit JavaScript inputs are preferred. Otherwise the workflow target
+        is normalized to an HTTP(S) URL.
+        """
+
+        self.validate_options()
+
+        targets = _javascript_targets_from_context(
+            self.context
+        )
+
+        if not targets:
+            raise ValueError(
+                "JSLuice requires at least one JavaScript input."
+            )
+
+        arguments = [
+            "urls",
+            "-c",
+            str(
+                self.get_option(
+                    "concurrency",
+                    1,
+                )
+            ),
+        ]
+
+        if self.get_option(
+            "include_source",
+            True,
+        ):
+            arguments.append(
+                "-S"
+            )
+
+        if self.get_option(
+            "ignore_strings",
+            False,
+        ):
+            arguments.append(
+                "-I"
+            )
+
+        if self.get_option(
+            "resolve_paths",
+            True,
+        ):
+            arguments.extend(
+                [
+                    "-R",
+                    targets[0],
+                ]
+            )
+
+        arguments.extend(
+            targets
+        )
+
+        return arguments
+
+    def build_secrets_arguments(self) -> list[str]:
+        """Build the JSLuice secrets-analysis command."""
+
+        self.validate_options()
+
+        targets = _javascript_targets_from_context(
+            self.context
+        )
+
+        if not targets:
+            raise ValueError(
+                "JSLuice requires at least one JavaScript input."
+            )
+
+        arguments = [
+            "secrets",
+            "-c",
+            str(
+                self.get_option(
+                    "concurrency",
+                    1,
+                )
+            ),
+        ]
+
+        arguments.extend(
+            targets
+        )
+
+        return arguments
+
+
+###############################################################################
+# Stage 2 Tool Collection
 ###############################################################################
 
 
 ALL_STAGE2_WEB_ENUM_TOOLS = [
-    WhatWebTool(),
-    Wafw00fTool(),
-    FFUFTool(),
+    HttpxTool,
+    KatanaTool,
+    FfufTool,
+    WhatWebTool,
+    KiterunnerTool,
+    JSLuiceTool,
 ]
 
 
 ###############################################################################
-# Module Exports
+# Compatibility Alias
+###############################################################################
+
+
+# Compatibility alias retained for code that uses the previous class spelling.
+FFUFTool = FfufTool
+
+
+###############################################################################
+# Public API
 ###############################################################################
 
 
 __all__ = [
-    "WebEnumerationTool",
     "HttpxTool",
     "KatanaTool",
+    "KiterunnerTool",
+    "JSLuiceTool",
     "WhatWebTool",
-    "Wafw00fTool",
+    "FfufTool",
     "FFUFTool",
     "ALL_STAGE2_WEB_ENUM_TOOLS",
 ]
-
