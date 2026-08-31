@@ -4,18 +4,54 @@ ScopeForgeX Command-Line Interface
 
 Application entry point.
 
-Provides lightweight command-line argument handling while preserving
-the interactive dashboard as the default interface.
+The CLI supports two modes:
 
-v1.0.0
+1. No execution arguments:
+   Launch the interactive dashboard.
+
+2. Explicit target execution:
+   Execute an existing WorkflowEngine profile non-interactively.
+
+Non-interactive execution requires an explicit ``--authorized`` flag.
+
+Examples:
+
+    python -m scopeforgex
+
+    python -m scopeforgex \
+        --profile standard \
+        --target example.com \
+        --authorized
+
+    python -m scopeforgex \
+        --profile fast \
+        --target example.com \
+        --authorized
+
+    python -m scopeforgex \
+        --profile full \
+        --target example.com \
+        --authorized
+
+ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
 
+from scopeforgex.config import SUPPORTED_PROFILES
 from scopeforgex.dashboard import dashboard
-from scopeforgex.ui import banner, info
+from scopeforgex.state import save_last_run
+from scopeforgex.ui import (
+    banner,
+    info,
+    ok,
+    summary_table,
+    warn,
+)
+from scopeforgex.workflow import WorkflowEngine
 
 
 ###############################################################################
@@ -40,7 +76,168 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    parser.add_argument(
+        "--profile",
+        choices=SUPPORTED_PROFILES,
+        default="standard",
+        help=(
+            "Assessment profile used for non-interactive execution. "
+            "Defaults to standard."
+        ),
+    )
+
+    parser.add_argument(
+        "--target",
+        help=(
+            "Assessment target for non-interactive execution."
+        ),
+    )
+
+    parser.add_argument(
+        "--authorized",
+        action="store_true",
+        help=(
+            "Explicitly confirm that you have written authorization "
+            "to assess the supplied target."
+        ),
+    )
+
     return parser
+
+
+###############################################################################
+# Non-Interactive Validation
+###############################################################################
+
+
+def _validate_noninteractive_arguments(
+    args: argparse.Namespace,
+) -> bool:
+    """
+    Validate CLI arguments and determine execution mode.
+
+    Returns:
+        True when non-interactive workflow execution was requested.
+        False when the interactive dashboard should be launched.
+    """
+
+    target_supplied = (
+        args.target is not None
+    )
+
+    authorized_supplied = (
+        args.authorized is True
+    )
+
+    # No target and no authorization flag means normal dashboard mode.
+    if not target_supplied and not authorized_supplied:
+        return False
+
+    if not target_supplied:
+        raise SystemExit(
+            "--authorized requires --target."
+        )
+
+    if not authorized_supplied:
+        raise SystemExit(
+            "--target requires explicit --authorized confirmation."
+        )
+
+    target = str(
+        args.target
+    ).strip()
+
+    if not target:
+        raise SystemExit(
+            "--target cannot be empty."
+        )
+
+    return True
+
+
+###############################################################################
+# Non-Interactive Execution
+###############################################################################
+
+
+def _run_noninteractive(
+    args: argparse.Namespace,
+) -> dict:
+    """
+    Execute the existing WorkflowEngine in explicit CLI mode.
+
+    No second workflow implementation is introduced. The CLI simply
+    pre-populates the context consumed by Stage 0.
+    """
+
+    engine = WorkflowEngine(
+        args.profile
+    )
+
+    engine.ctx.update(
+        {
+            "non_interactive": True,
+            "authorization_confirmed": True,
+            "target": str(
+                args.target
+            ).strip(),
+        }
+    )
+
+    ctx = engine.run()
+
+    try:
+        save_last_run(
+            ctx
+        )
+
+    except Exception as exc:
+        warn(
+            f"Could not persist last-run state: {exc}"
+        )
+
+    ok(
+        "Workflow completed ✅"
+    )
+
+    summary_table(
+        "ScopeForgeX Summary",
+        [
+            (
+                "Profile",
+                args.profile,
+            ),
+            (
+                "Target Type",
+                ctx.get(
+                    "target_type",
+                    "-",
+                ),
+            ),
+            (
+                "Target",
+                ctx.get(
+                    "target",
+                    "-",
+                ),
+            ),
+            (
+                "Tools Executed",
+                len(
+                    engine.selected_tools
+                ),
+            ),
+            (
+                "Output Directory",
+                ctx.get(
+                    "outdir",
+                    "-",
+                ),
+            ),
+        ],
+    )
+
+    return ctx
 
 
 ###############################################################################
@@ -54,9 +251,7 @@ def main() -> None:
     """
 
     parser = _build_parser()
-
-    # argparse handles --help / -h and exits before the dashboard.
-    parser.parse_args()
+    args = parser.parse_args()
 
     banner()
 
@@ -73,6 +268,18 @@ def main() -> None:
     )
 
     info("")
+
+    noninteractive = (
+        _validate_noninteractive_arguments(
+            args
+        )
+    )
+
+    if noninteractive:
+        _run_noninteractive(
+            args
+        )
+        return
 
     dashboard()
 
