@@ -8,11 +8,12 @@ Responsibilities:
 
 - Execute new-style ToolAdapter commands
 - Preserve legacy ToolBase compatibility during migration
+- Respect adapter-owned custom run() execution contracts
 - Measure execution duration
 - Apply execution context
 - Capture execution status
 - Convert unexpected adapter failures into ExecutionResult failures
-- Invoke adapter result collection hooks after process execution
+- Invoke adapter result collection hooks after generic process execution
 - Record results in RuntimeState
 - Preserve tool-generated artifacts
 - Maintain a consistent execution contract
@@ -28,7 +29,13 @@ Tool Adapter
     ↓
 Tool Executor
     ↓
-Command Execution
+Adapter Execution Contract
+    |
+    +-- custom adapter run()
+    |
+    +-- generic build_command()
+    |
+    +-- legacy run(ctx)
     ↓
 ExecutionResult
     ↓
@@ -36,9 +43,19 @@ Adapter Collection
     ↓
 RuntimeState
 
-New-style adapters own command construction and post-execution collection.
+Custom adapter run() implementations are authoritative.
 
-ToolExecutor owns process execution.
+They may:
+
+- prepare commands without executing them
+- perform specialized process execution
+- preserve tool-specific artifacts
+- invoke specialized collectors
+- implement manual-review workflows
+- otherwise control tool-specific execution semantics
+
+New-style adapters without a custom run() implementation use the
+canonical build_command() process-execution path.
 
 Legacy ToolBase adapters may continue to expose run(ctx) until migration
 is complete.
@@ -114,15 +131,26 @@ class ToolExecutor:
     ToolExecutor coordinates execution but does not construct
     tool-specific arguments.
 
-    New-style ToolAdapter instances expose build_command() and are
-    executed through the canonical command runner.
+    Adapter execution precedence is:
 
-    After command execution, an optional adapter collect(result) hook is
-    invoked so adapters can preserve artifacts and perform tool-specific
-    result collection without owning subprocess execution.
+    1. Custom ToolAdapter run() implementation.
+    2. New-style build_command() execution path.
+    3. Legacy run(ctx) compatibility path.
 
-    Legacy ToolBase instances may still expose run(ctx) and are
-    temporarily supported through the compatibility path.
+    A custom ToolAdapter run() implementation is authoritative. This allows
+    specialized adapters to:
+
+    - prepare commands without execution
+    - execute through specialized logic
+    - preserve artifacts
+    - invoke dedicated collectors
+    - implement manual-review workflows
+
+    New-style adapters without a custom run() implementation expose
+    build_command() and use the canonical command runner.
+
+    Legacy ToolBase instances may still expose run(ctx) until migration
+    is complete.
     """
 
     def __init__(
@@ -319,6 +347,53 @@ class ToolExecutor:
             )
         )
 
+    @staticmethod
+    def _has_custom_run(
+        adapter: Any,
+    ) -> bool:
+        """
+        Return True when a ToolAdapter provides its own run() implementation.
+
+        Custom run() methods must take precedence over build_command() because
+        they may intentionally prevent automatic subprocess execution or
+        implement specialized artifact/collector behavior.
+        """
+
+        try:
+            from scopeforgex.registry.tool_base import (
+                ToolAdapter,
+            )
+        except ImportError:
+            return False
+
+        if not isinstance(
+            adapter,
+            ToolAdapter,
+        ):
+            return False
+
+        adapter_run = getattr(
+            type(adapter),
+            "run",
+            None,
+        )
+
+        if not callable(
+            adapter_run
+        ):
+            return False
+
+        base_run = getattr(
+            ToolAdapter,
+            "run",
+            None,
+        )
+
+        return (
+            base_run is None
+            or adapter_run is not base_run
+        )
+
     # ------------------------------------------------------------------
     # Context
     # ------------------------------------------------------------------
@@ -468,7 +543,12 @@ class ToolExecutor:
         """
         Invoke an optional adapter-side result collection hook.
 
-        The hook executes after process completion and therefore may:
+        This hook is used only after the generic process-execution path.
+
+        Custom adapter run() implementations remain responsible for invoking
+        any collection logic required by their own execution contract.
+
+        The hook may:
 
         - preserve raw output artifacts
         - copy or transform generated files
@@ -672,17 +752,17 @@ class ToolExecutor:
         """
         Execute one ScopeForgeX tool adapter.
 
-        New-style ToolAdapter instances use build_command() and the
-        canonical command execution path.
+        Execution precedence:
 
-        After successful or failed process execution, an optional adapter
-        collect(result) hook is invoked to preserve artifacts and perform
-        tool-specific result collection.
+        1. Custom ToolAdapter run().
+        2. New-style build_command().
+        3. Legacy run(ctx).
 
-        Legacy adapters continue to use run(ctx) until migrated.
+        A custom ToolAdapter run() receives no synthetic context argument
+        because its ToolContext is already attached to the adapter and its
+        signature owns its execution contract.
 
-        Unexpected adapter exceptions are converted into an
-        ExecutionResult failure.
+        Legacy run(ctx) adapters continue to receive the prepared mapping.
         """
 
         tool = self._tool_name(
@@ -701,7 +781,17 @@ class ToolExecutor:
         started_at = monotonic()
 
         try:
-            if self._is_new_adapter(
+            if self._has_custom_run(
+                adapter
+            ):
+                run = getattr(
+                    adapter,
+                    "run",
+                )
+
+                result = run()
+
+            elif self._is_new_adapter(
                 adapter
             ):
                 result = self._execute_command(

@@ -9,9 +9,9 @@ Provides the canonical Stage 3 vulnerability-assessment adapters:
 - Nikto
 - testssl.sh
 
-The adapters construct tool-specific commands and perform post-execution
-result collection. Process execution remains the responsibility of the
-ScopeForgeX execution layer.
+The adapters execute vulnerability-assessment tools against pipeline-generated
+hosts and URLs, preserve raw outputs and logs, and return the canonical
+ExecutionResult.
 
 Architecture
 ------------
@@ -28,11 +28,8 @@ ToolAdapter
     +-- ToolContext
     +-- option validation
     +-- command construction
-    +-- result collection
+    +-- execution delegation
     +-- artifact preservation
-    |
-    v
-ToolExecutor
     |
     v
 ExecutionResult
@@ -42,7 +39,7 @@ Collector / Finding Pipeline
 
 The workflow engine must never construct tool-specific commands.
 
-ToolExecutor owns subprocess execution.
+Command construction belongs to the individual tool adapter.
 
 ScopeForgeX 3.0.0
 """
@@ -56,9 +53,12 @@ from typing import Any, Mapping
 from scopeforgex.models.execution_result import ExecutionResult
 from scopeforgex.registry.tool_base import (
     ToolAdapter,
+    ToolContext,
     ToolDefinition,
     ToolOption,
 )
+from scopeforgex.runner import run_command
+from scopeforgex.toolcheck import is_tool_installed
 
 
 ###############################################################################
@@ -209,123 +209,6 @@ def _resolve_option_values(
     return values
 
 
-def _result_stdout(
-    result: ExecutionResult,
-) -> str:
-    """
-    Return normalized execution stdout.
-    """
-
-    value = getattr(
-        result,
-        "stdout",
-        "",
-    )
-
-    if isinstance(
-        value,
-        bytes,
-    ):
-        return value.decode(
-            "utf-8",
-            errors="replace",
-        )
-
-    return str(
-        value or ""
-    )
-
-
-def _result_stderr(
-    result: ExecutionResult,
-) -> str:
-    """
-    Return normalized execution stderr.
-    """
-
-    value = getattr(
-        result,
-        "stderr",
-        "",
-    )
-
-    if isinstance(
-        value,
-        bytes,
-    ):
-        return value.decode(
-            "utf-8",
-            errors="replace",
-        )
-
-    return str(
-        value or ""
-    )
-
-
-def _write_text_artifact(
-    result: ExecutionResult,
-    path: Path,
-    content: str,
-) -> None:
-    """
-    Write a deterministic text artifact and attach it to the result.
-    """
-
-    path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    path.write_text(
-        content,
-        encoding="utf-8",
-    )
-
-    result.add_artifact(
-        path
-    )
-
-
-def _write_execution_log(
-    result: ExecutionResult,
-    path: Path,
-) -> None:
-    """
-    Preserve raw execution output as a deterministic log artifact.
-
-    stdout is preferred. stderr is appended when present so warnings and
-    runtime diagnostics are not silently discarded.
-    """
-
-    stdout = _result_stdout(
-        result
-    )
-
-    stderr = _result_stderr(
-        result
-    )
-
-    content = stdout
-
-    if stderr:
-        if content and not content.endswith("\n"):
-            content += "\n"
-
-        content += stderr
-
-    _write_text_artifact(
-        result,
-        path,
-        content,
-    )
-
-
-###############################################################################
-# Nuclei
-###############################################################################
-
-
 def _build_nuclei_flags(
     options: Mapping[str, Any],
 ) -> list[str]:
@@ -464,6 +347,83 @@ def _build_nuclei_flags(
         )
 
     return flags
+
+
+def _build_nikto_flags(
+    options: Mapping[str, Any],
+) -> list[str]:
+    """
+    Build Nikto command-line arguments.
+    """
+
+    flags: list[str] = []
+
+    tuning = options.get(
+        "tuning"
+    )
+
+    if tuning:
+        flags.extend(
+            [
+                "-Tuning",
+                str(tuning),
+            ]
+        )
+
+    timeout = options.get(
+        "timeout"
+    )
+
+    if timeout is not None:
+        flags.extend(
+            [
+                "-timeout",
+                str(timeout),
+            ]
+        )
+
+    return flags
+
+
+def _build_testssl_flags(
+    options: Mapping[str, Any],
+) -> list[str]:
+    """
+    Build testssl.sh command-line arguments.
+    """
+
+    flags: list[str] = []
+
+    connect_timeout = options.get(
+        "connect_timeout"
+    )
+
+    if connect_timeout is not None:
+        flags.extend(
+            [
+                "--connect-timeout",
+                str(connect_timeout),
+            ]
+        )
+
+    openssl_timeout = options.get(
+        "openssl_timeout"
+    )
+
+    if openssl_timeout is not None:
+        flags.extend(
+            [
+                "--openssl-timeout",
+                str(openssl_timeout),
+            ]
+        )
+
+    return flags
+
+
+###############################################################################
+# Nuclei
+###############################################################################
 
 
 class NucleiTool(
@@ -620,9 +580,7 @@ class NucleiTool(
                     f"Nuclei {option_name} must be greater than zero."
                 )
 
-    def build_arguments(
-        self,
-    ) -> list[str]:
+    def build_arguments(self) -> list[str]:
         """
         Build Nuclei command-line arguments.
 
@@ -692,13 +650,28 @@ class NucleiTool(
 
         return arguments
 
-    def collect(
+    def run(
         self,
-        result: ExecutionResult,
     ) -> ExecutionResult:
         """
-        Preserve Nuclei output artifacts after canonical execution.
+        Execute Nuclei against ToolContext.input_data.
         """
+
+        if not is_tool_installed(
+            self.executable
+        ):
+            return ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error="nuclei not installed",
+            )
+
+        if not self.context.input_data:
+            return ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error="No Nuclei input targets available.",
+            )
 
         vuln_dir = (
             self.context.output_dir
@@ -708,11 +681,6 @@ class NucleiTool(
         vuln_dir.mkdir(
             parents=True,
             exist_ok=True,
-        )
-
-        input_file = (
-            vuln_dir
-            / "nuclei_input.txt"
         )
 
         output_file = (
@@ -725,20 +693,36 @@ class NucleiTool(
             / "nuclei.log"
         )
 
-        if input_file.exists():
-            result.add_artifact(
-                input_file
+        try:
+            command = self.build_command()
+
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            return ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error=str(exc),
             )
+
+        result = run_command(
+            tool=self.name,
+            capability=self.capability,
+            cmd=shlex.join(command),
+            outfile=str(log_file),
+            timeout=600,
+        )
 
         if output_file.exists():
             result.add_artifact(
                 output_file
             )
 
-        _write_execution_log(
-            result,
-            log_file,
-        )
+        if log_file.exists():
+            result.add_artifact(
+                log_file
+            )
 
         result.metadata.update(
             {
@@ -751,8 +735,17 @@ class NucleiTool(
                 "log_file": str(
                     log_file
                 ),
+                "command": command,
             }
         )
+
+        return result
+
+    def collect(
+        self,
+        result: ExecutionResult,
+    ) -> ExecutionResult:
+        """Preserve the canonical execution result."""
 
         return result
 
@@ -760,42 +753,6 @@ class NucleiTool(
 ###############################################################################
 # Nikto
 ###############################################################################
-
-
-def _build_nikto_flags(
-    options: Mapping[str, Any],
-) -> list[str]:
-    """
-    Build Nikto command-line arguments.
-    """
-
-    flags: list[str] = []
-
-    tuning = options.get(
-        "tuning"
-    )
-
-    if tuning:
-        flags.extend(
-            [
-                "-Tuning",
-                str(tuning),
-            ]
-        )
-
-    timeout = options.get(
-        "timeout"
-    )
-
-    if timeout is not None:
-        flags.extend(
-            [
-                "-timeout",
-                str(timeout),
-            ]
-        )
-
-    return flags
 
 
 class NiktoTool(
@@ -879,9 +836,7 @@ class NiktoTool(
                     "Nikto timeout must be greater than zero."
                 )
 
-    def build_arguments(
-        self,
-    ) -> list[str]:
+    def build_arguments(self) -> list[str]:
         """Build Nikto command-line arguments."""
 
         if not self.context.target:
@@ -908,13 +863,19 @@ class NiktoTool(
 
         return arguments
 
-    def collect(
+    def run(
         self,
-        result: ExecutionResult,
     ) -> ExecutionResult:
-        """
-        Preserve Nikto raw output and log artifacts after execution.
-        """
+        """Execute Nikto against the supplied target."""
+
+        if not is_tool_installed(
+            self.executable
+        ):
+            return ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error="nikto not installed",
+            )
 
         vuln_dir = (
             self.context.output_dir
@@ -936,32 +897,49 @@ class NiktoTool(
             / "nikto.log"
         )
 
-        stdout = _result_stdout(
-            result
+        try:
+            command = self.build_command()
+
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            return ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error=str(exc),
+            )
+
+        result = run_command(
+            tool=self.name,
+            capability=self.capability,
+            cmd=shlex.join(command),
+            outfile=str(log_file),
+            timeout=600,
         )
 
-        stderr = _result_stderr(
-            result
+        if log_file.exists():
+            output_file.write_text(
+                log_file.read_text(
+                    encoding="utf-8",
+                    errors="ignore",
+                ),
+                encoding="utf-8",
+            )
+        else:
+            output_file.write_text(
+                "",
+                encoding="utf-8",
+            )
+
+        result.add_artifact(
+            output_file
         )
 
-        content = stdout
-
-        if stderr:
-            if content and not content.endswith("\n"):
-                content += "\n"
-
-            content += stderr
-
-        _write_text_artifact(
-            result,
-            output_file,
-            content,
-        )
-
-        _write_execution_log(
-            result,
-            log_file,
-        )
+        if log_file.exists():
+            result.add_artifact(
+                log_file
+            )
 
         result.metadata.update(
             {
@@ -972,8 +950,17 @@ class NiktoTool(
                 "log_file": str(
                     log_file
                 ),
+                "command": command,
             }
         )
+
+        return result
+
+    def collect(
+        self,
+        result: ExecutionResult,
+    ) -> ExecutionResult:
+        """Preserve the canonical execution result."""
 
         return result
 
@@ -983,27 +970,6 @@ class NiktoTool(
 ###############################################################################
 
 
-def _testssl_target(
-    target: str,
-) -> str:
-    """
-    Return the target in the form accepted by testssl.sh.
-
-    testssl.sh accepts hosts, host:port values and URLs.
-    """
-
-    normalized = str(
-        target or ""
-    ).strip()
-
-    if not normalized:
-        raise ValueError(
-            "testssl.sh requires a target."
-        )
-
-    return normalized
-
-
 class TestSSLTool(
     ToolAdapter
 ):
@@ -1011,9 +977,7 @@ class TestSSLTool(
     TLS/SSL security-assessment adapter.
 
     testssl.sh execution is delegated to the ScopeForgeX execution layer.
-
-    Post-execution artifact preservation and structured parsing are handled
-    by collect().
+    Structured parsing is handled by TestSSLCollector.
     """
 
     definition = ToolDefinition(
@@ -1038,9 +1002,7 @@ class TestSSLTool(
             ToolOption(
                 name="connect_timeout",
                 flag="--connect-timeout",
-                description=(
-                    "Maximum TCP connection timeout in seconds."
-                ),
+                description="TCP connection timeout in seconds.",
                 option_type="integer",
                 default=10,
                 safe=True,
@@ -1049,9 +1011,7 @@ class TestSSLTool(
             ToolOption(
                 name="openssl_timeout",
                 flag="--openssl-timeout",
-                description=(
-                    "Maximum OpenSSL operation timeout in seconds."
-                ),
+                description="OpenSSL operation timeout in seconds.",
                 option_type="integer",
                 default=10,
                 safe=True,
@@ -1069,76 +1029,83 @@ class TestSSLTool(
 
         super().validate_options()
 
-        for name in (
+        options = _resolve_option_values(
+            self
+        )
+
+        for option_name in (
             "connect_timeout",
             "openssl_timeout",
         ):
-            value = self.get_option(
-                name,
-                10,
+            value = options.get(
+                option_name
             )
 
-            if (
-                not isinstance(
-                    value,
-                    int,
+            if value is None:
+                continue
+
+            try:
+                integer_value = int(
+                    value
                 )
-                or isinstance(
-                    value,
-                    bool,
-                )
-            ):
+            except (
+                TypeError,
+                ValueError,
+            ) as exc:
                 raise TypeError(
-                    f"testssl.sh {name} must be an integer."
-                )
+                    f"testssl.sh {option_name} must be an integer."
+                ) from exc
 
-            if value <= 0:
+            if integer_value <= 0:
                 raise ValueError(
-                    f"testssl.sh {name} must be greater than zero."
+                    f"testssl.sh {option_name} must be greater than zero."
                 )
 
-    def build_arguments(
-        self,
-    ) -> list[str]:
-        """
-        Build testssl.sh command arguments.
-        """
+    def build_arguments(self) -> list[str]:
+        """Build testssl.sh command arguments."""
+
+        if not self.context.target:
+            raise ValueError(
+                "testssl.sh requires a target."
+            )
 
         self.validate_options()
 
-        target = _testssl_target(
+        options = _resolve_option_values(
+            self
+        )
+
+        arguments = _build_testssl_flags(
+            options
+        )
+
+        arguments.append(
             self.context.target
         )
 
-        return [
-            "--connect-timeout",
-            str(
-                self.get_option(
-                    "connect_timeout",
-                    10,
-                )
-            ),
-            "--openssl-timeout",
-            str(
-                self.get_option(
-                    "openssl_timeout",
-                    10,
-                )
-            ),
-            target,
-        ]
+        return arguments
 
-    def collect(
+    def run(
         self,
-        result: ExecutionResult,
     ) -> ExecutionResult:
         """
-        Preserve testssl.sh raw output and invoke TestSSLCollector.
+        Execute testssl.sh and preserve raw assessment artifacts.
+
+        Structured parsing remains the responsibility of TestSSLCollector.
         """
 
         from scopeforgex.collectors.testssl import (
             TestSSLCollector,
         )
+
+        if not is_tool_installed(
+            self.executable
+        ):
+            return ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error="testssl.sh not installed",
+            )
 
         vuln_dir = (
             self.context.output_dir
@@ -1160,32 +1127,71 @@ class TestSSLTool(
             / "testssl.log"
         )
 
-        stdout = _result_stdout(
-            result
+        try:
+            command = self.build_command()
+
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            return ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error=str(exc),
+            )
+
+        # run_command() expects the command in its shell-string form.
+        # Command construction remains argv-oriented at the adapter boundary.
+        result = run_command(
+            tool=self.name,
+            capability=self.capability,
+            cmd=shlex.join(command),
+            outfile=str(log_file),
+            timeout=900,
         )
 
-        stderr = _result_stderr(
-            result
-        )
-
-        content = stdout
-
-        if stderr:
-            if content and not content.endswith("\n"):
-                content += "\n"
-
-            content += stderr
-
-        _write_text_artifact(
+        stdout = getattr(
             result,
-            output_file,
-            content,
+            "stdout",
+            "",
         )
 
-        _write_execution_log(
-            result,
-            log_file,
+        if isinstance(
+            stdout,
+            str,
+        ):
+            output = stdout
+
+        else:
+            output = str(
+                stdout or ""
+            )
+
+        # The runner's outfile contains the combined preserved process output
+        # used as the canonical raw testssl.sh artifact when available.
+        if log_file.exists() and log_file.stat().st_size > 0:
+            output_file.write_text(
+                log_file.read_text(
+                    encoding="utf-8",
+                    errors="ignore",
+                ),
+                encoding="utf-8",
+            )
+
+        else:
+            output_file.write_text(
+                output,
+                encoding="utf-8",
+            )
+
+        result.add_artifact(
+            output_file
         )
+
+        if log_file.exists():
+            result.add_artifact(
+                log_file
+            )
 
         try:
             collector = TestSSLCollector()
@@ -1208,10 +1214,7 @@ class TestSSLTool(
 
         except Exception as exc:
             result.add_warning(
-                (
-                    f"testssl.sh collection failed: "
-                    f"{type(exc).__name__}: {exc}"
-                )
+                f"testssl.sh collection failed: {exc}"
             )
 
         result.metadata.update(
@@ -1223,8 +1226,17 @@ class TestSSLTool(
                 "log_file": str(
                     log_file
                 ),
+                "command": command,
             }
         )
+
+        return result
+
+    def collect(
+        self,
+        result: ExecutionResult,
+    ) -> ExecutionResult:
+        """Preserve the canonical execution result."""
 
         return result
 
@@ -1252,3 +1264,4 @@ __all__ = [
     "TestSSLTool",
     "ALL_STAGE3_VULN_TOOLS",
 ]
+
