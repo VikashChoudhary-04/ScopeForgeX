@@ -19,3 +19,8 @@ scopeforgex = "scopeforgex.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["scopeforgex*"]
+
+[tool.setuptools.package-data]
+scopeforgex = [
+  "config/*.yaml",
+]

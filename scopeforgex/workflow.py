@@ -73,6 +73,7 @@ ScopeForgeX 3.0.0
 from __future__ import annotations
 
 import time
+from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Any
 
@@ -119,7 +120,11 @@ from scopeforgex.stages.stage6_report_cleanup import (
 ###############################################################################
 
 
-PROFILE_FILE = "config/profiles.yaml"
+PROFILE_RESOURCE = (
+    files("scopeforgex")
+    / "config"
+    / "profiles.yaml"
+)
 
 
 ###############################################################################
@@ -129,19 +134,35 @@ PROFILE_FILE = "config/profiles.yaml"
 
 def _load_profiles() -> dict[str, Any]:
     """
-    Load configured assessment profiles.
+    Load assessment profiles from the installed ScopeForgeX package.
+
+    Package resources are resolved independently of the current working
+    directory, allowing both source-tree and installed-wheel execution.
     """
 
-    configuration = load_yaml(
-        PROFILE_FILE,
-    )
+    try:
+        with as_file(
+            PROFILE_RESOURCE
+        ) as path:
+            configuration = load_yaml(
+                str(path)
+            )
+
+    except (
+        FileNotFoundError,
+        ModuleNotFoundError,
+    ) as exc:
+        raise SystemExit(
+            "ScopeForgeX profile configuration could not be loaded: "
+            f"{exc}"
+        ) from exc
 
     if not isinstance(
         configuration,
         dict,
     ):
         raise SystemExit(
-            f"Invalid profile configuration: {PROFILE_FILE}"
+            "Invalid packaged profile configuration."
         )
 
     profiles = configuration.get(
@@ -154,7 +175,7 @@ def _load_profiles() -> dict[str, Any]:
         dict,
     ):
         raise SystemExit(
-            f"Invalid 'profiles' section in {PROFILE_FILE}"
+            "Invalid 'profiles' section in packaged configuration."
         )
 
     return profiles
