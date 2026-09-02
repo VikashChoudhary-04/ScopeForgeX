@@ -57,7 +57,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-from .base import BaseCollector
+from .base import BaseCollector, CollectorObservation
 
 
 ###############################################################################
@@ -240,6 +240,156 @@ class HashcatCollector(BaseCollector):
     ###########################################################################
     # Public Interface
     ###########################################################################
+
+    def parse(
+        self,
+        execution_result: Any,
+        ctx: Mapping[str, Any],
+    ) -> list[CollectorObservation]:
+        context = dict(ctx or {})
+
+        output = getattr(
+            execution_result,
+            "stdout",
+            "",
+        )
+
+        stderr = getattr(
+            execution_result,
+            "stderr",
+            "",
+        )
+
+        combined = "\n".join(
+            part
+            for part in (
+                str(output or ""),
+                str(stderr or ""),
+            )
+            if part
+        )
+
+        target = str(
+            context.get("target", "") or ""
+        ).strip()
+
+        options = dict(
+            context.get(
+                "tool_options",
+                context.get("options", {}),
+            ) or {}
+        )
+
+        observations = self.collect(
+            combined,
+            target=target,
+            hash_type=options.get(
+                "hash_type"
+            ),
+        )
+
+        return self._coerce_canonical_observations(
+            observations,
+            target=target,
+        )
+
+    @staticmethod
+    def _coerce_canonical_observations(
+        observations: Any,
+        *,
+        target: str,
+    ) -> list[CollectorObservation]:
+        result: list[CollectorObservation] = []
+
+        for item in observations or []:
+            data = (
+                item.as_dict()
+                if hasattr(item, "as_dict")
+                else item
+            )
+
+            if not isinstance(data, Mapping):
+                continue
+
+            data = dict(data)
+
+            result.append(
+                CollectorObservation(
+                    observation_type=str(
+                        data.get(
+                            "observation_type",
+                            data.get(
+                                "category",
+                                "credential_assessment",
+                            ),
+                        )
+                    ),
+                    value=data.get("value"),
+                    title=str(data.get("title", "")),
+                    description=str(
+                        data.get("description", "")
+                    ),
+                    impact=str(data.get("impact", "")),
+                    remediation=str(
+                        data.get("remediation", "")
+                    ),
+                    severity=str(
+                        data.get(
+                            "severity",
+                            "Informational",
+                        )
+                    ),
+                    confidence=str(
+                        data.get(
+                            "confidence",
+                            "Informational",
+                        )
+                    ),
+                    target=data.get(
+                        "target",
+                        target,
+                    ),
+                    host=data.get("host"),
+                    port=data.get("port"),
+                    url=data.get("url"),
+                    parameter=data.get(
+                        "parameter"
+                    ),
+                    evidence=data.get(
+                        "evidence"
+                    ),
+                    source_tool=str(
+                        data.get(
+                            "source_tool",
+                            "hashcat",
+                        )
+                    ),
+                    detection_method=str(
+                        data.get(
+                            "detection_method",
+                            "",
+                        )
+                    ),
+                    cwe=data.get("cwe"),
+                    cve=data.get("cve"),
+                    references=list(
+                        data.get(
+                            "references",
+                            [],
+                        )
+                        or []
+                    ),
+                    metadata=dict(
+                        data.get(
+                            "metadata",
+                            {},
+                        )
+                        or {}
+                    ),
+                )
+            )
+
+        return result
 
     def collect(
         self,

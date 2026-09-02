@@ -2,93 +2,133 @@
 ScopeForgeX Universal Finding Model
 ===================================
 
-Canonical finding representation used throughout ScopeForgeX.
-
-The Finding model is the boundary between tool-specific observations and the
-rest of the assessment framework.
+Canonical finding representation for the ScopeForgeX assessment pipeline.
 
 Architecture
 ------------
 
-Tool / Analyzer
-        |
-        v
-Raw Evidence
-        |
-        v
-Observation
-        |
-        v
-Finding
-        |
-        +--> Correlation
-        |
-        +--> Deduplication
-        |
-        +--> Risk Classification
-        |
-        +--> Evidence Management
-        |
-        v
-Reporting
+Tool Output / Native Analyzer
+            |
+            v
+       Observation
+            |
+            v
+    FindingNormalizer
+            |
+            v
+         Finding
+            |
+      +------+------+
+      |             |
+      v             v
+Correlation    Deduplication
+      |             |
+      +------+------+
+             |
+             v
+      Risk / Confidence
+             |
+             v
+        Evidence Store
+             |
+             v
+        Report Generator
 
 Design Principles
 -----------------
 
-- Every assessment result uses one universal finding structure.
-- A finding may represent a vulnerability or a meaningful assessment
-  observation.
-- Detection confidence is separate from severity.
-- Detection is not automatically confirmation.
-- Original evidence is preserved.
-- Source tool is preserved.
-- Detection method is preserved.
-- Findings are suitable for correlation and deduplication.
-- Findings remain independent from reporting.
-- The model does not execute tools or perform network requests.
+- Finding is the universal normalized assessment record.
+- Tool-specific parsing belongs to collectors, not this model.
+- Native analyzer logic belongs to analyzers, not this model.
+- Detection does not automatically mean confirmed exploitation.
+- Confidence is independent from severity.
+- Evidence is preserved as structured data.
+- Optional fields remain optional rather than being populated with guesses.
+- The model contains no execution or network logic.
+- Semantic identity is deterministic and independent of volatile provenance.
+- Explicit finding IDs are preserved.
+- Missing finding IDs receive deterministic ScopeForgeX identifiers.
 
 v1.3.0
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Mapping
-from uuid import uuid4
+import hashlib
+import json
 
-from scopeforgex.runtime.enums import (
-    Confidence,
-    Severity,
+from dataclasses import (
+    asdict,
+    dataclass,
+    field,
+)
+
+from datetime import (
+    datetime,
+    timezone,
+)
+
+from typing import (
+    Any,
+    Mapping,
 )
 
 
 ###############################################################################
-# Canonical Defaults
+# Constants
 ###############################################################################
 
 
-DEFAULT_CATEGORY = "assessment_observation"
+DEFAULT_CATEGORY = "security_issue"
 
-DEFAULT_SEVERITY = Severity.INFO.value
+DEFAULT_SEVERITY = "Informational"
 
-DEFAULT_CONFIDENCE = Confidence.INFORMATIONAL.value
+DEFAULT_CONFIDENCE = "Informational"
 
-FINDING_STATUS_PENDING = "pending"
+DEFAULT_STATUS = "Open"
 
-FINDING_STATUS_CONFIRMED = "confirmed"
+FINDING_STATUS_PENDING = "Pending"
 
-DEFAULT_STATUS = FINDING_STATUS_PENDING
+FINDING_STATUS_CONFIRMED = "Confirmed"
+
+
+VALID_SEVERITIES = (
+    "Critical",
+    "High",
+    "Medium",
+    "Low",
+    "Informational",
+)
+
+
+VALID_CONFIDENCES = (
+    "Confirmed",
+    "High",
+    "Medium",
+    "Low",
+    "Informational",
+)
+
+
+VALID_STATUSES = (
+    "Open",
+    "Confirmed",
+    "False Positive",
+    "Accepted Risk",
+    "Remediated",
+    "Closed",
+    "Pending",
+)
 
 
 ###############################################################################
-# Compatibility Helpers
+# Utility Functions
 ###############################################################################
 
 
 def utc_now() -> datetime:
     """
-    Return the current UTC time as a timezone-aware datetime.
+    Return the current UTC timestamp.
     """
 
     return datetime.now(
@@ -96,129 +136,388 @@ def utc_now() -> datetime:
     )
 
 
-###############################################################################
-# Finding Evidence
-###############################################################################
-
-
-@dataclass(slots=True)
-class FindingEvidence:
+def _text(
+    value: Any,
+) -> str:
     """
-    Structured evidence associated with a Finding.
-
-    This compatibility model is intentionally lightweight. It provides a
-    normalized container for analyzer-generated evidence while remaining
-    JSON-compatible through ``as_dict()``.
+    Return a normalized string representation.
     """
 
-    description: str = ""
+    if value is None:
+        return ""
 
-    request: str = ""
+    return str(
+        value
+    ).strip()
 
-    response: str = ""
 
-    metadata: dict[str, Any] = field(
-        default_factory=dict
+def _optional_text(
+    value: Any,
+) -> str | None:
+    """
+    Return normalized text or None when empty.
+    """
+
+    normalized = _text(
+        value
     )
 
-    raw: Any = None
+    return normalized or None
 
-    def __post_init__(
+
+def _normalize_identity_text(
+    value: Any,
+) -> str:
+    """
+    Normalize text used for semantic identity.
+    """
+
+    normalized = _text(
+        value
+    )
+
+    return " ".join(
+        normalized.lower().split()
+    )
+
+
+def _normalize_severity(
+    value: Any,
+) -> str:
+    """
+    Normalize a severity value.
+
+    Unknown or missing values become Informational.
+    """
+
+    normalized = _text(
+        value
+    )
+
+    if not normalized:
+        return DEFAULT_SEVERITY
+
+    lookup = {
+        "critical": "Critical",
+        "high": "High",
+        "medium": "Medium",
+        "moderate": "Medium",
+        "low": "Low",
+        "info": "Informational",
+        "information": "Informational",
+        "informational": "Informational",
+    }
+
+    return lookup.get(
+        normalized.lower(),
+        DEFAULT_SEVERITY,
+    )
+
+
+def _normalize_confidence(
+    value: Any,
+) -> str:
+    """
+    Normalize a confidence value.
+    """
+
+    normalized = _text(
+        value
+    )
+
+    if not normalized:
+        return DEFAULT_CONFIDENCE
+
+    lookup = {
+        "confirmed": "Confirmed",
+        "high": "High",
+        "medium": "Medium",
+        "low": "Low",
+        "info": "Informational",
+        "information": "Informational",
+        "informational": "Informational",
+    }
+
+    return lookup.get(
+        normalized.lower(),
+        DEFAULT_CONFIDENCE,
+    )
+
+
+def _normalize_status(
+    value: Any,
+) -> str:
+    """
+    Normalize a finding lifecycle status.
+    """
+
+    normalized = _text(
+        value
+    )
+
+    if not normalized:
+        return DEFAULT_STATUS
+
+    lookup = {
+        "open": "Open",
+        "confirmed": "Confirmed",
+        "false positive": "False Positive",
+        "false_positive": "False Positive",
+        "accepted risk": "Accepted Risk",
+        "accepted_risk": "Accepted Risk",
+        "remediated": "Remediated",
+        "closed": "Closed",
+        "pending": "Pending",
+    }
+
+    return lookup.get(
+        normalized.lower(),
+        DEFAULT_STATUS,
+    )
+
+
+def _normalize_port(
+    value: Any,
+) -> int | None:
+    """
+    Normalize a network port.
+    """
+
+    if value is None or value == "":
+        return None
+
+    try:
+        port = int(
+            value
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return None
+
+    if 0 <= port <= 65535:
+        return port
+
+    return None
+
+
+def _normalize_references(
+    value: Any,
+) -> list[str]:
+    """
+    Normalize references into a unique ordered list.
+    """
+
+    if value is None:
+        return []
+
+    if isinstance(
+        value,
+        str,
+    ):
+        value = [
+            value
+        ]
+
+    try:
+        iterator = iter(
+            value
+        )
+    except TypeError:
+        value = [
+            value
+        ]
+
+        iterator = iter(
+            value
+        )
+
+    references: list[str] = []
+
+    seen: set[str] = set()
+
+    for item in iterator:
+
+        reference = _text(
+            item
+        )
+
+        if not reference or reference in seen:
+            continue
+
+        seen.add(
+            reference
+        )
+
+        references.append(
+            reference
+        )
+
+    return references
+
+
+def _normalize_evidence(
+    value: Any,
+) -> Any:
+    """
+    Normalize evidence while preserving its structure.
+    """
+
+    if value is None:
+        return ""
+
+    if isinstance(
+        value,
+        Mapping,
+    ):
+        return dict(
+            value
+        )
+
+    if isinstance(
+        value,
+        list,
+    ):
+        return list(
+            value
+        )
+
+    if isinstance(
+        value,
+        tuple,
+    ):
+        return list(
+            value
+        )
+
+    return value
+
+
+def _normalize_timestamp(
+    value: Any,
+) -> datetime:
+    """
+    Normalize a timestamp to an aware UTC datetime.
+    """
+
+    if isinstance(
+        value,
+        datetime,
+    ):
+
+        if value.tzinfo is None:
+            return value.replace(
+                tzinfo=timezone.utc
+            )
+
+        return value.astimezone(
+            timezone.utc
+        )
+
+    if isinstance(
+        value,
+        str,
+    ):
+
+        text = value.strip()
+
+        if text:
+
+            try:
+
+                parsed = datetime.fromisoformat(
+                    text.replace(
+                        "Z",
+                        "+00:00",
+                    )
+                )
+
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(
+                        tzinfo=timezone.utc
+                    )
+
+                return parsed.astimezone(
+                    timezone.utc
+                )
+
+            except ValueError:
+                pass
+
+    return utc_now()
+
+
+###############################################################################
+# Evidence Compatibility Object
+###############################################################################
+
+
+class FindingEvidence:
+    """
+    Flexible structured evidence container.
+
+    Collector-specific evidence can remain structured without forcing
+    tool-specific fields into the universal Finding schema.
+    """
+
+    def __init__(
         self,
+        **values: Any,
     ) -> None:
-        """
-        Normalize evidence fields after construction.
-        """
 
-        self.description = (
-            str(
-                self.description
-            ).strip()
-            if self.description is not None
-            else ""
+        self._values = dict(
+            values
         )
 
-        self.request = (
-            str(
-                self.request
-            ).strip()
-            if self.request is not None
-            else ""
-        )
-
-        self.response = (
-            str(
-                self.response
-            ).strip()
-            if self.response is not None
-            else ""
-        )
-
-        if not isinstance(
-            self.metadata,
-            dict,
-        ):
-            self.metadata = dict(
-                self.metadata
+        for key, value in self._values.items():
+            setattr(
+                self,
+                key,
+                value,
             )
 
     def as_dict(
         self,
     ) -> dict[str, Any]:
         """
-        Serialize structured evidence into a dictionary.
+        Serialize the evidence container.
         """
 
-        result: dict[str, Any] = {
-            "description": self.description,
-            "request": self.request,
-            "response": self.response,
-            "metadata": dict(
-                self.metadata
-            ),
-        }
+        return dict(
+            self._values
+        )
 
-        if self.raw is not None:
-            result["raw"] = self.raw
+    def to_dict(
+        self,
+    ) -> dict[str, Any]:
+        """
+        Compatibility alias for as_dict().
+        """
 
-        return result
+        return self.as_dict()
 
 
 ###############################################################################
-# Finding
+# Universal Finding
 ###############################################################################
 
 
 @dataclass(slots=True)
 class Finding:
     """
-    Universal ScopeForgeX assessment finding.
+    Universal normalized ScopeForgeX finding.
 
-    A Finding represents normalized assessment information.
-
-    It may describe:
-
-    - a vulnerability
-    - a misconfiguration
-    - an exposed resource
-    - a discovered service
-    - an endpoint
-    - a technology
-    - another meaningful assessment observation
-
-    The model intentionally does not assume that every finding is a confirmed
-    vulnerability.
+    The model is the canonical representation consumed by normalization,
+    deduplication, correlation, risk classification, evidence handling,
+    aggregation, and reporting.
     """
 
-    finding_id: str = field(
-        default_factory=lambda: str(
-            uuid4()
-        )
-    )
+    id: str
 
-    title: str = ""
+    title: str
 
-    category: str = DEFAULT_CATEGORY
+    category: str
 
     severity: str = DEFAULT_SEVERITY
 
@@ -236,7 +535,7 @@ class Finding:
 
     description: str = ""
 
-    evidence: Any = None
+    evidence: Any = ""
 
     source_tool: str = ""
 
@@ -265,6 +564,113 @@ class Finding:
     )
 
     ###########################################################################
+    # Finding ID Compatibility
+    ###########################################################################
+
+    @property
+    def finding_id(
+        self,
+    ) -> str:
+        """
+        Return the canonical finding identifier.
+
+        ``finding_id`` is the public compatibility name used throughout the
+        findings subsystem while ``id`` remains the underlying model field.
+        """
+
+        return self.id
+
+    @finding_id.setter
+    def finding_id(
+        self,
+        value: Any,
+    ) -> None:
+        """
+        Update the finding identifier.
+        """
+
+        self.id = _text(
+            value
+        )
+
+    ###########################################################################
+    # Severity / Confidence / Status Compatibility
+    ###########################################################################
+
+    @property
+    def severity_level(
+        self,
+    ) -> str:
+        """
+        Return the canonical severity value.
+
+        Compatibility alias used by risk and deduplication components.
+        """
+
+        return self.severity
+
+    @severity_level.setter
+    def severity_level(
+        self,
+        value: Any,
+    ) -> None:
+        """
+        Update the canonical severity value.
+        """
+
+        self.severity = _normalize_severity(
+            value
+        )
+
+    @property
+    def confidence_level(
+        self,
+    ) -> str:
+        """
+        Return the canonical confidence value.
+
+        Compatibility alias used by findings processing components.
+        """
+
+        return self.confidence
+
+    @confidence_level.setter
+    def confidence_level(
+        self,
+        value: Any,
+    ) -> None:
+        """
+        Update the canonical confidence value.
+        """
+
+        self.confidence = _normalize_confidence(
+            value
+        )
+
+    @property
+    def finding_status(
+        self,
+    ) -> str:
+        """
+        Return the canonical finding lifecycle status.
+        """
+
+        return self.status
+
+    @finding_status.setter
+    def finding_status(
+        self,
+        value: Any,
+    ) -> None:
+        """
+        Update the canonical finding lifecycle status.
+        """
+
+        self.status = _normalize_status(
+            value
+        )
+
+    ###########################################################################
     # Initialization
     ###########################################################################
 
@@ -272,93 +678,94 @@ class Finding:
         self,
     ) -> None:
         """
-        Normalize and validate the finding after construction.
+        Normalize externally supplied values.
         """
 
-        self.finding_id = self._required_text(
-            self.finding_id,
-            "finding_id",
+        self.id = _text(
+            self.id
         )
 
-        self.title = (
-            self._text(
-                self.title
-            )
-            or "Assessment Observation"
+        self.title = _text(
+            self.title
         )
 
-        self.category = (
-            self._text(
-                self.category
-            )
-            or DEFAULT_CATEGORY
+        self.category = _text(
+            self.category
         )
 
-        self.severity = self._normalize_severity(
+        if not self.category:
+            self.category = DEFAULT_CATEGORY
+
+        self.severity = _normalize_severity(
             self.severity
         )
 
-        self.confidence = self._normalize_confidence(
+        self.confidence = _normalize_confidence(
             self.confidence
         )
 
-        self.target = self._text(
+        self.target = _text(
             self.target
         )
 
-        self.host = self._optional_text(
+        self.host = _optional_text(
             self.host
         )
 
-        self.port = self._normalize_port(
+        self.port = _normalize_port(
             self.port
         )
 
-        self.url = self._optional_text(
+        self.url = _optional_text(
             self.url
         )
 
-        self.parameter = self._optional_text(
+        self.parameter = _optional_text(
             self.parameter
         )
 
-        self.description = self._text(
+        self.description = _text(
             self.description
         )
 
-        self.source_tool = self._text(
+        self.evidence = _normalize_evidence(
+            self.evidence
+        )
+
+        self.source_tool = _text(
             self.source_tool
         )
 
-        self.detection_method = self._text(
+        self.detection_method = _text(
             self.detection_method
         )
 
-        self.cwe = self._optional_text(
+        self.timestamp = _normalize_timestamp(
+            self.timestamp
+        )
+
+        self.cwe = _optional_text(
             self.cwe
         )
 
-        self.cve = self._optional_text(
+        self.cve = _optional_text(
             self.cve
         )
 
-        self.references = self._normalize_references(
+        self.references = _normalize_references(
             self.references
         )
 
-        self.impact = self._text(
+        self.impact = _text(
             self.impact
         )
 
-        self.remediation = self._text(
+        self.remediation = _text(
             self.remediation
         )
 
-        self.status = (
-            self._text(
-                self.status
-            )
-            or DEFAULT_STATUS
+        self.status = _normalize_status(
+            self.status
         )
 
         if not isinstance(
@@ -370,69 +777,22 @@ class Finding:
             )
 
     ###########################################################################
-    # Serialization
-    ###########################################################################
-
-    def as_dict(
-        self,
-    ) -> dict[str, Any]:
-        """
-        Serialize the finding into a JSON-compatible dictionary.
-
-        Structured FindingEvidence objects are converted automatically.
-        """
-
-        evidence = self.evidence
-
-        if isinstance(
-            evidence,
-            FindingEvidence,
-        ):
-            evidence = evidence.as_dict()
-
-        return {
-            "finding_id": self.finding_id,
-            "title": self.title,
-            "category": self.category,
-            "severity": self.severity,
-            "confidence": self.confidence,
-            "target": self.target,
-            "host": self.host,
-            "port": self.port,
-            "url": self.url,
-            "parameter": self.parameter,
-            "description": self.description,
-            "evidence": evidence,
-            "source_tool": self.source_tool,
-            "detection_method": self.detection_method,
-            "timestamp": self.timestamp.isoformat(),
-            "cwe": self.cwe,
-            "cve": self.cve,
-            "references": list(
-                self.references
-            ),
-            "impact": self.impact,
-            "remediation": self.remediation,
-            "status": self.status,
-            "metadata": dict(
-                self.metadata
-            ),
-        }
-
-    ###########################################################################
-    # Mapping Construction
+    # Factory
     ###########################################################################
 
     @classmethod
     def from_mapping(
         cls,
         data: Mapping[str, Any],
-    ) -> Finding:
+        *,
+        finding_id: str | None = None,
+    ) -> "Finding":
         """
-        Construct a Finding from a normalized mapping.
+        Construct a canonical Finding from a mapping.
 
-        This method accepts both canonical Finding field names and common
-        aliases produced by collectors and native analyzers.
+        Explicit identifiers are preserved. When an observation does not
+        contain an identifier, a deterministic ScopeForgeX identifier is
+        generated from semantic finding attributes.
         """
 
         if not isinstance(
@@ -443,196 +803,415 @@ class Finding:
                 "Finding data must be a mapping."
             )
 
-        finding_id = data.get(
-            "finding_id",
+        category = (
             data.get(
-                "id"
-            ),
+                "category"
+            )
+            or data.get(
+                "finding_type"
+            )
+            or data.get(
+                "observation_type"
+            )
+            or DEFAULT_CATEGORY
         )
 
-        title = data.get(
-            "title",
-            "",
+        title = _text(
+            data.get(
+                "title"
+            )
         )
 
         if not title:
-            finding_type = data.get(
-                "finding_type",
+            title = _text(
                 data.get(
-                    "observation_type",
-                    "",
-                ),
+                    "value"
+                )
             )
 
-            title = cls._title_from_type(
-                finding_type
-            )
+        if not title:
+            title = "Untitled Finding"
 
-        timestamp = cls._parse_timestamp(
-            data.get(
-                "timestamp"
+        resolved_id = (
+            _text(
+                finding_id
+            )
+            or _text(
+                data.get(
+                    "finding_id"
+                )
+            )
+            or _text(
+                data.get(
+                    "id"
+                )
             )
         )
 
-        kwargs: dict[str, Any] = {
-            "finding_id": finding_id
-            if finding_id
-            else str(
-                uuid4()
-            ),
-            "title": title,
-            "category": data.get(
-                "category",
-                data.get(
-                    "finding_type",
+        if not resolved_id:
+
+            semantic_payload = {
+                "category": _normalize_identity_text(
+                    category
+                ),
+
+                "title": _normalize_identity_text(
+                    title
+                ),
+
+                "target": _normalize_identity_text(
                     data.get(
-                        "observation_type",
-                        DEFAULT_CATEGORY,
-                    ),
+                        "target",
+                        "",
+                    )
+                ),
+
+                "host": _normalize_identity_text(
+                    data.get(
+                        "host",
+                        "",
+                    )
+                ),
+
+                "port": _normalize_port(
+                    data.get(
+                        "port"
+                    )
+                ),
+
+                "url": _normalize_identity_text(
+                    data.get(
+                        "url",
+                        "",
+                    )
+                ),
+
+                "parameter": _normalize_identity_text(
+                    data.get(
+                        "parameter",
+                        "",
+                    )
+                ),
+            }
+
+            payload = json.dumps(
+                semantic_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(
+                    ",",
+                    ":",
+                ),
+            )
+
+            digest = hashlib.sha256(
+                payload.encode(
+                    "utf-8"
+                )
+            ).hexdigest()
+
+            resolved_id = (
+                "SF-"
+                + digest[:16].upper()
+            )
+
+        return cls(
+            id=resolved_id,
+
+            title=title,
+
+            category=_text(
+                category
+            ),
+
+            severity=data.get(
+                "severity",
+                data.get(
+                    "severity_level",
+                    DEFAULT_SEVERITY,
                 ),
             ),
-            "severity": data.get(
-                "severity",
-                DEFAULT_SEVERITY,
-            ),
-            "confidence": data.get(
+
+            confidence=data.get(
                 "confidence",
-                DEFAULT_CONFIDENCE,
+                data.get(
+                    "confidence_level",
+                    DEFAULT_CONFIDENCE,
+                ),
             ),
-            "target": data.get(
+
+            target=data.get(
                 "target",
                 "",
             ),
-            "host": data.get(
+
+            host=data.get(
                 "host"
             ),
-            "port": data.get(
+
+            port=data.get(
                 "port"
             ),
-            "url": data.get(
+
+            url=data.get(
                 "url"
             ),
-            "parameter": data.get(
+
+            parameter=data.get(
                 "parameter"
             ),
-            "description": data.get(
+
+            description=data.get(
                 "description",
                 "",
             ),
-            "evidence": data.get(
-                "evidence"
+
+            evidence=data.get(
+                "evidence",
+                "",
             ),
-            "source_tool": data.get(
+
+            source_tool=data.get(
                 "source_tool",
                 data.get(
                     "source",
-                    "",
+                    data.get(
+                        "tool",
+                        "",
+                    ),
                 ),
             ),
-            "detection_method": data.get(
+
+            detection_method=data.get(
                 "detection_method",
                 "",
             ),
-            "cwe": data.get(
+
+            timestamp=data.get(
+                "timestamp"
+            ),
+
+            cwe=data.get(
                 "cwe",
                 data.get(
                     "CWE"
                 ),
             ),
-            "cve": data.get(
+
+            cve=data.get(
                 "cve",
                 data.get(
                     "CVE"
                 ),
             ),
-            "references": data.get(
+
+            references=data.get(
                 "references",
-                [],
+                data.get(
+                    "refs",
+                    [],
+                ),
             ),
-            "impact": data.get(
+
+            impact=data.get(
                 "impact",
                 "",
             ),
-            "remediation": data.get(
+
+            remediation=data.get(
                 "remediation",
                 "",
             ),
-            "status": data.get(
+
+            status=data.get(
                 "status",
-                DEFAULT_STATUS,
+                data.get(
+                    "finding_status",
+                    DEFAULT_STATUS,
+                ),
             ),
-            "metadata": data.get(
+
+            metadata=data.get(
                 "metadata",
                 {},
             ),
-        }
-
-        if timestamp is not None:
-            kwargs[
-                "timestamp"
-            ] = timestamp
-
-        return cls(
-            **kwargs
         )
 
     ###########################################################################
-    # Evidence
+    # Serialization
     ###########################################################################
 
-    def add_evidence(
+    def as_dict(
         self,
-        key: str,
-        value: Any,
-    ) -> None:
+    ) -> dict[str, Any]:
         """
-        Add structured evidence without replacing existing evidence.
-
-        If evidence is a FindingEvidence instance, it is first converted into
-        a dictionary while preserving the original structured fields.
+        Serialize the Finding into JSON-compatible data.
         """
 
-        key = self._required_text(
-            key,
-            "evidence key",
+        data = asdict(
+            self
         )
 
-        if self.evidence is None:
-            self.evidence = {}
+        data["finding_id"] = (
+            self.finding_id
+        )
 
-        elif isinstance(
+        data["timestamp"] = (
+            self.timestamp.isoformat()
+        )
+
+        if hasattr(
             self.evidence,
-            FindingEvidence,
+            "as_dict",
         ):
-            self.evidence = (
+            data["evidence"] = (
                 self.evidence.as_dict()
             )
 
-        elif not isinstance(
-            self.evidence,
-            dict,
-        ):
-            self.evidence = {
-                "raw": self.evidence,
-            }
+        return data
 
-        self.evidence[
-            key
-        ] = value
+    def to_dict(
+        self,
+    ) -> dict[str, Any]:
+        """
+        Compatibility alias for as_dict().
+        """
+
+        return self.as_dict()
 
     ###########################################################################
-    # References
+    # Semantic Identity
     ###########################################################################
+
+    def correlation_key(
+        self,
+    ) -> tuple[str, ...]:
+        """
+        Return a stable contextual key for correlation.
+
+        Correlation identifies related findings on the same asset. It does
+        not determine whether findings are duplicates.
+        """
+
+        return (
+            _normalize_identity_text(
+                self.host
+            ),
+
+            (
+                str(
+                    self.port
+                )
+                if self.port is not None
+                else ""
+            ),
+
+            _normalize_identity_text(
+                self.url
+            ),
+
+            _normalize_identity_text(
+                self.parameter
+            ),
+        )
+
+    def deduplication_key(
+        self,
+    ) -> tuple[str, ...]:
+        """
+        Return the semantic identity used for duplicate detection.
+
+        Source tool, detection method, timestamp, severity, confidence,
+        lifecycle status, evidence and metadata are intentionally excluded.
+        """
+
+        return (
+            _normalize_identity_text(
+                self.category
+            ),
+
+            _normalize_identity_text(
+                self.title
+            ),
+
+            _normalize_identity_text(
+                self.host
+            ),
+
+            (
+                str(
+                    self.port
+                )
+                if self.port is not None
+                else ""
+            ),
+
+            _normalize_identity_text(
+                self.url
+            ),
+
+            _normalize_identity_text(
+                self.parameter
+            ),
+        )
+
+    def fingerprint(
+        self,
+    ) -> str:
+        """
+        Return the deterministic semantic fingerprint.
+
+        The fingerprint is derived exclusively from ``deduplication_key()``.
+        """
+
+        payload = json.dumps(
+            self.deduplication_key(),
+            ensure_ascii=False,
+            separators=(
+                ",",
+                ":",
+            ),
+        )
+
+        return hashlib.sha256(
+            payload.encode(
+                "utf-8"
+            )
+        ).hexdigest()
+
+    ###########################################################################
+    # Convenience Methods
+    ###########################################################################
+
+    def is_vulnerability(
+        self,
+    ) -> bool:
+        """
+        Return True for a non-informational finding.
+
+        This does not imply manual validation or successful exploitation.
+        """
+
+        return self.severity != "Informational"
+
+    def is_confirmed(
+        self,
+    ) -> bool:
+        """
+        Return True when confidence is explicitly Confirmed.
+        """
+
+        return self.confidence == "Confirmed"
 
     def add_reference(
         self,
         reference: str,
     ) -> None:
         """
-        Add one reference if it is not already present.
+        Add a unique reference.
         """
 
-        reference = self._text(
+        reference = _text(
             reference
         )
 
@@ -644,369 +1223,72 @@ class Finding:
                 reference
             )
 
-    ###########################################################################
-    # Metadata
-    ###########################################################################
-
-    def add_metadata(
+    def add_evidence(
         self,
-        key: str,
-        value: Any,
+        evidence: Any,
     ) -> None:
         """
-        Add or update one metadata field.
+        Add evidence while preserving existing evidence.
         """
 
-        key = self._required_text(
-            key,
-            "metadata key",
-        )
+        if evidence is None:
+            return
 
-        self.metadata[
-            key
-        ] = value
-
-    ###########################################################################
-    # Classification Helpers
-    ###########################################################################
-
-    @property
-    def is_vulnerability(
-        self,
-    ) -> bool:
-        """
-        Return whether the finding represents a vulnerability-oriented
-        category.
-
-        This is a category observation only and does not confirm exploitability.
-        """
-
-        vulnerability_categories = {
-            "vulnerability",
-            "security_issue",
-            "server_vulnerability",
-            "tls_vulnerability",
-            "sql_injection",
-            "xss",
-            "ssti",
-            "jwt_security_issue",
-            "cors_misconfiguration",
-            "security_header_misconfiguration",
-            "http_method_misconfiguration",
-            "insecure_cookie",
-        }
-
-        return self.category.lower() in (
-            vulnerability_categories
-        )
-
-    @property
-    def is_confirmed(
-        self,
-    ) -> bool:
-        """
-        Return whether the finding is marked as confirmed.
-        """
-
-        return (
-            self.confidence
-            == Confidence.CONFIRMED.value
-            or self.status
-            == FINDING_STATUS_CONFIRMED
-        )
-
-    ###########################################################################
-    # Normalization
-    ###########################################################################
-
-    @staticmethod
-    def _text(
-        value: Any,
-    ) -> str:
-        """
-        Normalize a value to stripped text.
-        """
-
-        if value is None:
-            return ""
-
-        return str(
-            value
-        ).strip()
-
-    @classmethod
-    def _required_text(
-        cls,
-        value: Any,
-        field_name: str,
-    ) -> str:
-        """
-        Normalize a required textual field.
-        """
-
-        value = cls._text(
-            value
-        )
-
-        if not value:
-            raise ValueError(
-                f"{field_name} cannot be empty."
+        if (
+            isinstance(
+                self.evidence,
+                dict,
+            )
+            and isinstance(
+                evidence,
+                Mapping,
+            )
+        ):
+            self.evidence.update(
+                evidence
             )
 
-        return value
+            return
 
-    @classmethod
-    def _optional_text(
-        cls,
-        value: Any,
-    ) -> str | None:
-        """
-        Normalize an optional textual field.
-        """
+        if self.evidence in (
+            "",
+            None,
+        ):
+            self.evidence = evidence
 
-        value = cls._text(
-            value
+            return
+
+        if not isinstance(
+            self.evidence,
+            list,
+        ):
+            self.evidence = [
+                self.evidence
+            ]
+
+        self.evidence.append(
+            evidence
         )
 
-        return value or None
 
-    @staticmethod
-    def _normalize_port(
-        value: Any,
-    ) -> int | None:
-        """
-        Normalize a port value.
-        """
+###############################################################################
+# Compatibility Factory
+###############################################################################
 
-        if value is None:
-            return None
 
-        if isinstance(
-            value,
-            bool,
-        ):
-            raise ValueError(
-                "Finding port cannot be a boolean."
-            )
+def finding_from_mapping(
+    data: Mapping[str, Any],
+    *,
+    finding_id: str | None = None,
+) -> Finding:
+    """
+    Construct a canonical Finding from a mapping.
+    """
 
-        try:
-            port = int(
-                value
-            )
-        except (
-            TypeError,
-            ValueError,
-        ) as exc:
-            raise ValueError(
-                f"Invalid finding port: {value}"
-            ) from exc
-
-        if not 1 <= port <= 65535:
-            raise ValueError(
-                f"Finding port must be between 1 and 65535: {port}"
-            )
-
-        return port
-
-    @staticmethod
-    def _normalize_severity(
-        value: Any,
-    ) -> str:
-        """
-        Normalize severity into canonical runtime values.
-        """
-
-        if isinstance(
-            value,
-            Severity,
-        ):
-            return value.value
-
-        normalized = str(
-            value
-        ).strip().lower()
-
-        aliases = {
-            "informational": Severity.INFO.value,
-            "information": Severity.INFO.value,
-            "info": Severity.INFO.value,
-            "moderate": Severity.MEDIUM.value,
-        }
-
-        normalized = aliases.get(
-            normalized,
-            normalized,
-        )
-
-        valid = {
-            severity.value
-            for severity in Severity
-        }
-
-        if normalized not in valid:
-            return DEFAULT_SEVERITY
-
-        return normalized
-
-    @staticmethod
-    def _normalize_confidence(
-        value: Any,
-    ) -> str:
-        """
-        Normalize confidence into canonical runtime values.
-        """
-
-        if isinstance(
-            value,
-            Confidence,
-        ):
-            return value.value
-
-        normalized = str(
-            value
-        ).strip().lower()
-
-        aliases = {
-            "info": Confidence.INFORMATIONAL.value,
-            "information": Confidence.INFORMATIONAL.value,
-            "informational": Confidence.INFORMATIONAL.value,
-        }
-
-        normalized = aliases.get(
-            normalized,
-            normalized,
-        )
-
-        valid = {
-            confidence.value
-            for confidence in Confidence
-        }
-
-        if normalized not in valid:
-            return DEFAULT_CONFIDENCE
-
-        return normalized
-
-    @staticmethod
-    def _normalize_references(
-        value: Any,
-    ) -> list[str]:
-        """
-        Normalize references into a unique list of strings.
-        """
-
-        if value is None:
-            return []
-
-        if isinstance(
-            value,
-            str,
-        ):
-            value = value.strip()
-
-            return (
-                [value]
-                if value
-                else []
-            )
-
-        if isinstance(
-            value,
-            (list, tuple, set),
-        ):
-            references: list[str] = []
-
-            for item in value:
-                item = str(
-                    item
-                ).strip()
-
-                if (
-                    item
-                    and item not in references
-                ):
-                    references.append(
-                        item
-                    )
-
-            return references
-
-        value = str(
-            value
-        ).strip()
-
-        return (
-            [value]
-            if value
-            else []
-        )
-
-    ###########################################################################
-    # Timestamp
-    ###########################################################################
-
-    @staticmethod
-    def _parse_timestamp(
-        value: Any,
-    ) -> datetime | None:
-        """
-        Parse a timestamp into a datetime object.
-        """
-
-        if value is None:
-            return None
-
-        if isinstance(
-            value,
-            datetime,
-        ):
-            return value
-
-        if isinstance(
-            value,
-            str,
-        ):
-            value = value.strip()
-
-            if not value:
-                return None
-
-            try:
-                return datetime.fromisoformat(
-                    value
-                )
-            except ValueError:
-                return None
-
-        return None
-
-    ###########################################################################
-    # Title
-    ###########################################################################
-
-    @staticmethod
-    def _title_from_type(
-        finding_type: Any,
-    ) -> str:
-        """
-        Generate a human-readable title from a finding type.
-        """
-
-        finding_type = str(
-            finding_type
-        ).strip()
-
-        if not finding_type:
-            return "Assessment Observation"
-
-        return (
-            finding_type
-            .replace(
-                "_",
-                " ",
-            )
-            .title()
-        )
+    return Finding.from_mapping(
+        data,
+        finding_id=finding_id,
+    )
 
 
 ###############################################################################
@@ -1015,13 +1297,17 @@ class Finding:
 
 
 __all__ = [
+    "Finding",
+    "FindingEvidence",
+    "finding_from_mapping",
+    "utc_now",
     "DEFAULT_CATEGORY",
     "DEFAULT_SEVERITY",
     "DEFAULT_CONFIDENCE",
     "DEFAULT_STATUS",
     "FINDING_STATUS_PENDING",
     "FINDING_STATUS_CONFIRMED",
-    "Finding",
-    "FindingEvidence",
-    "utc_now",
+    "VALID_SEVERITIES",
+    "VALID_CONFIDENCES",
+    "VALID_STATUSES",
 ]

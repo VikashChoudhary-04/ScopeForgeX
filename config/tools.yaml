@@ -62,7 +62,7 @@ tools:
         brute: true
 
     parser:
-      module: reporting.parsers.amass_parser
+      module: scopeforgex.collectors.amass
 
     input_type: target
     output_type: raw
@@ -108,7 +108,7 @@ tools:
         threads: 100
 
     parser:
-      module: reporting.parsers.subhunt_parser
+      module: scopeforgex.collectors.subhunt
 
     input_type: domain
     output_type: raw
@@ -169,7 +169,7 @@ tools:
         nse_profile: default
 
     parser:
-      module: reporting.parsers.nmap_parser
+      module: scopeforgex.collectors.nmap
 
     input_type: host
     output_type: raw
@@ -234,7 +234,7 @@ tools:
           - SOA
 
     parser:
-      module: reporting.parsers.dig_parser
+      module: scopeforgex.collectors.dig
 
     input_type: domain
     output_type: raw
@@ -296,7 +296,7 @@ tools:
         follow_redirects: true
 
     parser:
-      module: reporting.parsers.httpx_parser
+      module: scopeforgex.collectors.httpx
 
     input_type: url
     output_type: raw
@@ -351,7 +351,7 @@ tools:
         known_files: true
 
     parser:
-      module: reporting.parsers.katana_parser
+      module: scopeforgex.collectors.katana
 
     input_type: url
     output_type: raw
@@ -404,7 +404,7 @@ tools:
         rate: 50
 
     parser:
-      module: reporting.parsers.ffuf_parser
+      module: scopeforgex.collectors.ffuf
 
     input_type: url
     output_type: raw
@@ -453,7 +453,7 @@ tools:
         aggression: 3
 
     parser:
-      module: reporting.parsers.whatweb_parser
+      module: scopeforgex.collectors.whatweb
 
     input_type: url
     output_type: raw
@@ -499,7 +499,7 @@ tools:
         threads: 25
 
     parser:
-      module: reporting.parsers.kiterunner_parser
+      module: scopeforgex.collectors.kiterunner
 
     input_type: url
     output_type: raw
@@ -560,7 +560,7 @@ tools:
         resolve_paths: true
 
     parser:
-      module: reporting.parsers.jsluice_parser
+      module: scopeforgex.collectors.jsluice
 
     input_type: url
     output_type: raw
@@ -633,7 +633,7 @@ tools:
         retries: 2
 
     parser:
-      module: reporting.parsers.nuclei_parser
+      module: scopeforgex.collectors.nuclei
 
     input_type: host_or_url_list
     output_type: vulnerability_findings
@@ -683,7 +683,7 @@ tools:
         timeout: 10
 
     parser:
-      module: reporting.parsers.nikto_parser
+      module: scopeforgex.collectors.nikto
 
     input_type: url
     output_type: vulnerability_findings
@@ -729,7 +729,7 @@ tools:
       aggressive: {}
 
     parser:
-      module: reporting.parsers.testssl_parser
+      module: scopeforgex.collectors.testssl
 
     input_type: host
     output_type: raw
@@ -787,7 +787,7 @@ tools:
         risk: 2
 
     parser:
-      module: reporting.parsers.sqlmap_parser
+      module: scopeforgex.collectors.sqlmap
 
     input_type: url
     output_type: raw
@@ -835,7 +835,7 @@ tools:
       aggressive: {}
 
     parser:
-      module: reporting.parsers.dalfox_parser
+      module: scopeforgex.collectors.dalfox
 
     input_type: url
     output_type: raw
@@ -881,7 +881,7 @@ tools:
       aggressive: {}
 
     parser:
-      module: reporting.parsers.jwt_tool_parser
+      module: scopeforgex.collectors.jwt_tool
 
     input_type: jwt
     output_type: raw
@@ -928,7 +928,7 @@ tools:
       aggressive: {}
 
     parser:
-      module: reporting.parsers.sstimap_parser
+      module: scopeforgex.collectors.sstimap
 
     input_type: url
     output_type: raw
@@ -984,7 +984,7 @@ tools:
         threads: 8
 
     parser:
-      module: reporting.parsers.hydra_parser
+      module: scopeforgex.collectors.hydra
 
     input_type: authentication_target
     output_type: raw
@@ -1032,7 +1032,7 @@ tools:
       aggressive: {}
 
     parser:
-      module: reporting.parsers.hashcat_parser
+      module: scopeforgex.collectors.hashcat
 
     input_type: hash_file
     output_type: raw

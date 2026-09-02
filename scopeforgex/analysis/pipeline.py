@@ -3,7 +3,7 @@ ScopeForgeX Analysis Pipeline
 =============================
 
 Central processing pipeline connecting observations produced by collectors
-and native analyzers to the universal Finding system.
+and native analyzers to the universal ScopeForgeX Finding system.
 
 Architecture
 ------------
@@ -14,22 +14,25 @@ Collector / Native Analyzer
         Observation
             |
             v
-     Finding Conversion
+        Normalization
             |
             v
-      Normalization
+          Finding
+            |
+            +--> Confidence Assessment
+            |
+            +--> Risk Classification
             |
             v
-   Confidence Assessment
+       Deduplication
             |
             v
-    Risk Classification
+        Unique Findings
             |
             v
-      Deduplication
+         Correlation
             |
-            v
-       Correlation
+            +--> Correlation Groups
             |
             v
       Final Findings
@@ -57,12 +60,11 @@ Design Principles
 - Empty or invalid observations do not terminate the complete pipeline.
 - Original source information remains attached to findings.
 - Deduplication occurs before correlation.
+- Correlation never replaces the Finding collection with correlation groups.
 - Processing failures are recorded rather than silently discarded.
 - Dependency injection allows individual processing components to be tested
   independently.
-
-The canonical Finding model is defined by ``reporting.models``. This module
-does not maintain a second Finding representation.
+- The canonical Finding model is ``scopeforgex.findings.model.Finding``.
 
 ScopeForgeX 3.0.0
 """
@@ -73,8 +75,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from reporting.findings import FindingCollector
-from reporting.models import Finding
+from scopeforgex.findings.model import Finding
+from scopeforgex.findings.normalizer import FindingNormalizer
 
 
 ###############################################################################
@@ -87,14 +89,14 @@ class NormalizerProtocol(Protocol):
 
     def normalize(
         self,
-        finding: Finding,
-    ) -> Finding | Mapping[str, Any] | None:
-        """Normalize a finding."""
+        observation: Any,
+    ) -> Finding:
+        """Normalize one observation into a canonical Finding."""
         ...
 
 
 class ConfidenceProtocol(Protocol):
-    """Protocol implemented by confidence processors."""
+    """Protocol implemented by finding confidence processors."""
 
     def assess(
         self,
@@ -105,7 +107,7 @@ class ConfidenceProtocol(Protocol):
 
 
 class RiskProtocol(Protocol):
-    """Protocol implemented by risk processors."""
+    """Protocol implemented by finding risk processors."""
 
     def classify(
         self,
@@ -132,8 +134,13 @@ class CorrelatorProtocol(Protocol):
     def correlate(
         self,
         findings: Iterable[Finding],
-    ) -> Iterable[Finding]:
-        """Correlate findings."""
+    ) -> Iterable[Any]:
+        """
+        Correlate findings.
+
+        The canonical correlator returns correlation-group objects rather
+        than replacing the original Finding collection.
+        """
         ...
 
 
@@ -150,7 +157,10 @@ class AnalysisResult:
     Attributes
     ----------
     findings:
-        Final findings produced by the pipeline.
+        Final deduplicated Finding objects.
+
+    correlation_groups:
+        Correlation groups generated from the final deduplicated findings.
 
     input_count:
         Number of observations supplied to the pipeline.
@@ -172,6 +182,10 @@ class AnalysisResult:
     """
 
     findings: list[Finding] = field(
+        default_factory=list,
+    )
+
+    correlation_groups: list[Any] = field(
         default_factory=list,
     )
 
@@ -209,6 +223,17 @@ class AnalysisResult:
                 finding.as_dict()
                 for finding in self.findings
             ],
+            "correlation_groups": [
+                (
+                    group.as_dict()
+                    if hasattr(
+                        group,
+                        "as_dict",
+                    )
+                    else group
+                )
+                for group in self.correlation_groups
+            ],
             "input_count": self.input_count,
             "finding_count": self.finding_count,
             "duplicate_count": self.duplicate_count,
@@ -235,8 +260,6 @@ class AnalysisPipeline:
 
         observation
             ↓
-        Finding conversion
-            ↓
         normalization
             ↓
         confidence assessment
@@ -247,7 +270,7 @@ class AnalysisPipeline:
             ↓
         correlation
             ↓
-        final findings
+        final findings + correlation groups
 
     Every processing component is optional.
     """
@@ -260,14 +283,20 @@ class AnalysisPipeline:
         risk: RiskProtocol | None = None,
         deduplicator: DeduplicatorProtocol | None = None,
         correlator: CorrelatorProtocol | None = None,
-        collector: FindingCollector | None = None,
         fail_fast: bool = False,
     ) -> None:
         """
         Initialize the analysis pipeline.
+
+        When no normalizer is supplied, the canonical
+        ``FindingNormalizer`` is used.
         """
 
-        self.normalizer = normalizer
+        self.normalizer = (
+            normalizer
+            if normalizer is not None
+            else FindingNormalizer()
+        )
 
         self.confidence = confidence
 
@@ -276,12 +305,6 @@ class AnalysisPipeline:
         self.deduplicator = deduplicator
 
         self.correlator = correlator
-
-        self.collector = (
-            collector
-            if collector is not None
-            else FindingCollector()
-        )
 
         self.fail_fast = fail_fast
 
@@ -361,10 +384,14 @@ class AnalysisPipeline:
             duplicate_count
         )
 
-        findings = self._apply_correlation(
-            findings
+        result.correlation_groups = (
+            self._apply_correlation(
+                findings
+            )
         )
 
+        # Correlation describes relationships between findings. It does not
+        # replace the deduplicated Finding collection.
         result.findings = list(
             findings
         )
@@ -385,6 +412,14 @@ class AnalysisPipeline:
             "correlation_enabled": (
                 self.correlator is not None
             ),
+            "canonical_finding_model": (
+                "scopeforgex.findings.model.Finding"
+            ),
+            "correlation_group_count": (
+                len(
+                    result.correlation_groups
+                )
+            ),
         }
 
         return result
@@ -395,6 +430,8 @@ class AnalysisPipeline:
     ) -> list[Finding]:
         """
         Process observations and return only final findings.
+
+        Correlation groups remain available through ``process()``.
         """
 
         return self.process(
@@ -422,25 +459,33 @@ class AnalysisPipeline:
             observations,
             Finding,
         ):
-            return [observations]
+            return [
+                observations
+            ]
 
         if isinstance(
             observations,
             Mapping,
         ):
-            return [observations]
+            return [
+                observations
+            ]
 
         if isinstance(
             observations,
             (str, bytes),
         ):
-            return [observations]
+            return [
+                observations
+            ]
 
         if hasattr(
             observations,
             "as_dict",
         ):
-            return [observations]
+            return [
+                observations
+            ]
 
         if isinstance(
             observations,
@@ -450,7 +495,9 @@ class AnalysisPipeline:
                 observations
             )
 
-        return [observations]
+        return [
+            observations
+        ]
 
     ###########################################################################
     # Finding Conversion
@@ -461,13 +508,13 @@ class AnalysisPipeline:
         observation: Any,
     ) -> Finding:
         """
-        Convert an observation into the canonical Finding model.
+        Convert an observation into the canonical ScopeForgeX Finding model.
 
-        Existing Finding instances are preserved.
+        Existing canonical Finding instances are preserved.
 
-        Mappings and observation objects are normalized through the canonical
-        FindingCollector rather than relying on factory methods that do not
-        exist on the universal Finding model.
+        Mappings and supported observation objects are normalized through the
+        canonical FindingNormalizer. No second Finding representation is
+        created.
         """
 
         if isinstance(
@@ -476,34 +523,9 @@ class AnalysisPipeline:
         ):
             return observation
 
-        if isinstance(
-            observation,
-            Mapping,
-        ):
-            findings = self.collector.add_observations(
-                [observation]
-            )
-
-        elif hasattr(
-            observation,
-            "as_dict",
-        ):
-            findings = self.collector.add_observations(
-                [observation]
-            )
-
-        else:
-            raise TypeError(
-                "Observation must be a Finding, mapping, "
-                "or object exposing as_dict()."
-            )
-
-        if not findings:
-            raise ValueError(
-                "Observation did not produce a Finding."
-            )
-
-        return findings[-1]
+        return self.normalizer.normalize(
+            observation
+        )
 
     ###########################################################################
     # Processing Stages
@@ -515,10 +537,9 @@ class AnalysisPipeline:
     ) -> Finding:
         """
         Apply the configured normalizer.
-        """
 
-        if self.normalizer is None:
-            return finding
+        The normalizer is already guaranteed to exist by construction.
+        """
 
         processed = self.normalizer.normalize(
             finding
@@ -554,7 +575,9 @@ class AnalysisPipeline:
         finding: Finding,
     ) -> Finding:
         """
-        Apply risk classification when configured.
+        Apply risk processing when configured.
+
+        A risk classifier may return a Finding, a mapping, or None.
         """
 
         if self.risk is None:
@@ -564,9 +587,54 @@ class AnalysisPipeline:
             finding
         )
 
-        return self._coerce_finding(
+        # The canonical FindingRiskClassifier currently returns a
+        # RiskClassification object. If the classifier attaches its result
+        # directly to the Finding and returns None, retain the Finding.
+        if processed is None:
+            return finding
+
+        if isinstance(
             processed,
-            finding,
+            Finding,
+        ):
+            return processed
+
+        if isinstance(
+            processed,
+            Mapping,
+        ):
+            return self._coerce_finding(
+                processed,
+                finding,
+            )
+
+        if hasattr(
+            processed,
+            "as_dict",
+        ):
+            classification = processed.as_dict()
+
+            if isinstance(
+                classification,
+                Mapping,
+            ):
+                metadata = dict(
+                    finding.metadata
+                )
+
+                metadata[
+                    "risk_classification"
+                ] = dict(
+                    classification
+                )
+
+                finding.metadata = metadata
+
+            return finding
+
+        raise TypeError(
+            "Risk processor must return a Finding, mapping, "
+            "object exposing as_dict(), or None."
         )
 
     ###########################################################################
@@ -610,13 +678,16 @@ class AnalysisPipeline:
     def _apply_correlation(
         self,
         findings: list[Finding],
-    ) -> list[Finding]:
+    ) -> list[Any]:
         """
-        Apply correlation to deduplicated findings.
+        Correlate deduplicated findings.
+
+        Correlation groups are returned separately. The Finding collection is
+        never replaced by CorrelationGroup objects.
         """
 
         if self.correlator is None:
-            return findings
+            return []
 
         processed = self.correlator.correlate(
             findings
@@ -636,10 +707,13 @@ class AnalysisPipeline:
         fallback: Finding,
     ) -> Finding:
         """
-        Normalize processing-stage return values into a Finding.
+        Normalize processing-stage return values into the canonical Finding.
 
         A processor may mutate the existing Finding and return None. In that
         case the original Finding is retained.
+
+        Mapping and observation returns are normalized against the canonical
+        ScopeForgeX Finding model.
         """
 
         if value is None:
@@ -684,63 +758,75 @@ class AnalysisPipeline:
         fallback: Finding,
     ) -> Finding:
         """
-        Convert a processor mapping into a Finding.
+        Apply supported mapping fields to an existing canonical Finding.
 
-        Fields omitted by a processor retain the existing finding values.
+        Fields omitted by a processor retain existing values.
         """
 
         finding = fallback
 
-        for field_name in (
+        field_names = (
+            "finding_id",
             "title",
             "category",
             "severity",
             "confidence",
-            "status",
             "target",
             "host",
             "port",
             "url",
             "parameter",
             "description",
-            "impact",
-            "remediation",
+            "evidence",
             "source_tool",
             "detection_method",
             "timestamp",
             "cwe",
             "cve",
             "references",
-        ):
+            "impact",
+            "remediation",
+            "status",
+            "metadata",
+        )
+
+        for field_name in field_names:
+
             if field_name not in data:
                 continue
 
-            setattr(
-                finding,
-                field_name,
-                data[field_name],
-            )
+            value = data[
+                field_name
+            ]
 
-        if "evidence" in data:
+            if field_name == "metadata":
 
-            evidence = data["evidence"]
+                if isinstance(
+                    value,
+                    Mapping,
+                ):
+                    finding.metadata = dict(
+                        value
+                    )
+
+                continue
+
+            if field_name == "evidence":
+
+                if value is not None:
+                    finding.evidence = value
+
+                continue
 
             if hasattr(
-                evidence,
-                "as_dict",
+                finding,
+                field_name,
             ):
-                finding.evidence = evidence
 
-        if "metadata" in data:
-
-            metadata = data["metadata"]
-
-            if isinstance(
-                metadata,
-                Mapping,
-            ):
-                finding.metadata = dict(
-                    metadata
+                setattr(
+                    finding,
+                    field_name,
+                    value,
                 )
 
         return finding
@@ -751,10 +837,9 @@ class AnalysisPipeline:
         fallback: Finding,
     ) -> Finding:
         """
-        Convert an observation object returned by a processing component.
+        Convert an observation-like object returned by a processor.
 
-        If the object exposes ``as_dict()``, its fields are applied to the
-        existing canonical Finding.
+        Its serialized fields are applied to the existing canonical Finding.
         """
 
         data = observation.as_dict()
@@ -786,11 +871,10 @@ def analyze(
     risk: RiskProtocol | None = None,
     deduplicator: DeduplicatorProtocol | None = None,
     correlator: CorrelatorProtocol | None = None,
-    collector: FindingCollector | None = None,
     fail_fast: bool = False,
 ) -> AnalysisResult:
     """
-    Convenience wrapper around AnalysisPipeline.
+    Convenience wrapper around :class:`AnalysisPipeline`.
     """
 
     pipeline = AnalysisPipeline(
@@ -799,7 +883,6 @@ def analyze(
         risk=risk,
         deduplicator=deduplicator,
         correlator=correlator,
-        collector=collector,
         fail_fast=fail_fast,
     )
 

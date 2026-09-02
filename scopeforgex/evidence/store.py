@@ -7,7 +7,7 @@ Persistent evidence storage for ScopeForgeX assessments.
 Responsibilities
 ----------------
 
-- Store raw and normalized evidence artifacts.
+- Store raw, normalized, and correlated evidence artifacts.
 - Keep evidence associated with an assessment.
 - Preserve tool provenance.
 - Generate deterministic evidence identifiers.
@@ -34,13 +34,14 @@ Tool
 Execution Layer
     |
     v
-Raw Artifact
+Raw / Normalized / Correlated Evidence
     |
     v
 EvidenceStore
     |
     +--> raw/
     +--> normalized/
+    +--> correlated/
     +--> metadata/
     |
     v
@@ -50,7 +51,7 @@ Evidence is an observation produced during an assessment. It is preserved
 independently from the normalized Finding model so that the original
 assessment material remains available for investigation and reporting.
 
-v1.2.0
+v1.3.0
 """
 
 from __future__ import annotations
@@ -72,7 +73,11 @@ from typing import Any, Iterable, Mapping
 EVIDENCE_VERSION = "1.0"
 
 RAW_EVIDENCE = "raw"
+
 NORMALIZED_EVIDENCE = "normalized"
+
+CORRELATED_EVIDENCE = "correlated"
+
 METADATA_EVIDENCE = "metadata"
 
 
@@ -138,7 +143,9 @@ class EvidenceArtifact:
             "size": self.size,
             "sha256": self.sha256,
             "created_at": self.created_at,
-            "metadata": dict(self.metadata),
+            "metadata": dict(
+                self.metadata
+            ),
         }
 
     @classmethod
@@ -236,6 +243,8 @@ class EvidenceStore:
         │   └── <tool>/
         ├── normalized/
         │   └── <tool>/
+        ├── correlated/
+        │   └── <source>/
         └── metadata/
             └── evidence.json
 
@@ -246,7 +255,8 @@ class EvidenceStore:
     name = "evidence_store"
 
     description = (
-        "Persistent storage for raw and normalized ScopeForgeX evidence."
+        "Persistent storage for raw, normalized, and correlated "
+        "ScopeForgeX evidence."
     )
 
     def __init__(
@@ -283,6 +293,10 @@ class EvidenceStore:
             self.root / NORMALIZED_EVIDENCE
         )
 
+        self.correlated_root = (
+            self.root / CORRELATED_EVIDENCE
+        )
+
         self.metadata_root = (
             self.root / METADATA_EVIDENCE
         )
@@ -312,6 +326,11 @@ class EvidenceStore:
         )
 
         self.normalized_root.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        self.correlated_root.mkdir(
             parents=True,
             exist_ok=True,
         )
@@ -409,6 +428,48 @@ class EvidenceStore:
         )
 
     ###########################################################################
+    # Correlated Evidence
+    ###########################################################################
+
+    def store_correlated(
+        self,
+        source_tool: str,
+        content: str | bytes | Mapping[str, Any] | list[Any],
+        *,
+        filename: str | None = None,
+        media_type: str = "application/json",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> EvidenceArtifact:
+        """
+        Store correlated assessment evidence.
+
+        Structured mappings and lists are serialized as deterministic JSON.
+
+        Correlation evidence remains distinct from normalized finding
+        evidence and is persisted under the dedicated ``correlated`` layer.
+        """
+
+        if isinstance(
+            content,
+            (Mapping, list),
+        ):
+            content = json.dumps(
+                content,
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=False,
+            )
+
+        return self._store_content(
+            artifact_type=CORRELATED_EVIDENCE,
+            source_tool=source_tool,
+            content=content,
+            filename=filename,
+            media_type=media_type,
+            metadata=metadata,
+        )
+
+    ###########################################################################
     # Generic Storage
     ###########################################################################
 
@@ -426,6 +487,12 @@ class EvidenceStore:
         Copy an existing file into the evidence store.
 
         The source file is never modified or deleted.
+
+        Supported artifact types:
+
+        - raw
+        - normalized
+        - correlated
         """
 
         source = Path(
@@ -440,9 +507,11 @@ class EvidenceStore:
         if artifact_type not in {
             RAW_EVIDENCE,
             NORMALIZED_EVIDENCE,
+            CORRELATED_EVIDENCE,
         }:
             raise ValueError(
-                "artifact_type must be 'raw' or 'normalized'."
+                "artifact_type must be 'raw', "
+                "'normalized', or 'correlated'."
             )
 
         destination_root = self._artifact_root(
@@ -663,7 +732,9 @@ class EvidenceStore:
     # Serialization
     ###########################################################################
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
         """Serialize the complete evidence index."""
 
         return {
@@ -678,7 +749,9 @@ class EvidenceStore:
             ],
         }
 
-    def save(self) -> None:
+    def save(
+        self,
+    ) -> None:
         """Persist the evidence index."""
 
         self._save_index()
@@ -702,6 +775,7 @@ class EvidenceStore:
         if artifact_type not in {
             RAW_EVIDENCE,
             NORMALIZED_EVIDENCE,
+            CORRELATED_EVIDENCE,
         }:
             raise ValueError(
                 "Unsupported evidence artifact type."
@@ -722,15 +796,20 @@ class EvidenceStore:
             content,
             str,
         ):
+
             data = content.encode(
                 "utf-8"
             )
+
         elif isinstance(
             content,
             bytes,
         ):
+
             data = content
+
         else:
+
             raise TypeError(
                 "Evidence content must be str or bytes."
             )
@@ -750,10 +829,13 @@ class EvidenceStore:
         )
 
         if filename:
+
             safe_name = self._safe_filename(
                 filename
             )
+
         else:
+
             safe_name = (
                 f"{digest[:16]}.bin"
             )
@@ -834,22 +916,27 @@ class EvidenceStore:
     # Index
     ###########################################################################
 
-    def _load_index(self) -> None:
+    def _load_index(
+        self,
+    ) -> None:
         """Load the evidence index if it exists."""
 
         if not self.index_path.is_file():
             return
 
         try:
+
             payload = json.loads(
                 self.index_path.read_text(
                     encoding="utf-8"
                 )
             )
+
         except (
             OSError,
             json.JSONDecodeError,
         ):
+
             return
 
         artifacts = payload.get(
@@ -876,6 +963,7 @@ class EvidenceStore:
             )
 
             if artifact.evidence_id:
+
                 self._artifacts[
                     artifact.evidence_id
                 ] = artifact
@@ -891,11 +979,14 @@ class EvidenceStore:
             not self.assessment_id
             and stored_assessment
         ):
+
             self.assessment_id = (
                 stored_assessment
             )
 
-    def _save_index(self) -> None:
+    def _save_index(
+        self,
+    ) -> None:
         """Persist the evidence index atomically."""
 
         self.metadata_root.mkdir(
@@ -932,13 +1023,24 @@ class EvidenceStore:
         artifact_type: str,
         source_tool: str,
     ) -> Path:
-        """Return the storage directory for an artifact."""
+        """
+        Return the storage directory for an artifact.
+        """
 
         if artifact_type == RAW_EVIDENCE:
+
             root = self.raw_root
+
         elif artifact_type == NORMALIZED_EVIDENCE:
+
             root = self.normalized_root
+
+        elif artifact_type == CORRELATED_EVIDENCE:
+
+            root = self.correlated_root
+
         else:
+
             raise ValueError(
                 f"Unsupported artifact type: {artifact_type}"
             )
@@ -966,6 +1068,7 @@ class EvidenceStore:
         characters: list[str] = []
 
         for character in normalized:
+
             if (
                 character.isalnum()
                 or character
@@ -975,10 +1078,13 @@ class EvidenceStore:
                     ".",
                 }
             ):
+
                 characters.append(
                     character
                 )
+
             else:
+
                 characters.append(
                     "_"
                 )
@@ -1025,11 +1131,13 @@ class EvidenceStore:
             return candidate
 
         stem = candidate.stem
+
         suffix = candidate.suffix
 
         counter = 2
 
         while True:
+
             candidate = (
                 root
                 / f"{stem}-{counter}{suffix}"
@@ -1094,6 +1202,7 @@ class EvidenceStore:
                 ),
                 b"",
             ):
+
                 digest.update(
                     chunk
                 )
@@ -1133,6 +1242,7 @@ __all__ = [
     "EVIDENCE_VERSION",
     "RAW_EVIDENCE",
     "NORMALIZED_EVIDENCE",
+    "CORRELATED_EVIDENCE",
     "METADATA_EVIDENCE",
     "EvidenceArtifact",
     "EvidenceStore",

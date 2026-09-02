@@ -65,7 +65,7 @@ Evidence is never treated as proof of vulnerability confirmation merely because
 it has been persisted. Finding confidence and validation remain separate
 concerns.
 
-v1.2.0
+v1.3.0
 """
 
 from __future__ import annotations
@@ -188,6 +188,14 @@ class EvidenceReference:
                 self.metadata
             )
 
+        if not isinstance(
+            self.created_at,
+            datetime,
+        ):
+            self.created_at = datetime.now(
+                timezone.utc
+            )
+
     def as_dict(
         self,
     ) -> dict[str, Any]:
@@ -223,6 +231,9 @@ class EvidenceManager:
 
     It provides the higher-level interface required by the assessment
     workflow.
+
+    Evidence storage is assessment/run scoped. Callers should normally create
+    the manager with the current workflow run output directory.
     """
 
     name = "evidence_manager"
@@ -245,11 +256,14 @@ class EvidenceManager:
                 Existing EvidenceStore instance.
 
             root:
-                Evidence root used when creating a default EvidenceStore.
+                Evidence root used when creating an EvidenceStore.
 
         Raises:
             ValueError:
                 If both ``store`` and ``root`` are supplied.
+
+            TypeError:
+                If neither ``store`` nor ``root`` is supplied.
         """
 
         if (
@@ -261,13 +275,29 @@ class EvidenceManager:
             )
 
         if store is not None:
+
+            if not isinstance(
+                store,
+                EvidenceStore,
+            ):
+                raise TypeError(
+                    "store must be an EvidenceStore."
+                )
+
             self.store = store
-        elif root is not None:
-            self.store = EvidenceStore(
+            return
+
+        if root is None:
+            raise TypeError(
+                "EvidenceManager requires either an EvidenceStore "
+                "or an evidence root path."
+            )
+
+        self.store = EvidenceStore(
+            Path(
                 root
             )
-        else:
-            self.store = EvidenceStore()
+        )
 
     ###########################################################################
     # Raw Evidence
@@ -286,25 +316,6 @@ class EvidenceManager:
         Persist raw tool output.
 
         Raw output is preserved exactly as supplied to EvidenceStore.
-
-        Args:
-            source_tool:
-                Tool that produced the raw output.
-
-            data:
-                Raw output or serialized tool artifact.
-
-            target:
-                Optional assessment target.
-
-            filename:
-                Optional preferred artifact filename.
-
-            metadata:
-                Optional provenance metadata.
-
-        Returns:
-            EvidenceReference for the persisted artifact.
         """
 
         tool = self._required_text(
@@ -401,23 +412,6 @@ class EvidenceManager:
         Persist a normalized Finding as evidence.
 
         The Finding itself remains the canonical assessment object.
-
-        This method persists a serialized representation for later reporting,
-        auditing, and reproducibility.
-
-        Args:
-            finding:
-                Canonical ScopeForgeX Finding.
-
-            raw_evidence_id:
-                Optional identifier of the raw artifact from which the Finding
-                originated.
-
-            metadata:
-                Optional additional evidence metadata.
-
-        Returns:
-            EvidenceReference for the persisted Finding artifact.
         """
 
         self._require_finding(
@@ -437,6 +431,7 @@ class EvidenceManager:
         )
 
         if raw_evidence_id:
+
             evidence_metadata[
                 "raw_evidence_id"
             ] = str(
@@ -476,19 +471,6 @@ class EvidenceManager:
     ) -> list[EvidenceReference]:
         """
         Persist a collection of normalized Findings.
-
-        Args:
-            findings:
-                Iterable of canonical Finding objects.
-
-            raw_evidence_ids:
-                Optional mapping of finding ID to raw evidence ID.
-
-            metadata:
-                Shared evidence metadata.
-
-        Returns:
-            Evidence references in input order.
         """
 
         references: list[EvidenceReference] = []
@@ -532,8 +514,7 @@ class EvidenceManager:
 
         Correlation objects are serialized but never converted into Findings.
 
-        The manager accepts objects exposing ``as_dict()`` as well as ordinary
-        mappings.
+        Objects exposing ``as_dict()`` and ordinary mappings are supported.
         """
 
         references: list[EvidenceReference] = []
@@ -568,6 +549,7 @@ class EvidenceManager:
                 self._reference_from_result(
                     store_result,
                     layer=CORRELATED_LAYER,
+                    source_tool="scopeforgex",
                     metadata=group_metadata,
                 )
             )
@@ -588,14 +570,7 @@ class EvidenceManager:
 
         Existing Finding evidence is preserved.
 
-        The method intentionally stores references in Finding.metadata rather
-        than replacing the Finding's technical evidence payload.
-
-        This preserves the distinction between:
-
-            technical evidence
-                and
-            persisted evidence artifact references.
+        Persisted artifact references are stored under Finding.metadata.
         """
 
         if not isinstance(
@@ -619,12 +594,14 @@ class EvidenceManager:
         )
 
         if references is None:
+
             references = []
 
         elif not isinstance(
             references,
             list,
         ):
+
             references = [
                 references
             ]
@@ -635,6 +612,7 @@ class EvidenceManager:
             references,
             reference.evidence_id,
         ):
+
             references.append(
                 serialized
             )
@@ -660,6 +638,7 @@ class EvidenceManager:
                 reference,
                 Mapping,
             ):
+
                 existing_id = str(
                     reference.get(
                         "evidence_id",
@@ -673,6 +652,7 @@ class EvidenceManager:
             elif str(
                 reference
             ).strip() == evidence_id:
+
                 return True
 
         return False
@@ -718,14 +698,18 @@ class EvidenceManager:
         )
 
         if method is None:
+
             try:
+
                 self._store_get(
                     identifier
                 )
+
             except (
                 FileNotFoundError,
                 KeyError,
             ):
+
                 return False
 
             return True
@@ -752,7 +736,7 @@ class EvidenceManager:
         method = getattr(
             self.store,
             "verify",
-            None
+            None,
         )
 
         if method is None:
@@ -791,6 +775,7 @@ class EvidenceManager:
             raw_references,
             list,
         ):
+
             raw_references = [
                 raw_references
             ]
@@ -803,9 +788,11 @@ class EvidenceManager:
                 item,
                 EvidenceReference,
             ):
+
                 references.append(
                     item
                 )
+
                 continue
 
             if not isinstance(
@@ -858,8 +845,9 @@ class EvidenceManager:
                     metadata=dict(
                         item.get(
                             "metadata",
-                            {}
+                            {},
                         )
+                        or {}
                     ),
                 )
             )
@@ -882,12 +870,14 @@ class EvidenceManager:
             finding,
             "as_dict",
         ):
+
             serialized = finding.as_dict()
 
             if isinstance(
                 serialized,
                 Mapping,
             ):
+
                 return deepcopy(
                     dict(
                         serialized
@@ -941,6 +931,7 @@ class EvidenceManager:
             value,
             "as_dict",
         ):
+
             return deepcopy(
                 value.as_dict()
             )
@@ -949,6 +940,7 @@ class EvidenceManager:
             value,
             Mapping,
         ):
+
             return deepcopy(
                 dict(
                     value
@@ -959,6 +951,7 @@ class EvidenceManager:
             value,
             (list, tuple),
         ):
+
             return [
                 EvidenceManager._serialize_object(
                     item
@@ -986,8 +979,8 @@ class EvidenceManager:
         """
         Call the canonical EvidenceStore raw-artifact API.
 
-        The compatibility logic accepts the canonical store interface while
-        remaining tolerant of small implementation-level naming differences.
+        The canonical store uses ``content``. Compatibility with older
+        implementations accepting ``data`` is retained when supported.
         """
 
         method = self._first_method(
@@ -1001,10 +994,28 @@ class EvidenceManager:
                 "EvidenceStore does not expose a raw evidence storage method."
             )
 
-        kwargs = {
-            "source_tool": source_tool,
-            "data": data,
-        }
+        kwargs: dict[str, Any] = {}
+
+        self._add_if_supported(
+            method,
+            kwargs,
+            "source_tool",
+            source_tool,
+        )
+
+        self._add_if_supported(
+            method,
+            kwargs,
+            "content",
+            data,
+        )
+
+        self._add_if_supported(
+            method,
+            kwargs,
+            "data",
+            data,
+        )
 
         self._add_if_supported(
             method,
@@ -1054,9 +1065,49 @@ class EvidenceManager:
                 "storage method."
             )
 
-        kwargs = {
-            "data": data,
-        }
+        source_tool = ""
+
+        if metadata is not None:
+
+            source_tool = str(
+                metadata.get(
+                    "source_tool",
+                    "",
+                )
+            ).strip()
+
+        if not source_tool:
+            source_tool = "scopeforgex"
+
+        kwargs: dict[str, Any] = {}
+
+        self._add_if_supported(
+            method,
+            kwargs,
+            "source_tool",
+            source_tool,
+        )
+
+        self._add_if_supported(
+            method,
+            kwargs,
+            "content",
+            data,
+        )
+
+        self._add_if_supported(
+            method,
+            kwargs,
+            "data",
+            data,
+        )
+
+        self._add_if_supported(
+            method,
+            kwargs,
+            "filename",
+            f"{finding_id}.json",
+        )
 
         self._add_if_supported(
             method,
@@ -1086,8 +1137,13 @@ class EvidenceManager:
         """
         Persist correlated assessment data.
 
-        Correlated data belongs to its own layer and is not written into the
-        normalized Finding store.
+        The canonical EvidenceStore correlated API requires:
+
+            source_tool
+            content
+
+        Correlation is generated by ScopeForgeX, so ``scopeforgex`` is the
+        default provenance value.
         """
 
         method = self._first_method(
@@ -1101,9 +1157,56 @@ class EvidenceManager:
                 "EvidenceStore does not expose correlated evidence storage."
             )
 
-        kwargs = {
-            "data": data,
-        }
+        source_tool = "scopeforgex"
+
+        if metadata is not None:
+
+            configured_source = metadata.get(
+                "source_tool"
+            )
+
+            if configured_source is not None:
+
+                normalized_source = str(
+                    configured_source
+                ).strip()
+
+                if normalized_source:
+                    source_tool = normalized_source
+
+        kwargs: dict[str, Any] = {}
+
+        self._add_if_supported(
+            method,
+            kwargs,
+            "source_tool",
+            source_tool,
+        )
+
+        self._add_if_supported(
+            method,
+            kwargs,
+            "content",
+            data,
+        )
+
+        self._add_if_supported(
+            method,
+            kwargs,
+            "data",
+            data,
+        )
+
+        self._add_if_supported(
+            method,
+            kwargs,
+            "filename",
+            (
+                f"{group_id}.json"
+                if group_id
+                else None
+            ),
+        )
 
         self._add_if_supported(
             method,
@@ -1178,16 +1281,14 @@ class EvidenceManager:
         value: Any,
     ) -> None:
         """
-        Add a keyword argument only when the store method accepts it.
-
-        This avoids coupling the manager to implementation-specific optional
-        parameters while retaining a clean canonical interface.
+        Add a keyword argument only when the target method accepts it.
         """
 
         if value is None:
             return
 
         try:
+
             import inspect
 
             signature = inspect.signature(
@@ -1204,6 +1305,7 @@ class EvidenceManager:
                     for parameter in parameters.values()
                 )
             ):
+
                 kwargs[
                     name
                 ] = value
@@ -1212,8 +1314,7 @@ class EvidenceManager:
             TypeError,
             ValueError,
         ):
-            # Some callable objects do not expose inspectable signatures.
-            # In that case, do not make assumptions about optional arguments.
+
             return
 
     ###########################################################################
@@ -1251,6 +1352,7 @@ class EvidenceManager:
             result,
             Mapping,
         ):
+
             evidence_id = cls._mapping_value(
                 result,
                 "evidence_id",
@@ -1259,6 +1361,7 @@ class EvidenceManager:
             )
 
             if not evidence_id:
+
                 evidence_id = cls._mapping_value(
                     result,
                     "path",
@@ -1266,8 +1369,10 @@ class EvidenceManager:
                 )
 
             if not evidence_id:
+
                 raise ValueError(
-                    "EvidenceStore result does not contain an evidence identifier."
+                    "EvidenceStore result does not contain "
+                    "an evidence identifier."
                 )
 
             return EvidenceReference(
@@ -1306,7 +1411,7 @@ class EvidenceManager:
                     metadata,
                     result.get(
                         "metadata",
-                        {}
+                        {},
                     ),
                 ),
             )
@@ -1319,11 +1424,13 @@ class EvidenceManager:
         )
 
         if not evidence_id:
+
             evidence_id = str(
                 result
             ).strip()
 
         if not evidence_id:
+
             raise ValueError(
                 "EvidenceStore returned an empty evidence identifier."
             )
@@ -1369,6 +1476,7 @@ class EvidenceManager:
             finding,
             Finding,
         ):
+
             raise TypeError(
                 "EvidenceManager expects a Finding object."
             )
@@ -1387,6 +1495,7 @@ class EvidenceManager:
         ).strip()
 
         if not normalized:
+
             raise ValueError(
                 f"{field_name} cannot be empty."
             )
@@ -1405,6 +1514,7 @@ class EvidenceManager:
         result: dict[str, Any] = {}
 
         if primary is not None:
+
             result.update(
                 deepcopy(
                     dict(
@@ -1414,6 +1524,7 @@ class EvidenceManager:
             )
 
         if secondary is not None:
+
             result.update(
                 deepcopy(
                     dict(
@@ -1439,9 +1550,11 @@ class EvidenceManager:
                 name
             )
 
-            if value is not None and str(
-                value
-            ).strip():
+            if (
+                value is not None
+                and str(value).strip()
+            ):
+
                 return value
 
         return None
@@ -1463,9 +1576,11 @@ class EvidenceManager:
                 None,
             )
 
-            if candidate is not None and str(
-                candidate
-            ).strip():
+            if (
+                candidate is not None
+                and str(candidate).strip()
+            ):
+
                 return candidate
 
         return None
@@ -1483,11 +1598,13 @@ class EvidenceManager:
             value,
             Mapping,
         ):
+
             identifier = value.get(
                 field_name
             )
 
         else:
+
             identifier = getattr(
                 value,
                 field_name,
@@ -1519,12 +1636,20 @@ class EvidenceManager:
             value,
             datetime,
         ):
+
+            if value.tzinfo is None:
+
+                return value.replace(
+                    tzinfo=timezone.utc
+                )
+
             return value
 
         if value:
 
             try:
-                return datetime.fromisoformat(
+
+                parsed = datetime.fromisoformat(
                     str(
                         value
                     ).replace(
@@ -1532,6 +1657,14 @@ class EvidenceManager:
                         "+00:00",
                     )
                 )
+
+                if parsed.tzinfo is None:
+
+                    parsed = parsed.replace(
+                        tzinfo=timezone.utc
+                    )
+
+                return parsed
 
             except ValueError:
                 pass
@@ -1546,7 +1679,75 @@ class EvidenceManager:
 ###############################################################################
 
 
-_DEFAULT_MANAGER = EvidenceManager()
+_DEFAULT_MANAGER: EvidenceManager | None = None
+
+
+def configure_default_manager(
+    manager: EvidenceManager | None = None,
+    *,
+    root: str | Path | None = None,
+) -> EvidenceManager:
+    """
+    Configure the process-wide convenience EvidenceManager.
+
+    The manager is deliberately not created during module import because
+    EvidenceStore requires an explicit assessment/run root.
+    """
+
+    global _DEFAULT_MANAGER
+
+    if (
+        manager is not None
+        and root is not None
+    ):
+
+        raise ValueError(
+            "Provide either manager or root, not both."
+        )
+
+    if manager is not None:
+
+        if not isinstance(
+            manager,
+            EvidenceManager,
+        ):
+
+            raise TypeError(
+                "manager must be an EvidenceManager."
+            )
+
+        _DEFAULT_MANAGER = manager
+
+    elif root is not None:
+
+        _DEFAULT_MANAGER = EvidenceManager(
+            root=root
+        )
+
+    else:
+
+        raise TypeError(
+            "configure_default_manager requires either "
+            "manager or root."
+        )
+
+    return _DEFAULT_MANAGER
+
+
+def _get_default_manager() -> EvidenceManager:
+    """
+    Return the configured process-wide convenience manager.
+    """
+
+    if _DEFAULT_MANAGER is None:
+
+        raise RuntimeError(
+            "No default EvidenceManager is configured. "
+            "Create EvidenceManager(root=<run-output-directory>) "
+            "or call configure_default_manager(root=<run-output-directory>)."
+        )
+
+    return _DEFAULT_MANAGER
 
 
 def store_raw_evidence(
@@ -1558,10 +1759,10 @@ def store_raw_evidence(
     metadata: Mapping[str, Any] | None = None,
 ) -> EvidenceReference:
     """
-    Store raw evidence using the default EvidenceManager.
+    Store raw evidence using the configured default EvidenceManager.
     """
 
-    return _DEFAULT_MANAGER.store_raw(
+    return _get_default_manager().store_raw(
         source_tool,
         data,
         target=target,
@@ -1577,10 +1778,10 @@ def store_finding_evidence(
     metadata: Mapping[str, Any] | None = None,
 ) -> EvidenceReference:
     """
-    Store normalized finding evidence using the default manager.
+    Store normalized finding evidence using the configured default manager.
     """
 
-    return _DEFAULT_MANAGER.store_finding(
+    return _get_default_manager().store_finding(
         finding,
         raw_evidence_id=raw_evidence_id,
         metadata=metadata,
@@ -1593,10 +1794,10 @@ def store_correlated_evidence(
     metadata: Mapping[str, Any] | None = None,
 ) -> list[EvidenceReference]:
     """
-    Store correlated finding groups using the default manager.
+    Store correlated finding groups using the configured default manager.
     """
 
-    return _DEFAULT_MANAGER.store_correlated(
+    return _get_default_manager().store_correlated(
         groups,
         metadata=metadata,
     )
@@ -1613,6 +1814,7 @@ __all__ = [
     "CORRELATED_LAYER",
     "EvidenceReference",
     "EvidenceManager",
+    "configure_default_manager",
     "store_raw_evidence",
     "store_finding_evidence",
     "store_correlated_evidence",

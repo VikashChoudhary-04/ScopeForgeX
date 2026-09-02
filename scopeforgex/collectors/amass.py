@@ -62,6 +62,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
+from scopeforgex.collectors.base import CollectorBase, CollectorObservation
 from scopeforgex.models.finding import Finding
 
 
@@ -250,7 +251,7 @@ def _unique_strings(
 ###############################################################################
 
 
-class AmassCollector:
+class AmassCollector(CollectorBase):
     """
     Normalize Amass output into canonical ScopeForgeX Finding objects.
 
@@ -267,7 +268,8 @@ class AmassCollector:
     activity.
     """
 
-    name = "amass_collector"
+    name = "amass"
+    tool = "amass"
 
     description = (
         "Normalize Amass attack-surface discovery output into canonical "
@@ -282,7 +284,175 @@ class AmassCollector:
     # Public API
     ###########################################################################
 
-    def collect(
+
+
+    @staticmethod
+    def _finding_to_observation(
+        finding: Any,
+    ) -> CollectorObservation:
+        """
+        Convert a canonical Finding into a CollectorObservation.
+
+        The native collector parser preserves the existing collector's
+        normalized finding data while satisfying the universal collector
+        observation contract.
+        """
+
+        data = (
+            finding.as_dict()
+            if hasattr(
+                finding,
+                "as_dict",
+            )
+            else finding
+        )
+
+        if not isinstance(
+            data,
+            Mapping,
+        ):
+            data = {}
+
+        return CollectorObservation(
+            observation_type=str(
+                data.get(
+                    "category",
+                    data.get(
+                        "type",
+                        "finding",
+                    ),
+                )
+            ),
+            value=(
+                data.get("value")
+                or data.get("host")
+                or data.get("url")
+                or data.get("title")
+            ),
+            title=str(
+                data.get("title", "")
+            ),
+            description=str(
+                data.get("description", "")
+            ),
+            impact=str(
+                data.get("impact", "")
+            ),
+            remediation=str(
+                data.get("remediation", "")
+            ),
+            severity=str(
+                data.get(
+                    "severity",
+                    "Informational",
+                )
+            ),
+            confidence=str(
+                data.get(
+                    "confidence",
+                    "Informational",
+                )
+            ),
+            status=str(
+                data.get(
+                    "status",
+                    "Pending",
+                )
+            ),
+            target=data.get("target"),
+            host=data.get("host"),
+            port=data.get("port"),
+            url=data.get("url"),
+            parameter=data.get("parameter"),
+            evidence=data.get("evidence"),
+            source_tool=str(
+                data.get(
+                    "source_tool",
+                    "",
+                )
+            ),
+            detection_method=str(
+                data.get(
+                    "detection_method",
+                    "",
+                )
+            ),
+            cwe=data.get("cwe"),
+            cve=data.get("cve"),
+            references=list(
+                data.get(
+                    "references",
+                    [],
+                )
+                or []
+            ),
+            metadata=dict(
+                data.get(
+                    "metadata",
+                    {},
+                )
+                or {}
+            ),
+        )
+
+    def parse(
+        self,
+        execution_result: Any,
+        ctx: Mapping[str, Any],
+    ) -> list[CollectorObservation]:
+        """
+        Parse an already-completed Amass execution result.
+
+        Existing Amass normalization remains the source of truth; this
+        canonical boundary only adapts its findings into observations.
+        """
+
+        context = dict(ctx or {})
+        output = ""
+
+        if isinstance(
+            execution_result,
+            Mapping,
+        ):
+            output = (
+                execution_result.get(
+                    "stdout",
+                    "",
+                )
+                or execution_result.get(
+                    "output",
+                    "",
+                )
+                or ""
+            )
+        else:
+            output = getattr(
+                execution_result,
+                "stdout",
+                "",
+            ) or ""
+
+        target = str(
+            context.get(
+                "target",
+                "",
+            )
+            or ""
+        ).strip()
+
+        findings = self.collect_findings(
+            output,
+            target=target,
+        )
+
+        return [
+            self._finding_to_observation(
+                finding
+            )
+            for finding in findings
+        ]
+
+    def collect_findings(
         self,
         output: Any,
         *,
@@ -486,12 +656,6 @@ class AmassCollector:
             return self._parse_string_output(
                 output
             )
-
-        if isinstance(
-            Iterable,
-            type,
-        ):
-            pass
 
         try:
             iterator = iter(
@@ -857,39 +1021,43 @@ class AmassCollector:
             record,
         )
 
-        return Finding(
-            finding_id=finding_id,
-            title=title,
-            category=category,
-            severity=DEFAULT_SEVERITY,
-            confidence=DEFAULT_CONFIDENCE,
-            target=record_target,
-            host=host,
-            port=self._extract_port(
+        finding_data = {
+            "title": title,
+            "category": category,
+            "severity": DEFAULT_SEVERITY,
+            "confidence": DEFAULT_CONFIDENCE,
+            "target": record_target,
+            "host": host,
+            "port": self._extract_port(
                 record
             ),
-            url=_optional_text(
+            "url": _optional_text(
                 record.get(
                     "url"
                 )
             ),
-            parameter=None,
-            description=description,
-            evidence=evidence,
-            source_tool=SOURCE_TOOL,
-            detection_method=DETECTION_METHOD,
-            timestamp=source_timestamp,
-            cwe=None,
-            cve=self._extract_cve(
+            "parameter": None,
+            "description": description,
+            "evidence": evidence,
+            "source_tool": SOURCE_TOOL,
+            "detection_method": DETECTION_METHOD,
+            "timestamp": source_timestamp,
+            "cwe": None,
+            "cve": self._extract_cve(
                 record
             ),
-            references=self._references(
+            "references": self._references(
                 record
             ),
-            impact="",
-            remediation="",
-            status="open",
-            metadata=record_metadata,
+            "impact": "",
+            "remediation": "",
+            "status": "open",
+            "metadata": record_metadata,
+        }
+
+        return Finding.from_mapping(
+            finding_data,
+            finding_id=finding_id,
         )
 
     ###########################################################################
@@ -1365,7 +1533,7 @@ def collect_amass_findings(
 
     collector = AmassCollector()
 
-    return collector.collect(
+    return collector.collect_findings(
         output,
         target=target,
         timestamp=timestamp,

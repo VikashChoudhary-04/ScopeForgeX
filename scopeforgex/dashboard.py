@@ -20,7 +20,7 @@ import questionary
 
 from scopeforgex.installer import install_tools
 from scopeforgex.state import load_last_run
-from scopeforgex.ui import err, ok, stage, summary_table, warn
+from scopeforgex.ui import assessment_summary, err, ok, stage, summary_table, warn
 from scopeforgex.workflow import run_profile
 
 
@@ -44,7 +44,7 @@ _MENU_ACTIONS = {
 
 def _show_last_run() -> None:
     """
-    Display information about the most recent workflow.
+    Display the most recent workflow with security findings first.
     """
 
     last = load_last_run()
@@ -59,38 +59,59 @@ def _show_last_run() -> None:
         "Loaded last run ✅"
     )
 
-    summary_table(
-        "Last Run",
-        [
-            (
-                "Target Type",
-                str(
-                    last.get(
-                        "target_type",
-                        "-",
-                    )
-                ),
-            ),
-            (
-                "Target",
-                str(
-                    last.get(
-                        "target",
-                        "-",
-                    )
-                ),
-            ),
-            (
-                "Output Directory",
-                str(
-                    last.get(
-                        "outdir",
-                        "-",
-                    )
-                ),
-            ),
-        ],
+    assessment_summary(
+        last
     )
+
+    report_paths = last.get(
+        "report_paths",
+        {},
+    )
+
+    if report_paths:
+        summary_table(
+            "Report Views",
+            [
+                (
+                    "Professional",
+                    report_paths.get(
+                        "professional_markdown",
+                        "-",
+                    ),
+                ),
+                (
+                    "Professional HTML",
+                    report_paths.get(
+                        "professional_html",
+                        "-",
+                    ),
+                ),
+                (
+                    "Findings",
+                    report_paths.get(
+                        "findings_markdown",
+                        "-",
+                    ),
+                ),
+                (
+                    "Findings HTML",
+                    report_paths.get(
+                        "findings_html",
+                        "-",
+                    ),
+                ),
+                (
+                    "Canonical JSON",
+                    report_paths.get(
+                        "canonical_json",
+                        report_paths.get(
+                            "json",
+                            "-",
+                        ),
+                    ),
+                ),
+            ],
+        )
 
 
 ###############################################################################

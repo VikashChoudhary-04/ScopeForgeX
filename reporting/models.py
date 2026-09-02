@@ -535,6 +535,31 @@ class ReportData:
 
     duration_seconds: float = 0.0
 
+    # Assessment-wide state retained for the canonical report contract.
+    run_id: str = ""
+    schema_version: str = "4.0"
+    correlation_groups: list[Any] = field(
+        default_factory=list,
+    )
+    native_analyzer_results: list[Any] = field(
+        default_factory=list,
+    )
+    vulnerability_intelligence_results: list[Any] = field(
+        default_factory=list,
+    )
+    evidence_references: list[Any] = field(
+        default_factory=list,
+    )
+    finding_evidence_references: list[Any] = field(
+        default_factory=list,
+    )
+    correlated_evidence_references: list[Any] = field(
+        default_factory=list,
+    )
+    report_views: dict[str, Any] = field(
+        default_factory=dict,
+    )
+
     def as_dict(
         self,
     ) -> dict[str, Any]:
@@ -548,6 +573,10 @@ class ReportData:
             "profile": self.profile,
 
             "target_type": self.target_type,
+
+            "run_id": self.run_id,
+
+            "schema_version": self.schema_version,
 
             "start_time": (
                 self.start_time.isoformat()
@@ -578,6 +607,52 @@ class ReportData:
                 finding.as_dict()
                 for finding in self.findings
             ],
+
+            "correlation_groups": [
+                item.as_dict()
+                if hasattr(item, "as_dict")
+                else item
+                for item in self.correlation_groups
+            ],
+
+            "native_analyzer_results": [
+                item.as_dict()
+                if hasattr(item, "as_dict")
+                else item
+                for item in self.native_analyzer_results
+            ],
+
+            "vulnerability_intelligence_results": [
+                item.as_dict()
+                if hasattr(item, "as_dict")
+                else item
+                for item in self.vulnerability_intelligence_results
+            ],
+
+            "evidence_references": [
+                item.as_dict()
+                if hasattr(item, "as_dict")
+                else item
+                for item in self.evidence_references
+            ],
+
+            "finding_evidence_references": [
+                item.as_dict()
+                if hasattr(item, "as_dict")
+                else item
+                for item in self.finding_evidence_references
+            ],
+
+            "correlated_evidence_references": [
+                item.as_dict()
+                if hasattr(item, "as_dict")
+                else item
+                for item in self.correlated_evidence_references
+            ],
+
+            "report_views": dict(
+                self.report_views
+            ),
 
             "tool_results": dict(
                 self.tool_results

@@ -62,7 +62,7 @@ Design Principles
 - Final correlation, deduplication, and risk classification remain outside
   this analyzer.
 
-v1.0.0
+v1.4.0
 """
 
 from __future__ import annotations
@@ -141,7 +141,9 @@ class CookieObservation:
 
     remediation: str = ""
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
         """
         Convert the observation into a mapping suitable for the universal
         finding-normalization layer.
@@ -166,7 +168,9 @@ class CookieObservation:
             "description": self.description,
             "severity": self.severity,
             "confidence": self.confidence,
-            "evidence": dict(self.evidence),
+            "evidence": dict(
+                self.evidence
+            ),
             "source_tool": self.source_tool,
             "detection_method": self.detection_method,
             "cwe": self.cwe,
@@ -214,30 +218,6 @@ class CookieAnalyzer:
     ) -> list[CookieObservation]:
         """
         Analyze cookies from an HTTP response.
-
-        Parameters
-        ----------
-        response:
-            Optional response object or mapping.
-
-        target:
-            Target URL or asset identifier.
-
-        set_cookie:
-            Explicit Set-Cookie value or collection of Set-Cookie values.
-
-        cookies:
-            Explicit cookie header values. This is accepted as an alias for
-            set_cookie.
-
-        headers:
-            Optional HTTP response headers. Set-Cookie values are extracted
-            from these headers when explicit cookie input is absent.
-
-        Returns
-        -------
-        list[CookieObservation]
-            Structured cookie-security observations.
         """
 
         effective_target = (
@@ -338,6 +318,7 @@ class CookieAnalyzer:
         #######################################################################
 
         if is_https and not secure:
+
             observations.append(
                 self._build_observation(
                     category=CATEGORY_SECURE,
@@ -369,6 +350,7 @@ class CookieAnalyzer:
         #######################################################################
 
         if not httponly:
+
             observations.append(
                 self._build_observation(
                     category=CATEGORY_HTTPONLY,
@@ -400,6 +382,7 @@ class CookieAnalyzer:
         #######################################################################
 
         if not samesite:
+
             observations.append(
                 self._build_observation(
                     category=CATEGORY_SAMESITE,
@@ -431,7 +414,9 @@ class CookieAnalyzer:
         elif str(
             samesite
         ).lower() == "none":
+
             if not secure:
+
                 observations.append(
                     self._build_observation(
                         category=CATEGORY_SAMESITE,
@@ -464,11 +449,13 @@ class CookieAnalyzer:
         #######################################################################
 
         if domain:
+
             normalized_domain = str(
                 domain
             ).strip()
 
             if normalized_domain.startswith("."):
+
                 observations.append(
                     self._build_observation(
                         category=CATEGORY_INSECURE,
@@ -496,70 +483,450 @@ class CookieAnalyzer:
                     )
                 )
 
-        #######################################################################
-        # Path
-        #######################################################################
-
-        if path:
-            normalized_path = str(
-                path
-            ).strip()
-
-            if normalized_path == "/":
-                observations.append(
-                    self._build_observation(
-                        category=CATEGORY_INSECURE,
-                        title=(
-                            f"Broad cookie Path scope on '{name}'"
-                        ),
-                        description=(
-                            f"The cookie '{name}' is scoped to the root "
-                            "application path."
-                        ),
-                        target=target,
-                        cookie=cookie,
-                        severity="Low",
-                        impact=(
-                            "A root-scoped cookie is sent to all matching "
-                            "application paths. For sensitive cookies, a "
-                            "narrower scope may reduce unnecessary exposure."
-                        ),
-                        remediation=(
-                            "Use the narrowest Path scope compatible with "
-                            "the application's requirements."
-                        ),
-                        cwe="CWE-565",
-                    )
-                )
-
         return observations
 
     ###########################################################################
-    # Cookie parsing
+    # Response extraction
     ###########################################################################
 
+    @classmethod
+    def _extract_response_url(
+        cls,
+        response: Any,
+    ) -> str | None:
+        """
+        Extract a response URL from common response representations.
+        """
+
+        if response is None:
+            return None
+
+        if isinstance(
+            response,
+            Mapping,
+        ):
+
+            for key in (
+                "url",
+                "response_url",
+                "final_url",
+                "target",
+            ):
+
+                value = response.get(
+                    key
+                )
+
+                if value:
+                    return str(
+                        value
+                    ).strip()
+
+            return None
+
+        for attribute in (
+            "url",
+            "response_url",
+            "final_url",
+        ):
+
+            value = getattr(
+                response,
+                attribute,
+                None,
+            )
+
+            if value:
+                return str(
+                    value
+                ).strip()
+
+        return None
+
+    @classmethod
+    def _collect_set_cookie_values(
+        cls,
+        *,
+        set_cookie: Any,
+        cookies: Any,
+        headers: Mapping[str, Any] | None,
+        response: Any,
+    ) -> list[Any]:
+        """
+        Collect Set-Cookie values from explicit arguments, headers, or a
+        response-like object.
+        """
+
+        explicit = (
+            set_cookie
+            if set_cookie is not None
+            else cookies
+        )
+
+        if explicit is not None:
+
+            return cls._coerce_cookie_values(
+                explicit
+            )
+
+        if headers is not None:
+
+            values = cls._extract_header_value(
+                headers,
+                "set-cookie",
+            )
+
+            if values:
+                return values
+
+        if isinstance(
+            response,
+            Mapping,
+        ):
+
+            for key in (
+                "headers",
+                "response_headers",
+                "http_headers",
+            ):
+
+                if key not in response:
+                    continue
+
+                values = cls._extract_header_value(
+                    response.get(
+                        key
+                    ),
+                    "set-cookie",
+                )
+
+                if values:
+                    return values
+
+            for key in (
+                "set-cookie",
+                "set_cookie",
+                "cookies",
+            ):
+
+                if key in response:
+
+                    values = cls._coerce_cookie_values(
+                        response.get(
+                            key
+                        )
+                    )
+
+                    if values:
+                        return values
+
+            return []
+
+        for attribute in (
+            "headers",
+            "response_headers",
+        ):
+
+            value = getattr(
+                response,
+                attribute,
+                None,
+            )
+
+            if value is None:
+                continue
+
+            values = cls._extract_header_value(
+                value,
+                "set-cookie",
+            )
+
+            if values:
+                return values
+
+        for attribute in (
+            "set_cookie",
+            "set_cookie_header",
+            "cookies",
+        ):
+
+            value = getattr(
+                response,
+                attribute,
+                None,
+            )
+
+            if value is None:
+                continue
+
+            values = cls._coerce_cookie_values(
+                value
+            )
+
+            if values:
+                return values
+
+        return []
+
     @staticmethod
-    def _parse_set_cookie(
+    def _coerce_cookie_values(
         value: Any,
+    ) -> list[Any]:
+        """
+        Convert common cookie input representations into a list.
+        """
+
+        if value is None:
+            return []
+
+        if isinstance(
+            value,
+            bytes,
+        ):
+
+            decoded = value.decode(
+                "utf-8",
+                errors="replace",
+            )
+
+            return [
+                decoded
+            ]
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            return [
+                value
+            ]
+
+        if isinstance(
+            value,
+            Mapping,
+        ):
+
+            return [
+                value
+            ]
+
+        if isinstance(
+            value,
+            Iterable,
+        ):
+
+            return [
+                item
+                for item in value
+                if item is not None
+            ]
+
+        return [
+            value
+        ]
+
+    @classmethod
+    def _extract_header_value(
+        cls,
+        headers: Any,
+        name: str,
+    ) -> list[Any]:
+        """
+        Extract a case-insensitive header value.
+
+        Header collections represented by mappings, sequences of pairs, or
+        response-header objects are supported.
+        """
+
+        normalized_name = str(
+            name
+        ).strip().lower()
+
+        if headers is None:
+            return []
+
+        if isinstance(
+            headers,
+            Mapping,
+        ):
+
+            for key, value in headers.items():
+
+                if str(
+                    key
+                ).strip().lower() != normalized_name:
+                    continue
+
+                return cls._coerce_cookie_values(
+                    value
+                )
+
+            return []
+
+        if isinstance(
+            headers,
+            str,
+        ):
+
+            values: list[str] = []
+
+            for line in headers.splitlines():
+
+                if ":" not in line:
+                    continue
+
+                key, value = line.split(
+                    ":",
+                    1,
+                )
+
+                if key.strip().lower() != normalized_name:
+                    continue
+
+                value = value.strip()
+
+                if value:
+                    values.append(
+                        value
+                    )
+
+            return values
+
+        if isinstance(
+            headers,
+            Iterable,
+        ):
+
+            values: list[Any] = []
+
+            for item in headers:
+
+                if not isinstance(
+                    item,
+                    (list, tuple),
+                ):
+                    continue
+
+                if len(item) < 2:
+                    continue
+
+                key = str(
+                    item[0]
+                ).strip().lower()
+
+                if key != normalized_name:
+                    continue
+
+                values.extend(
+                    cls._coerce_cookie_values(
+                        item[1]
+                    )
+                )
+
+            return values
+
+        return []
+
+    ###########################################################################
+    # Set-Cookie parsing
+    ###########################################################################
+
+    @classmethod
+    def _parse_set_cookie(
+        cls,
+        raw_cookie: Any,
     ) -> dict[str, Any] | None:
         """
-        Parse one Set-Cookie header.
+        Parse one Set-Cookie value without retaining the cookie value.
 
-        Cookie values are deliberately not retained. Only the cookie name and
-        security-relevant attributes are extracted.
+        Only the cookie name and security-relevant attributes are preserved.
         """
 
-        raw = str(
-            value
-            or ""
+        if isinstance(
+            raw_cookie,
+            Mapping,
+        ):
+
+            name = (
+                raw_cookie.get("name")
+                or raw_cookie.get("cookie_name")
+            )
+
+            if not name:
+                return None
+
+            return {
+                "name": str(
+                    name
+                ).strip(),
+                "secure": bool(
+                    raw_cookie.get(
+                        "secure",
+                        False,
+                    )
+                ),
+                "httponly": bool(
+                    raw_cookie.get(
+                        "httponly",
+                        raw_cookie.get(
+                            "http_only",
+                            False,
+                        ),
+                    )
+                ),
+                "samesite": (
+                    str(
+                        raw_cookie.get(
+                            "samesite",
+                            raw_cookie.get(
+                                "same_site",
+                                "",
+                            ),
+                        )
+                    ).strip()
+                    or None
+                ),
+                "domain": (
+                    str(
+                        raw_cookie.get(
+                            "domain",
+                            "",
+                        )
+                    ).strip()
+                    or None
+                ),
+                "path": (
+                    str(
+                        raw_cookie.get(
+                            "path",
+                            "",
+                        )
+                    ).strip()
+                    or None
+                ),
+            }
+
+        if isinstance(
+            raw_cookie,
+            bytes,
+        ):
+
+            raw_cookie = raw_cookie.decode(
+                "utf-8",
+                errors="replace",
+            )
+
+        value = str(
+            raw_cookie
         ).strip()
 
-        if not raw:
+        if not value:
             return None
 
         parts = [
             part.strip()
-            for part in raw.split(";")
+            for part in value.split(";")
             if part.strip()
         ]
 
@@ -578,7 +945,9 @@ class CookieAnalyzer:
 
         name = name.strip()
 
-        if not name:
+        if not cls._valid_cookie_name(
+            name
+        ):
             return None
 
         parsed: dict[str, Any] = {
@@ -593,6 +962,7 @@ class CookieAnalyzer:
         for attribute in parts[1:]:
 
             if "=" in attribute:
+
                 key, attribute_value = attribute.split(
                     "=",
                     1,
@@ -601,227 +971,60 @@ class CookieAnalyzer:
                 key = key.strip().lower()
                 attribute_value = attribute_value.strip()
 
-                if key == "samesite":
-                    parsed["samesite"] = (
-                        attribute_value.lower()
-                    )
-
-                elif key == "domain":
-                    parsed["domain"] = (
-                        attribute_value
-                    )
+                if key == "domain":
+                    parsed[
+                        "domain"
+                    ] = attribute_value
 
                 elif key == "path":
-                    parsed["path"] = (
-                        attribute_value
-                    )
+                    parsed[
+                        "path"
+                    ] = attribute_value
+
+                elif key == "samesite":
+                    parsed[
+                        "samesite"
+                    ] = attribute_value
 
                 continue
 
-            normalized = attribute.lower()
+            key = attribute.strip().lower()
 
-            if normalized == "secure":
-                parsed["secure"] = True
+            if key == "secure":
+                parsed[
+                    "secure"
+                ] = True
 
-            elif normalized == "httponly":
-                parsed["httponly"] = True
+            elif key == "httponly":
+                parsed[
+                    "httponly"
+                ] = True
 
         return parsed
 
+    @staticmethod
+    def _valid_cookie_name(
+        value: str,
+    ) -> bool:
+        """
+        Validate a cookie name conservatively.
+        """
+
+        if not value:
+            return False
+
+        return re.fullmatch(
+            r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+",
+            value,
+        ) is not None
+
     ###########################################################################
-    # Input extraction
+    # Observation construction
     ###########################################################################
 
     @classmethod
-    def _collect_set_cookie_values(
-        cls,
-        *,
-        set_cookie: Any,
-        cookies: Any,
-        headers: Mapping[str, Any] | None,
-        response: Any,
-    ) -> list[str]:
-        """
-        Collect Set-Cookie values from explicit arguments, headers, or a
-        response object.
-        """
-
-        source = (
-            set_cookie
-            if set_cookie is not None
-            else cookies
-        )
-
-        if source is None:
-            source = cls._extract_set_cookie_from_headers(
-                headers
-            )
-
-        if source is None:
-            source = cls._extract_set_cookie_from_headers(
-                cls._extract_headers(
-                    response
-                )
-            )
-
-        return cls._normalize_cookie_values(
-            source
-        )
-
-    @staticmethod
-    def _normalize_cookie_values(
-        values: Any,
-    ) -> list[str]:
-        """
-        Normalize cookie input into individual Set-Cookie strings.
-
-        A list/tuple is treated as multiple headers. A single string remains
-        a single header because commas may legitimately occur in attributes
-        such as Expires.
-        """
-
-        if values is None:
-            return []
-
-        if isinstance(
-            values,
-            bytes,
-        ):
-            values = values.decode(
-                "utf-8",
-                errors="replace",
-            )
-
-        if isinstance(
-            values,
-            str,
-        ):
-            return [
-                values
-            ] if values.strip() else []
-
-        if isinstance(
-            values,
-            Iterable,
-        ):
-            result: list[str] = []
-
-            for value in values:
-
-                normalized = str(
-                    value
-                ).strip()
-
-                if normalized:
-                    result.append(
-                        normalized
-                    )
-
-            return result
-
-        normalized = str(
-            values
-        ).strip()
-
-        return (
-            [normalized]
-            if normalized
-            else []
-        )
-
-    @staticmethod
-    def _extract_set_cookie_from_headers(
-        headers: Mapping[str, Any] | None,
-    ) -> Any:
-        """Extract Set-Cookie from a header mapping."""
-
-        if not headers:
-            return None
-
-        for key, value in headers.items():
-
-            if str(
-                key
-            ).strip().lower() == "set-cookie":
-                return value
-
-        return None
-
-    @staticmethod
-    def _extract_headers(
-        response: Any,
-    ) -> Mapping[str, Any] | None:
-        """Extract headers from common response representations."""
-
-        if response is None:
-            return None
-
-        if isinstance(
-            response,
-            Mapping,
-        ):
-            headers = response.get(
-                "headers"
-            )
-
-            if isinstance(
-                headers,
-                Mapping,
-            ):
-                return headers
-
-            return None
-
-        headers = getattr(
-            response,
-            "headers",
-            None,
-        )
-
-        if isinstance(
-            headers,
-            Mapping,
-        ):
-            return headers
-
-        return None
-
-    @staticmethod
-    def _extract_response_url(
-        response: Any,
-    ) -> str:
-        """Extract response URL where available."""
-
-        if response is None:
-            return ""
-
-        if isinstance(
-            response,
-            Mapping,
-        ):
-            return str(
-                response.get(
-                    "url",
-                    ""
-                )
-                or ""
-            ).strip()
-
-        return str(
-            getattr(
-                response,
-                "url",
-                ""
-            )
-            or ""
-        ).strip()
-
-    ###########################################################################
-    # Observation factory
-    ###########################################################################
-
-    @staticmethod
     def _build_observation(
+        cls,
         *,
         category: str,
         title: str,
@@ -831,22 +1034,22 @@ class CookieAnalyzer:
         severity: str,
         impact: str,
         remediation: str,
-        cwe: str | None,
+        cwe: str | None = None,
     ) -> CookieObservation:
         """
-        Build a normalized cookie observation.
-
-        The cookie value is intentionally excluded from evidence.
+        Construct a cookie-security observation while excluding the cookie
+        value itself from normalized evidence.
         """
 
         cookie_name = str(
             cookie.get(
                 "name",
-                ""
+                "",
             )
         ).strip()
 
-        safe_attributes = {
+        evidence: dict[str, Any] = {
+            "cookie_name": cookie_name,
             "secure": bool(
                 cookie.get(
                     "secure",
@@ -862,12 +1065,47 @@ class CookieAnalyzer:
             "samesite": cookie.get(
                 "samesite"
             ),
-            "domain": cookie.get(
+        }
+
+        if cookie.get(
+            "domain"
+        ) is not None:
+
+            evidence[
                 "domain"
-            ),
-            "path": cookie.get(
+            ] = str(
+                cookie.get(
+                    "domain"
+                )
+            )
+
+        if cookie.get(
+            "path"
+        ) is not None:
+
+            evidence[
                 "path"
-            ),
+            ] = str(
+                cookie.get(
+                    "path"
+                )
+            )
+
+        host = cls._extract_host(
+            target
+        )
+
+        url = (
+            target
+            if cls._is_url(
+                target
+            )
+            else None
+        )
+
+        metadata = {
+            "analyzer": ANALYZER_NAME,
+            "issue": category,
         }
 
         return CookieObservation(
@@ -875,28 +1113,15 @@ class CookieAnalyzer:
             description=description,
             category=category,
             target=target,
-            host=CookieAnalyzer._extract_host(
-                target
-            ),
-            url=(
-                target
-                if CookieAnalyzer._is_url(
-                    target
-                )
-                else None
-            ),
+            host=host,
+            url=url,
             cookie_name=cookie_name,
             severity=severity,
             confidence=DEFAULT_CONFIDENCE,
-            evidence={
-                "cookie_name": cookie_name,
-                "attributes": safe_attributes,
-                "cookie_value": "[REDACTED]",
-            },
-            metadata={
-                "analyzer": ANALYZER_NAME,
-                "observation_type": category.lower(),
-            },
+            source_tool=ANALYZER_NAME,
+            detection_method=DETECTION_METHOD,
+            evidence=evidence,
+            metadata=metadata,
             cwe=cwe,
             impact=impact,
             remediation=remediation,
@@ -907,61 +1132,114 @@ class CookieAnalyzer:
     ###########################################################################
 
     @staticmethod
-    def _is_https(
-        target: str,
+    def _is_url(
+        value: Any,
     ) -> bool:
-        """Return True when target is an HTTPS URL."""
+        """
+        Return whether a target appears to be an HTTP(S) URL.
+        """
 
-        return bool(
-            re.match(
-                r"^https://",
-                str(
-                    target
-                ).strip(),
-                flags=re.IGNORECASE,
+        if not value:
+            return False
+
+        normalized = str(
+            value
+        ).strip().lower()
+
+        return (
+            normalized.startswith(
+                "http://"
+            )
+            or normalized.startswith(
+                "https://"
             )
         )
 
-    @staticmethod
-    def _is_url(
-        target: str | None,
+    @classmethod
+    def _is_https(
+        cls,
+        target: Any,
     ) -> bool:
-        """Return True when target is an HTTP(S) URL."""
+        """
+        Return whether a target uses HTTPS.
+        """
 
         if not target:
             return False
 
-        return bool(
-            re.match(
-                r"^https?://",
-                str(
-                    target
-                ).strip(),
-                flags=re.IGNORECASE,
-            )
+        return str(
+            target
+        ).strip().lower().startswith(
+            "https://"
         )
 
-    @staticmethod
+    @classmethod
     def _extract_host(
-        target: str | None,
+        cls,
+        target: Any,
     ) -> str | None:
-        """Extract hostname from an HTTP(S) URL."""
+        """
+        Extract a hostname from an HTTP(S) target.
+        """
 
-        if not target:
+        if not cls._is_url(
+            target
+        ):
             return None
 
-        match = re.match(
-            r"^https?://([^/:?#]+)",
-            str(
-                target
-            ).strip(),
-            flags=re.IGNORECASE,
-        )
+        value = str(
+            target
+        ).strip()
 
-        if not match:
-            return None
+        authority = value.split(
+            "://",
+            1,
+        )[1]
 
-        return match.group(1)
+        authority = authority.split(
+            "/",
+            1,
+        )[0]
+
+        authority = authority.split(
+            "?",
+            1,
+        )[0]
+
+        authority = authority.split(
+            "#",
+            1,
+        )[0]
+
+        if "@" in authority:
+
+            authority = authority.rsplit(
+                "@",
+                1,
+            )[1]
+
+        if authority.startswith(
+            "["
+        ):
+
+            closing = authority.find(
+                "]"
+            )
+
+            if closing != -1:
+
+                return authority[
+                    1:closing
+                ]
+
+        return (
+            authority.rsplit(
+                ":",
+                1,
+            )[0]
+            if ":" in authority
+            else authority
+        ) or None
 
     ###########################################################################
     # Deduplication
@@ -972,24 +1250,50 @@ class CookieAnalyzer:
         observations: list[CookieObservation],
     ) -> list[CookieObservation]:
         """
-        Remove duplicate observations for the same cookie/category/target.
+        Remove duplicate observations generated from the same cookie
+        configuration.
         """
 
-        unique: list[CookieObservation] = []
-        seen: set[tuple[str, str, str]] = set()
+        unique: list[
+            CookieObservation
+        ] = []
+
+        seen: set[
+            tuple[Any, ...]
+        ] = set()
 
         for observation in observations:
 
-            key = (
-                observation.target,
+            evidence = observation.evidence
+
+            fingerprint = (
                 observation.category,
-                observation.cookie_name or "",
+                observation.target,
+                observation.cookie_name,
+                evidence.get(
+                    "secure"
+                ),
+                evidence.get(
+                    "httponly"
+                ),
+                evidence.get(
+                    "samesite"
+                ),
+                evidence.get(
+                    "domain"
+                ),
+                evidence.get(
+                    "path"
+                ),
             )
 
-            if key in seen:
+            if fingerprint in seen:
                 continue
 
-            seen.add(key)
+            seen.add(
+                fingerprint
+            )
+
             unique.append(
                 observation
             )
@@ -998,9 +1302,16 @@ class CookieAnalyzer:
 
 
 ###############################################################################
-# Compatibility aliases
+# Compatibility Names
 ###############################################################################
 
+
+# CookieAnalyzer is the canonical implementation. These aliases preserve the
+# names consumed by scopeforgex.analyzers and NativeAnalyzerEngine without
+# introducing duplicate analyzer implementations.
+CookiesAnalyzer = CookieAnalyzer
+
+CookieSecurityAnalyzer = CookieAnalyzer
 
 Analyzer = CookieAnalyzer
 
@@ -1010,14 +1321,22 @@ Analyzer = CookieAnalyzer
 ###############################################################################
 
 
+INSECURE_COOKIE = CATEGORY_INSECURE
+
+MISSING_HTTPONLY = CATEGORY_HTTPONLY
+
+MISSING_SECURE = CATEGORY_SECURE
+
+WEAK_SAMESITE = CATEGORY_SAMESITE
+
+
 __all__ = [
-    "CookieAnalyzer",
     "CookieObservation",
-    "Analyzer",
-    "ANALYZER_NAME",
-    "CATEGORY_INSECURE",
-    "CATEGORY_HTTPONLY",
-    "CATEGORY_SECURE",
-    "CATEGORY_SAMESITE",
-    "DETECTION_METHOD",
+    "CookieAnalyzer",
+    "CookiesAnalyzer",
+    "CookieSecurityAnalyzer",
+    "INSECURE_COOKIE",
+    "MISSING_HTTPONLY",
+    "MISSING_SECURE",
+    "WEAK_SAMESITE",
 ]

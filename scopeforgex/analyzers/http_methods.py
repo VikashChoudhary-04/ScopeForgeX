@@ -53,7 +53,7 @@ Design Principles
 - Evidence and confidence remain separate from final risk classification.
 - The universal Finding model remains the canonical downstream structure.
 
-v1.0.0
+v1.1.0
 """
 
 from __future__ import annotations
@@ -149,7 +149,9 @@ class HTTPMethodObservation:
         default_factory=dict
     )
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
         """
         Serialize the observation into a normalized finding-compatible map.
         """
@@ -178,7 +180,9 @@ class HTTPMethodObservation:
             "evidence": self.evidence,
             "source_tool": self.source_tool,
             "detection_method": self.detection_method,
-            "cwe": "CWE-749" if self.method == "TRACE" else None,
+            "cwe": "CWE-749"
+            if self.method == "TRACE"
+            else None,
             "cve": None,
             "references": [],
             "impact": self._impact(),
@@ -186,7 +190,9 @@ class HTTPMethodObservation:
             "metadata": metadata,
         }
 
-    def _impact(self) -> str:
+    def _impact(
+        self,
+    ) -> str:
         """Return method-specific impact guidance."""
 
         if self.method == "TRACE":
@@ -203,7 +209,11 @@ class HTTPMethodObservation:
                 "to intended infrastructure."
             )
 
-        if self.method in {"PUT", "DELETE", "PATCH"}:
+        if self.method in {
+            "PUT",
+            "DELETE",
+            "PATCH",
+        }:
             return (
                 f"The {self.method} method may permit state-changing "
                 "operations. Security impact depends on authentication, "
@@ -215,7 +225,9 @@ class HTTPMethodObservation:
             "application's intended functionality."
         )
 
-    def _remediation(self) -> str:
+    def _remediation(
+        self,
+    ) -> str:
         """Return method-specific remediation guidance."""
 
         if self.method == "TRACE":
@@ -232,7 +244,11 @@ class HTTPMethodObservation:
                 "explicitly required."
             )
 
-        if self.method in {"PUT", "DELETE", "PATCH"}:
+        if self.method in {
+            "PUT",
+            "DELETE",
+            "PATCH",
+        }:
             return (
                 f"Verify that {self.method} is required. Enforce strong "
                 "authentication and authorization for the operation and "
@@ -305,29 +321,39 @@ class HTTPMethodsAnalyzer:
 
         effective_target = (
             _text(
-                context.get("target")
+                context.get(
+                    "target"
+                )
             )
             or target
         )
 
         effective_host = (
             _text(
-                context.get("host")
+                context.get(
+                    "host"
+                )
             )
             or host
         )
 
         effective_port = (
             _safe_int(
-                context.get("port")
+                context.get(
+                    "port"
+                )
             )
-            if context.get("port") is not None
+            if context.get(
+                "port"
+            ) is not None
             else port
         )
 
         effective_url = (
             _text(
-                context.get("url")
+                context.get(
+                    "url"
+                )
             )
             or url
             or (
@@ -346,7 +372,9 @@ class HTTPMethodsAnalyzer:
         if not methods:
             return []
 
-        observations: list[HTTPMethodObservation] = []
+        observations: list[
+            HTTPMethodObservation
+        ] = []
 
         for method in methods:
 
@@ -391,6 +419,7 @@ class HTTPMethodsAnalyzer:
             evidence,
             Mapping,
         ):
+
             context = dict(
                 evidence
             )
@@ -403,6 +432,7 @@ class HTTPMethodsAnalyzer:
                 headers,
                 Mapping,
             ):
+
                 normalized_headers = {
                     str(
                         key
@@ -411,12 +441,15 @@ class HTTPMethodsAnalyzer:
                 }
 
                 if "allow" not in context:
+
                     allow = normalized_headers.get(
                         "allow"
                     )
 
                     if allow:
-                        context["allow"] = allow
+                        context[
+                            "allow"
+                        ] = allow
 
             return context
 
@@ -424,6 +457,7 @@ class HTTPMethodsAnalyzer:
             evidence,
             str,
         ):
+
             return {
                 "allow": evidence,
             }
@@ -432,6 +466,7 @@ class HTTPMethodsAnalyzer:
             evidence,
             Iterable,
         ):
+
             return {
                 "methods": list(
                     evidence
@@ -461,6 +496,7 @@ class HTTPMethodsAnalyzer:
             "allow",
             "http_methods",
         ):
+
             value = context.get(
                 key
             )
@@ -472,25 +508,31 @@ class HTTPMethodsAnalyzer:
                 value,
                 str,
             ):
+
                 candidates.extend(
                     value.replace(
                         ",",
                         " ",
                     ).split()
                 )
+
             elif isinstance(
                 value,
                 Iterable,
             ):
+
                 candidates.extend(
                     value
                 )
+
             else:
+
                 candidates.append(
                     value
                 )
 
         normalized: list[str] = []
+
         seen: set[str] = set()
 
         for value in candidates:
@@ -542,8 +584,11 @@ class HTTPMethodsAnalyzer:
         """
 
         if method == "TRACE":
+
             title = "HTTP TRACE Method Enabled"
+
             severity = "Medium"
+
             description = (
                 "The HTTP TRACE method is exposed by the target. TRACE is "
                 "normally unnecessary for application-facing services and "
@@ -551,8 +596,11 @@ class HTTPMethodsAnalyzer:
             )
 
         elif method == "CONNECT":
+
             title = "HTTP CONNECT Method Exposed"
+
             severity = "Medium"
+
             description = (
                 "The HTTP CONNECT method is exposed by the target. CONNECT "
                 "can provide proxy or tunneling functionality and should be "
@@ -560,10 +608,13 @@ class HTTPMethodsAnalyzer:
             )
 
         else:
+
             title = (
                 f"HTTP {method} Method Exposed"
             )
+
             severity = "Low"
+
             description = (
                 f"The HTTP {method} method is exposed by the target. "
                 "This is not inherently a vulnerability, but the method "
@@ -620,9 +671,13 @@ class HTTPMethodsAnalyzer:
     ) -> list[HTTPMethodObservation]:
         """Remove duplicate method observations."""
 
-        unique: list[HTTPMethodObservation] = []
+        unique: list[
+            HTTPMethodObservation
+        ] = []
 
-        seen: set[tuple[str, str, str]] = set()
+        seen: set[
+            tuple[str, str, str]
+        ] = set()
 
         for observation in observations:
 
@@ -651,7 +706,9 @@ class HTTPMethodsAnalyzer:
 ###############################################################################
 
 
-def _text(value: Any) -> str:
+def _text(
+    value: Any,
+) -> str:
     """Return normalized text."""
 
     if value is None:
@@ -662,20 +719,25 @@ def _text(value: Any) -> str:
     ).strip()
 
 
-def _safe_int(value: Any) -> int | None:
+def _safe_int(
+    value: Any,
+) -> int | None:
     """Convert a value to an integer when possible."""
 
     if value is None:
         return None
 
     try:
+
         return int(
             value
         )
+
     except (
         TypeError,
         ValueError,
     ):
+
         return None
 
 
@@ -699,11 +761,15 @@ def _is_http_url(
 
 
 ###############################################################################
-# Compatibility alias
+# Compatibility aliases
 ###############################################################################
 
 
+# HTTPMethodsAnalyzer is the canonical implementation. Preserve the historical
+# package-level constant expected by ScopeForgeX native analyzer consumers.
 Analyzer = HTTPMethodsAnalyzer
+
+HTTP_METHOD_MISCONFIGURATION = CATEGORY
 
 
 ###############################################################################
@@ -717,5 +783,10 @@ __all__ = [
     "Analyzer",
     "ANALYZER_NAME",
     "CATEGORY",
+    "HTTP_METHOD_MISCONFIGURATION",
     "DETECTION_METHOD",
+    "DEFAULT_CONFIDENCE",
+    "REVIEW_METHODS",
+    "INFORMATIONAL_METHODS",
+    "COMMON_METHODS",
 ]

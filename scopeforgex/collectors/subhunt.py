@@ -43,15 +43,21 @@ Design Principles
 - Subhunt remains a distinct capability from Amass.
 - A discovered subdomain is an observation, not a vulnerability.
 
-v1.3.0
+v1.5.0
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
+
+from scopeforgex.collectors.base import (
+    CollectorBase,
+    CollectorObservation,
+)
 
 from scopeforgex.models.finding import (
     DEFAULT_CONFIDENCE,
@@ -86,7 +92,9 @@ DEFAULT_STATUS_VALUE = DEFAULT_STATUS
 ###############################################################################
 
 
-def _text(value: Any) -> str:
+def _text(
+    value: Any,
+) -> str:
     """
     Normalize a value into stripped text.
     """
@@ -94,49 +102,117 @@ def _text(value: Any) -> str:
     if value is None:
         return ""
 
-    return str(value).strip()
+    return str(
+        value
+    ).strip()
 
 
-def _normalize_subdomain(value: Any) -> str:
+def _strip_ansi(
+    value: str,
+) -> str:
     """
-    Normalize a discovered subdomain.
+    Remove ANSI terminal escape sequences from Subhunt output.
+    """
+
+    return re.sub(
+        r"\x1b\[[0-9;?]*[ -/]*[@-~]",
+        "",
+        value,
+    )
+
+
+def _normalize_subdomain(
+    value: Any,
+) -> str:
+    """
+    Normalize a discovered Subhunt hostname.
 
     Supported inputs include:
 
         api.example.com
         api.example.com.
+        [+] api.example.com
         https://api.example.com
         http://api.example.com:8080
 
-    URL inputs are reduced to their hostname because this collector models
-    Subhunt's result as a SUBDOMAIN finding rather than an HTTP endpoint.
+    ANSI terminal formatting and common Subhunt result markers are removed
+    before hostname normalization.
+
+    Malformed URL-like input is rejected safely rather than aborting the
+    complete collection pass.
     """
 
-    value = _text(value)
+    value = _text(
+        value
+    )
 
     if not value:
         return ""
 
-    candidate = value.strip()
+    candidate = _strip_ansi(
+        value
+    ).strip()
+
+    # Subhunt commonly prefixes successful discoveries with "[+]".
+    if candidate.startswith(
+        "[+]"
+    ):
+        candidate = candidate[3:].strip()
+
+    # Ignore other bracket-style wrappers where possible.
+    candidate = candidate.strip()
+
+    if not candidate:
+        return ""
 
     if "://" in candidate:
-        parsed = urlparse(candidate)
 
-        if parsed.hostname:
-            candidate = parsed.hostname
-
-    else:
-        candidate = candidate.split("/", 1)[0]
-
-        if ":" in candidate:
+        try:
             parsed = urlparse(
-                f"//{candidate}",
+                candidate
             )
 
-            if parsed.hostname:
-                candidate = parsed.hostname
+        except ValueError:
+            return ""
 
-    candidate = candidate.strip().lower()
+        if not parsed.hostname:
+            return ""
+
+        candidate = parsed.hostname
+
+    else:
+
+        # Raw Subhunt output should normally contain only a hostname.
+        # Remove an accidental path suffix.
+        candidate = candidate.split(
+            "/",
+            1,
+        )[0].strip()
+
+        if not candidate:
+            return ""
+
+        # Handle host:port safely. urlparse() can raise ValueError for
+        # malformed bracketed IPv6 input, so the exception is intentionally
+        # contained here.
+        if ":" in candidate:
+
+            try:
+                parsed = urlparse(
+                    f"//{candidate}",
+                )
+
+            except ValueError:
+                return ""
+
+            if not parsed.hostname:
+                return ""
+
+            candidate = parsed.hostname
+
+    candidate = _strip_ansi(
+        candidate
+    ).strip().lower()
 
     if candidate.endswith("."):
         candidate = candidate[:-1]
@@ -144,7 +220,9 @@ def _normalize_subdomain(value: Any) -> str:
     return candidate
 
 
-def _is_valid_subdomain(value: str) -> bool:
+def _is_valid_subdomain(
+    value: str,
+) -> bool:
     """
     Perform conservative validation of a normalized subdomain.
 
@@ -155,7 +233,9 @@ def _is_valid_subdomain(value: str) -> bool:
     - contain at least one character;
     - not contain whitespace;
     - not contain URL path separators;
-    - not look like a command-line status message.
+    - not contain terminal formatting;
+    - not contain common command/status markers;
+    - not begin with command-line or parser delimiters.
     """
 
     if not value:
@@ -167,6 +247,9 @@ def _is_valid_subdomain(value: str) -> bool:
     ):
         return False
 
+    if "\x1b" in value:
+        return False
+
     if "/" in value:
         return False
 
@@ -175,6 +258,27 @@ def _is_valid_subdomain(value: str) -> bool:
             "-",
             "[",
             "{",
+        )
+    ):
+        return False
+
+    lowered = value.lower()
+
+    if lowered.startswith(
+        (
+            "tested:",
+            "found:",
+            "rate:",
+            "progress:",
+            "testing:",
+            "starting",
+            "started",
+            "finished",
+            "completed",
+            "error:",
+            "warning:",
+            "usage:",
+            "subhunt ",
         )
     ):
         return False
@@ -193,11 +297,13 @@ def _timestamp(
     """
 
     if value is None:
+
         return datetime.now(
             timezone.utc
         )
 
     if value.tzinfo is None:
+
         return value.replace(
             tzinfo=timezone.utc
         )
@@ -210,7 +316,7 @@ def _timestamp(
 ###############################################################################
 
 
-class SubhuntCollector:
+class SubhuntCollector(CollectorBase):
     """
     Normalize Subhunt output into ScopeForgeX Finding objects.
 
@@ -218,7 +324,8 @@ class SubhuntCollector:
     It does not execute Subhunt and does not perform DNS/network activity.
     """
 
-    name = "subhunt_collector"
+    name = "subhunt"
+    tool = "subhunt"
 
     source_tool = SOURCE_TOOL
 
@@ -231,7 +338,188 @@ class SubhuntCollector:
     # Public API
     ###########################################################################
 
-    def collect(
+
+    @staticmethod
+    def _finding_to_observation(
+        finding: Any,
+    ) -> CollectorObservation:
+        """
+        Convert a canonical Finding into a CollectorObservation.
+
+        The native collector parser preserves the existing collector's
+        normalized finding data while satisfying the universal collector
+        observation contract.
+        """
+
+        data = (
+            finding.as_dict()
+            if hasattr(
+                finding,
+                "as_dict",
+            )
+            else finding
+        )
+
+        if not isinstance(
+            data,
+            Mapping,
+        ):
+            data = {}
+
+        return CollectorObservation(
+            observation_type=str(
+                data.get(
+                    "category",
+                    data.get(
+                        "type",
+                        "finding",
+                    ),
+                )
+            ),
+            value=(
+                data.get("value")
+                or data.get("host")
+                or data.get("url")
+                or data.get("title")
+            ),
+            title=str(
+                data.get("title", "")
+            ),
+            description=str(
+                data.get("description", "")
+            ),
+            impact=str(
+                data.get("impact", "")
+            ),
+            remediation=str(
+                data.get("remediation", "")
+            ),
+            severity=str(
+                data.get(
+                    "severity",
+                    "Informational",
+                )
+            ),
+            confidence=str(
+                data.get(
+                    "confidence",
+                    "Informational",
+                )
+            ),
+            status=str(
+                data.get(
+                    "status",
+                    "Pending",
+                )
+            ),
+            target=data.get("target"),
+            host=data.get("host"),
+            port=data.get("port"),
+            url=data.get("url"),
+            parameter=data.get("parameter"),
+            evidence=data.get("evidence"),
+            source_tool=str(
+                data.get(
+                    "source_tool",
+                    "",
+                )
+            ),
+            detection_method=str(
+                data.get(
+                    "detection_method",
+                    "",
+                )
+            ),
+            cwe=data.get("cwe"),
+            cve=data.get("cve"),
+            references=list(
+                data.get(
+                    "references",
+                    [],
+                )
+                or []
+            ),
+            metadata=dict(
+                data.get(
+                    "metadata",
+                    {},
+                )
+                or {}
+            ),
+        )
+
+    def parse(
+        self,
+        execution_result: Any,
+        ctx: Mapping[str, Any],
+    ) -> list[CollectorObservation]:
+        """
+        Parse an already-completed Subhunt execution result.
+
+        The parser is evidence-only. It extracts stdout, feeds it through the
+        existing Subhunt normalization logic, and exposes the result as
+        universal collector observations.
+        """
+
+        context = dict(ctx or {})
+        output = ""
+
+        if isinstance(
+            execution_result,
+            Mapping,
+        ):
+            output = (
+                execution_result.get(
+                    "stdout",
+                    "",
+                )
+                or execution_result.get(
+                    "output",
+                    "",
+                )
+                or ""
+            )
+        else:
+            output = getattr(
+                execution_result,
+                "stdout",
+                "",
+            ) or ""
+
+        target = str(
+            context.get(
+                "target",
+                "",
+            )
+            or ""
+        ).strip()
+
+        metadata = context.get(
+            "metadata",
+            {}
+        )
+
+        findings = self.collect_findings(
+            str(output),
+            target=target,
+            metadata=(
+                metadata
+                if isinstance(
+                    metadata,
+                    Mapping,
+                )
+                else None
+            ),
+        )
+
+        return [
+            self._finding_to_observation(
+                finding
+            )
+            for finding in findings
+        ]
+
+    def collect_findings(
         self,
         output: Any,
         *,
@@ -259,7 +547,9 @@ class SubhuntCollector:
             Deterministically ordered list of normalized Finding objects.
         """
 
-        target = _text(target)
+        target = _text(
+            target
+        )
 
         observation_time = _timestamp(
             timestamp
@@ -269,7 +559,7 @@ class SubhuntCollector:
             metadata
         )
 
-        records = self.parse(
+        records = self._parse_output(
             output
         )
 
@@ -281,6 +571,7 @@ class SubhuntCollector:
             records,
             start=1,
         ):
+
             subdomain = self._record_subdomain(
                 record
             )
@@ -320,45 +611,49 @@ class SubhuntCollector:
                 index,
             )
 
+            finding_data = {
+                "title": (
+                    f"Discovered Subdomain: "
+                    f"{subdomain}"
+                ),
+                "category": FINDING_CATEGORY,
+                "severity": DEFAULT_SEVERITY_VALUE,
+                "confidence": DEFAULT_CONFIDENCE_VALUE,
+                "target": target,
+                "host": subdomain,
+                "port": None,
+                "url": None,
+                "parameter": None,
+                "description": (
+                    "Subhunt discovered the subdomain "
+                    f"{subdomain} through active "
+                    "wordlist-based subdomain enumeration."
+                ),
+                "evidence": evidence,
+                "source_tool": SOURCE_TOOL,
+                "detection_method": DETECTION_METHOD,
+                "timestamp": observation_time,
+                "references": [],
+                "impact": (
+                    "The discovered hostname expands the "
+                    "identified attack surface and may expose "
+                    "additional services or applications."
+                ),
+                "remediation": "",
+                "status": DEFAULT_STATUS_VALUE,
+                "metadata": finding_metadata,
+            }
+
             findings.append(
-                Finding(
+                Finding.from_mapping(
+                    finding_data,
                     finding_id=finding_id,
-                    title=(
-                        f"Discovered Subdomain: "
-                        f"{subdomain}"
-                    ),
-                    category=FINDING_CATEGORY,
-                    severity=DEFAULT_SEVERITY_VALUE,
-                    confidence=DEFAULT_CONFIDENCE_VALUE,
-                    target=target,
-                    host=subdomain,
-                    port=None,
-                    url=None,
-                    parameter=None,
-                    description=(
-                        "Subhunt discovered the subdomain "
-                        f"{subdomain} through active "
-                        "wordlist-based subdomain enumeration."
-                    ),
-                    evidence=evidence,
-                    source_tool=SOURCE_TOOL,
-                    detection_method=DETECTION_METHOD,
-                    timestamp=observation_time,
-                    references=[],
-                    impact=(
-                        "The discovered hostname expands the "
-                        "identified attack surface and may expose "
-                        "additional services or applications."
-                    ),
-                    remediation="",
-                    status=DEFAULT_STATUS_VALUE,
-                    metadata=finding_metadata,
                 )
             )
 
         return findings
 
-    def parse(
+    def _parse_output(
         self,
         output: Any,
     ) -> list[Any]:
@@ -378,6 +673,7 @@ class SubhuntCollector:
             output,
             bytes,
         ):
+
             output = output.decode(
                 "utf-8",
                 errors="replace",
@@ -387,24 +683,25 @@ class SubhuntCollector:
             output,
             str,
         ):
+
             return self._parse_text(
                 output
             )
 
         if isinstance(
+            output,
             Mapping,
-            type,
         ):
-            if isinstance(
-                output,
-                Mapping,
-            ):
-                return [output]
+
+            return [
+                output
+            ]
 
         if isinstance(
             output,
             Iterable,
         ):
+
             return list(
                 output
             )
@@ -434,8 +731,9 @@ class SubhuntCollector:
         findings: list[Finding] = []
 
         for output in outputs:
+
             findings.extend(
-                self.collect(
+                self.collect_findings(
                     output,
                     target=target,
                     timestamp=timestamp,
@@ -460,12 +758,31 @@ class SubhuntCollector:
 
         Subhunt results are expected to be line-oriented. Informational,
         progress and empty lines are filtered conservatively.
+
+        ANSI terminal formatting and successful-result markers are removed
+        before records reach hostname normalization.
         """
 
         records: list[str] = []
 
         for line in output.splitlines():
-            value = line.strip()
+
+            value = _strip_ansi(
+                line
+            ).strip()
+
+            if not value:
+                continue
+
+            # Successful Subhunt lines are commonly emitted as:
+            #
+            #     [+] api.example.com
+            #
+            if value.startswith(
+                "[+]"
+            ):
+
+                value = value[3:].strip()
 
             if not value:
                 continue
@@ -531,6 +848,7 @@ class SubhuntCollector:
             record,
             Mapping,
         ):
+
             for key in (
                 "subdomain",
                 "host",
@@ -539,11 +857,14 @@ class SubhuntCollector:
                 "name",
                 "target",
             ):
+
                 if key not in record:
                     continue
 
                 value = _normalize_subdomain(
-                    record.get(key)
+                    record.get(
+                        key
+                    )
                 )
 
                 if value:
@@ -567,12 +888,17 @@ class SubhuntCollector:
             record,
             Mapping,
         ):
+
             return {
-                "raw": dict(record),
+                "raw": dict(
+                    record
+                ),
             }
 
         return {
-            "raw": _text(record),
+            "raw": _text(
+                record
+            ),
         }
 
     ###########################################################################
@@ -643,6 +969,7 @@ class SubhuntCollector:
         seen: set[str] = set()
 
         for finding in findings:
+
             host = _normalize_subdomain(
                 getattr(
                     finding,
@@ -654,6 +981,7 @@ class SubhuntCollector:
             key = host.lower()
 
             if key:
+
                 if key in seen:
                     continue
 
@@ -694,7 +1022,7 @@ def collect_subhunt_findings(
         else SubhuntCollector()
     )
 
-    return collector.collect(
+    return collector.collect_findings(
         output,
         target=target,
         timestamp=timestamp,

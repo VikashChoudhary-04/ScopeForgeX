@@ -33,7 +33,7 @@ in the workflow.
 
 No analyzer is added merely to duplicate an external tool.
 
-v1.2.0
+v1.3.0
 """
 
 from scopeforgex.analyzers.api import (
@@ -47,8 +47,9 @@ from scopeforgex.analyzers.api import (
 
 from scopeforgex.analyzers.cookies import (
     CookieObservation,
-    CookieSecurityAnalyzer,
+    CookieAnalyzer,
     CookiesAnalyzer,
+    CookieSecurityAnalyzer,
     INSECURE_COOKIE,
     MISSING_HTTPONLY,
     MISSING_SECURE,
@@ -56,8 +57,10 @@ from scopeforgex.analyzers.cookies import (
 )
 
 from scopeforgex.analyzers.cors import (
-    CORSFinding,
+    CORSAnalyzer,
+    CORSObservation,
     CORSSecurityAnalyzer,
+    CORSFinding,
     CORS_MISCONFIGURATION,
 )
 
@@ -103,6 +106,7 @@ __all__ = [
 
     # Cookie analyzer
     "CookieObservation",
+    "CookieAnalyzer",
     "CookiesAnalyzer",
     "CookieSecurityAnalyzer",
     "INSECURE_COOKIE",
@@ -111,8 +115,10 @@ __all__ = [
     "WEAK_SAMESITE",
 
     # CORS analyzer
-    "CORSFinding",
+    "CORSAnalyzer",
+    "CORSObservation",
     "CORSSecurityAnalyzer",
+    "CORSFinding",
     "CORS_MISCONFIGURATION",
 
     # HTTP security header analyzer

@@ -15,6 +15,7 @@ The workflow engine is responsible for:
 - Executing tools in canonical phase order
 - Preserving structured execution results
 - Maintaining shared runtime context
+- Maintaining assessment-wide collector and finding state
 - Running final reporting
 - Building and storing the canonical workflow result
 - Persisting workflow state
@@ -57,11 +58,15 @@ TOOL EXECUTOR
   ↓
 EXECUTION RESULT
   ↓
-RUNTIME STATE
+COLLECTOR
   ↓
-COLLECTORS / FINDING ENGINE
+ANALYSIS PIPELINE
   ↓
-CORRELATION / DEDUPLICATION
+NORMALIZED / DEDUPLICATED FINDINGS
+  ↓
+CORRELATION
+  ↓
+WORKFLOW CONTEXT
   ↓
 REPORTING
   ↓
@@ -101,10 +106,10 @@ from scopeforgex.runtime.state import RuntimeState
 from scopeforgex.runtime.tool_executor import ToolExecutor
 from scopeforgex.state import save_last_run
 from scopeforgex.ui import (
+    assessment_summary,
     info,
     ok,
     stage,
-    summary_table,
     warn,
 )
 from scopeforgex.utils import load_yaml
@@ -144,6 +149,7 @@ def _load_profiles() -> dict[str, Any]:
         with as_file(
             PROFILE_RESOURCE
         ) as path:
+
             configuration = load_yaml(
                 str(path)
             )
@@ -152,6 +158,7 @@ def _load_profiles() -> dict[str, Any]:
         FileNotFoundError,
         ModuleNotFoundError,
     ) as exc:
+
         raise SystemExit(
             "ScopeForgeX profile configuration could not be loaded: "
             f"{exc}"
@@ -191,6 +198,7 @@ def _load_profile(
     profiles = _load_profiles()
 
     if profile_name not in profiles:
+
         available = ", ".join(
             sorted(
                 profiles.keys()
@@ -211,7 +219,7 @@ def _load_profile(
         dict,
     ):
         raise SystemExit(
-            f"Invalid configuration for profile: "
+            "Invalid configuration for profile: "
             f"{profile_name}"
         )
 
@@ -253,6 +261,7 @@ def _tool_capability(
     )
 
     if capability is None:
+
         definition = getattr(
             tool,
             "definition",
@@ -293,10 +302,12 @@ def _tool_requires_confirmation(
     if callable(
         value
     ):
+
         try:
             return bool(
                 value()
             )
+
         except TypeError:
             return False
 
@@ -334,9 +345,13 @@ def _tool_phase(
         return None
 
     try:
+
         return AssessmentPhase(
-            str(value).strip().lower()
+            str(
+                value
+            ).strip().lower()
         )
+
     except ValueError:
         return None
 
@@ -355,11 +370,20 @@ def _phase_sections() -> dict[
     """
 
     return {
-        AssessmentPhase.RECONNAISSANCE: "reconnaissance",
-        AssessmentPhase.ENUMERATION: "enumeration",
-        AssessmentPhase.VULNERABILITY_ASSESSMENT: "vulnerability",
-        AssessmentPhase.VULNERABILITY_VALIDATION: "validation",
-        AssessmentPhase.CREDENTIAL_ASSESSMENT: "credential",
+        AssessmentPhase.RECONNAISSANCE:
+            "reconnaissance",
+
+        AssessmentPhase.ENUMERATION:
+            "enumeration",
+
+        AssessmentPhase.VULNERABILITY_ASSESSMENT:
+            "vulnerability",
+
+        AssessmentPhase.VULNERABILITY_VALIDATION:
+            "validation",
+
+        AssessmentPhase.CREDENTIAL_ASSESSMENT:
+            "credential",
     }
 
 
@@ -524,6 +548,7 @@ def _tool_profile_options(
         profile_tools,
         dict,
     ):
+
         configured = profile_tools.get(
             tool_name,
             {},
@@ -607,8 +632,7 @@ def _create_tool_context(
 
     Adapters declaring ``host_or_url_list`` as their canonical input type
     receive the workflow target automatically when no explicit input_data
-    has been supplied. This allows pipeline-aware tools such as Nuclei to
-    operate correctly during ordinary profile execution.
+    has been supplied.
     """
 
     tool_name = _tool_name(
@@ -665,6 +689,7 @@ def _create_tool_context(
             section,
             dict,
         ):
+
             lookup_name = (
                 "testssl"
                 if tool_name == "testssl.sh"
@@ -718,6 +743,7 @@ def _create_tool_context(
     )
 
     if explicit_input:
+
         input_data = explicit_input
 
     elif getattr(
@@ -725,11 +751,13 @@ def _create_tool_context(
         "input_type",
         "",
     ) == "host_or_url_list":
+
         input_data = (
             target,
         )
 
     else:
+
         input_data = ()
 
     return ToolContext(
@@ -755,6 +783,10 @@ def _build_tool_context(
 ) -> dict[str, Any]:
     """
     Build the generic execution context passed to ToolExecutor.
+
+    The context intentionally retains references to the workflow-owned
+    assessment collections so ToolExecutor can update the canonical state
+    without creating a second workflow-level finding engine.
     """
 
     tool_ctx = dict(
@@ -790,6 +822,7 @@ def _build_tool_context(
             section,
             dict,
         ):
+
             lookup_name = (
                 "testssl"
                 if tool_name == "testssl.sh"
@@ -820,13 +853,17 @@ def _build_tool_context(
         configured_options = {}
 
     tool_ctx["tool"] = tool_name
+
     tool_ctx["capability"] = capability
+
     tool_ctx["tool_options"] = dict(
         configured_options
     )
+
     tool_ctx["options"] = dict(
         configured_options
     )
+
     tool_ctx["tool_configuration"] = configuration
 
     tool_ctx.setdefault(
@@ -866,7 +903,9 @@ def _record_context_result(
         results,
         list,
     ):
+
         results = []
+
         ctx[
             "execution_results"
         ] = results
@@ -874,6 +913,244 @@ def _record_context_result(
     results.append(
         result
     )
+
+
+def _sync_executor_state(
+    ctx: dict[str, Any],
+    executor: ToolExecutor,
+) -> None:
+    """
+    Synchronize assessment-wide executor state into workflow context.
+
+    ToolExecutor remains the owner of collection and finding processing.
+    WorkflowEngine only exposes the resulting state to downstream stages.
+
+    The workflow-owned containers are updated in place so any shallow
+    execution contexts created from ``ctx`` continue to reference the same
+    collections.
+    """
+
+    collector_results = ctx.get(
+        "collector_results"
+    )
+
+    if not isinstance(
+        collector_results,
+        list,
+    ):
+
+        collector_results = []
+
+        ctx[
+            "collector_results"
+        ] = collector_results
+
+    collector_results.clear()
+
+    collector_results.extend(
+        executor.collector_results
+    )
+
+    native_analyzer_results = ctx.get(
+        "native_analyzer_results"
+    )
+
+    if not isinstance(
+        native_analyzer_results,
+        list,
+    ):
+
+        native_analyzer_results = []
+
+        ctx[
+            "native_analyzer_results"
+        ] = native_analyzer_results
+
+    native_analyzer_results.clear()
+
+    native_analyzer_results.extend(
+        executor.native_analyzer_results
+    )
+
+    vulnerability_intelligence_results = ctx.get(
+        "vulnerability_intelligence_results"
+    )
+
+    if not isinstance(
+        vulnerability_intelligence_results,
+        list,
+    ):
+        vulnerability_intelligence_results = []
+        ctx[
+            "vulnerability_intelligence_results"
+        ] = vulnerability_intelligence_results
+
+    vulnerability_intelligence_results.clear()
+    vulnerability_intelligence_results.extend(
+        executor.vulnerability_intelligence_results
+    )
+
+    findings = ctx.get(
+        "findings"
+    )
+
+    if not isinstance(
+        findings,
+        list,
+    ):
+
+        findings = []
+
+        ctx[
+            "findings"
+        ] = findings
+
+    findings.clear()
+
+    findings.extend(
+        executor.findings
+    )
+
+    correlation_groups = ctx.get(
+        "correlation_groups"
+    )
+
+    if not isinstance(
+        correlation_groups,
+        list,
+    ):
+
+        correlation_groups = []
+
+        ctx[
+            "correlation_groups"
+        ] = correlation_groups
+
+    correlation_groups.clear()
+
+    correlation_groups.extend(
+        executor.correlation_groups
+    )
+
+    # ``correlated_findings`` is intentionally the same final Finding set.
+    # Correlation creates relationships between findings; it does not replace
+    # or merge the distinct Finding objects.
+    correlated_findings = ctx.get(
+        "correlated_findings"
+    )
+
+    if not isinstance(
+        correlated_findings,
+        list,
+    ):
+
+        correlated_findings = []
+
+        ctx[
+            "correlated_findings"
+        ] = correlated_findings
+
+    correlated_findings.clear()
+
+    correlated_findings.extend(
+        executor.findings
+    )
+
+    analysis_result = executor.analysis_result
+
+    analysis_context = ctx.get(
+        "analysis_result"
+    )
+
+    if not isinstance(
+        analysis_context,
+        dict,
+    ):
+
+        analysis_context = {}
+
+        ctx[
+            "analysis_result"
+        ] = analysis_context
+
+    analysis_context.clear()
+
+    if analysis_result is not None:
+
+        as_dict = getattr(
+            analysis_result,
+            "as_dict",
+            None,
+        )
+
+        if callable(
+            as_dict
+        ):
+
+            try:
+
+                serialized = as_dict()
+
+                if isinstance(
+                    serialized,
+                    dict,
+                ):
+                    analysis_context.update(
+                        serialized
+                    )
+
+            except Exception:
+                pass
+
+        if not analysis_context:
+
+            for key in (
+                "input_count",
+                "finding_count",
+                "duplicate_count",
+                "error_count",
+                "errors",
+                "metadata",
+            ):
+
+                if hasattr(
+                    analysis_result,
+                    key,
+                ):
+                    analysis_context[
+                        key
+                    ] = getattr(
+                        analysis_result,
+                        key,
+                    )
+
+    analysis_context[
+        "findings"
+    ] = [
+        finding.as_dict()
+        if hasattr(
+            finding,
+            "as_dict",
+        )
+        else finding
+        for finding in executor.findings
+    ]
+
+    analysis_context[
+        "correlation_groups"
+    ] = [
+        group.as_dict()
+        if hasattr(
+            group,
+            "as_dict",
+        )
+        else group
+        for group in executor.correlation_groups
+    ]
+
+    ctx[
+        "analysis"
+    ] = analysis_context
 
 
 def _record_phase_result(
@@ -898,17 +1175,21 @@ def _record_phase_result(
     }
 
     if ExecutionStatus.FAILED.value in statuses:
+
         stage_status = ExecutionStatus.FAILED
 
     elif statuses and statuses <= {
         ExecutionStatus.SKIPPED.value,
     }:
+
         stage_status = ExecutionStatus.SKIPPED
 
     elif ExecutionStatus.SUCCESS.value in statuses:
+
         stage_status = ExecutionStatus.SUCCESS
 
     else:
+
         stage_status = ExecutionStatus.FAILED
 
     stage_result = StageResult(
@@ -937,6 +1218,20 @@ def _record_phase_result(
 class WorkflowEngine:
     """
     Capability-oriented ScopeForgeX workflow engine.
+
+    WorkflowEngine owns orchestration only.
+
+    ToolExecutor remains responsible for:
+
+    - execution
+    - collection
+    - finding normalization
+    - risk classification
+    - deduplication
+    - correlation
+
+    The workflow exposes the resulting assessment state to reporting and
+    downstream consumers through ``ctx``.
     """
 
     def __init__(
@@ -966,13 +1261,38 @@ class WorkflowEngine:
             runtime_state=self.runtime,
         )
 
+        # These containers belong to the workflow assessment state.
+        #
+        # ToolExecutor receives shallow copies of ctx and therefore keeps
+        # references to these lists while processing collector output.
         self.ctx: dict[str, Any] = {
             "profile": profile_name,
+
             "profile_config": self.profile,
+
             "runtime": self.runtime,
+
             "workflow_start_time": time.time(),
+
             "execution_results": [],
+
             "stage_results": [],
+
+            "collector_results": [],
+
+            "native_analyzer_results": [],
+
+            "vulnerability_intelligence_results": [],
+
+            "findings": [],
+
+            "correlation_groups": [],
+
+            "correlated_findings": [],
+
+            "analysis_result": {},
+
+            "analysis": {},
         }
 
     def _build_tool_context(
@@ -1018,37 +1338,58 @@ class WorkflowEngine:
             self.profile_name
         )
 
-        self.ctx["profile"] = (
-            self.profile_name
+        self.ctx[
+            "profile"
+        ] = self.profile_name
+
+        self.ctx[
+            "profile_config"
+        ] = self.profile
+
+        self.ctx[
+            "runtime"
+        ] = self.runtime
+
+        # Ensure all downstream assessment containers are concrete lists.
+        list_keys = (
+            "execution_results",
+            "stage_results",
+            "collector_results",
+            "native_analyzer_results",
+            "vulnerability_intelligence_results",
+            "findings",
+            "correlation_groups",
+            "correlated_findings",
         )
 
-        self.ctx["profile_config"] = (
-            self.profile
-        )
+        for key in list_keys:
 
-        self.ctx["runtime"] = (
-            self.runtime
-        )
+            if not isinstance(
+                self.ctx.get(
+                    key
+                ),
+                list,
+            ):
 
-        if not isinstance(
-            self.ctx.get(
-                "execution_results"
-            ),
-            list,
+                self.ctx[
+                    key
+                ] = []
+
+        for key in (
+            "analysis_result",
+            "analysis",
         ):
-            self.ctx[
-                "execution_results"
-            ] = []
 
-        if not isinstance(
-            self.ctx.get(
-                "stage_results"
-            ),
-            list,
-        ):
-            self.ctx[
-                "stage_results"
-            ] = []
+            if not isinstance(
+                self.ctx.get(
+                    key
+                ),
+                dict,
+            ):
+
+                self.ctx[
+                    key
+                ] = {}
 
     def _sync_runtime_identity(
         self,
@@ -1063,6 +1404,7 @@ class WorkflowEngine:
         )
 
         if target is not None:
+
             self.runtime.target = str(
                 target
             )
@@ -1101,7 +1443,7 @@ class WorkflowEngine:
             owns command construction.
 
         ToolExecutor:
-            owns process execution.
+            owns process execution, collection and finding analysis.
         """
 
         name = _tool_name(
@@ -1113,18 +1455,20 @@ class WorkflowEngine:
         )
 
         if not name:
+
             raise ValueError(
                 "Selected tool definition has no valid name."
             )
 
         if not capability:
+
             raise ValueError(
                 f"Tool '{name}' has no canonical capability metadata."
             )
 
-        tool_context = _create_tool_context(
-            ctx,
+        tool_context = self._create_tool_context(
             tool,
+            ctx,
             profile,
         )
 
@@ -1133,26 +1477,38 @@ class WorkflowEngine:
             context=tool_context,
         )
 
-        execution_context = _build_tool_context(
+        execution_context = self._build_tool_context(
             ctx,
             tool,
             profile,
         )
 
-        return self.executor.execute(
+        result = self.executor.execute(
             adapter,
             execution_context,
         )
+
+        # Synchronize executor-owned assessment state immediately after the
+        # tool completes. This makes findings from the current and all prior
+        # tools available to downstream workflow stages.
+        _sync_executor_state(
+            ctx,
+            self.executor,
+        )
+
+        return result
 
     def _run_assessment_tools(
         self,
     ) -> None:
 
         if not self.selected_tools:
+
             warn(
                 "No assessment tools are enabled "
                 "for this profile."
             )
+
             return
 
         phase_groups: dict[
@@ -1208,6 +1564,7 @@ class WorkflowEngine:
                     AssessmentPhase.SCOPE_AUTHORIZATION,
                     AssessmentPhase.REPORTING,
                 }:
+
                     continue
 
                 tools = phase_groups.get(
@@ -1249,6 +1606,7 @@ class WorkflowEngine:
                     if _tool_requires_confirmation(
                         tool
                     ):
+
                         info(
                             (
                                 f"{name} requires "
@@ -1303,6 +1661,13 @@ class WorkflowEngine:
                         "last_result"
                     ] = result
 
+                    # A failure generated before reaching _execute_tool() does
+                    # not pass through executor state synchronization.
+                    _sync_executor_state(
+                        self.ctx,
+                        self.executor,
+                    )
+
                     progress.advance(
                         task
                     )
@@ -1329,7 +1694,9 @@ class WorkflowEngine:
                         stage_results,
                         list,
                     ):
+
                         stage_results = []
+
                         self.ctx[
                             "stage_results"
                         ] = stage_results
@@ -1341,6 +1708,13 @@ class WorkflowEngine:
     def _run_reporting(
         self,
     ) -> None:
+
+        # Synchronize one final time immediately before reporting so Stage 6
+        # always receives the complete assessment-wide state.
+        _sync_executor_state(
+            self.ctx,
+            self.executor,
+        )
 
         stage(
             "PHASE 7 — REPORTING",
@@ -1374,11 +1748,17 @@ class WorkflowEngine:
         self,
     ) -> None:
 
+        _sync_executor_state(
+            self.ctx,
+            self.executor,
+        )
+
         self._sync_runtime_identity()
 
         if self.ctx.get(
             "workflow_end_time"
         ) is None:
+
             self.ctx[
                 "workflow_end_time"
             ] = time.time()
@@ -1431,6 +1811,9 @@ def run_profile(
 ) -> dict[str, Any]:
     """
     Execute a configured ScopeForgeX assessment profile.
+
+    The final terminal presentation is security-first: findings and risk are
+    shown before execution telemetry, with direct paths to both report views.
     """
 
     engine = WorkflowEngine(
@@ -1443,6 +1826,7 @@ def run_profile(
         save_last_run(
             ctx
         )
+
     except Exception as exc:
         warn(
             f"Could not persist last-run state: {exc}"
@@ -1452,41 +1836,8 @@ def run_profile(
         "Workflow completed ✅"
     )
 
-    summary_table(
-        "ScopeForgeX Summary",
-        [
-            (
-                "Profile",
-                profile_name,
-            ),
-            (
-                "Target Type",
-                ctx.get(
-                    "target_type",
-                    "-",
-                ),
-            ),
-            (
-                "Target",
-                ctx.get(
-                    "target",
-                    "-",
-                ),
-            ),
-            (
-                "Tools Executed",
-                len(
-                    engine.selected_tools
-                ),
-            ),
-            (
-                "Output Directory",
-                ctx.get(
-                    "outdir",
-                    "-",
-                ),
-            ),
-        ],
+    assessment_summary(
+        ctx
     )
 
     return ctx

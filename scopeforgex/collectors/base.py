@@ -38,8 +38,11 @@ Design Principles
 - Each external tool gets its own collector implementation.
 - Native ScopeForgeX analyzers may also use this abstraction.
 - Collector failures must not corrupt the original execution result.
+- Collector observations support both attack-surface data and richer
+  security-finding metadata.
+- ``BaseCollector`` remains a compatibility alias for ``CollectorBase``.
 
-v1.2.0
+v3.0.0
 """
 
 from __future__ import annotations
@@ -62,6 +65,10 @@ class CollectorObservation:
 
     An observation is not necessarily a vulnerability.
 
+    The schema intentionally supports both lightweight attack-surface
+    observations and richer security observations that already have finding
+    metadata available from the source tool.
+
     Examples:
 
         Nmap
@@ -78,14 +85,37 @@ class CollectorObservation:
 
         Nuclei
             VULNERABILITY
-
-    The finding engine is responsible for converting observations into
-    canonical ScopeForgeX Findings.
     """
+
+    # ========================================================================
+    # Observation Identity
+    # ========================================================================
 
     observation_type: str
 
     value: Any = None
+
+    # ========================================================================
+    # Finding-Compatible Metadata
+    # ========================================================================
+
+    title: str = ""
+
+    description: str = ""
+
+    impact: str = ""
+
+    remediation: str = ""
+
+    severity: str = "Informational"
+
+    confidence: str = "Informational"
+
+    status: str = "Pending"
+
+    # ========================================================================
+    # Affected Asset
+    # ========================================================================
 
     target: str | None = None
 
@@ -97,19 +127,146 @@ class CollectorObservation:
 
     parameter: str | None = None
 
+    # ========================================================================
+    # Evidence / Provenance
+    # ========================================================================
+
     evidence: Any = None
 
     source_tool: str = ""
 
     detection_method: str = ""
 
-    confidence: str = "informational"
+    # ========================================================================
+    # Security References
+    # ========================================================================
+
+    cwe: str | None = None
+
+    cve: str | None = None
+
+    references: list[str] = field(
+        default_factory=list
+    )
+
+    # ========================================================================
+    # Additional Metadata
+    # ========================================================================
 
     metadata: dict[str, Any] = field(
         default_factory=dict
     )
 
-    def as_dict(self) -> dict[str, Any]:
+    def __post_init__(
+        self,
+    ) -> None:
+        """
+        Normalize basic observation fields.
+
+        The collector remains intentionally permissive: tool-specific
+        collectors may supply richer values and the Finding Normalizer is
+        responsible for canonical finding normalization.
+        """
+
+        self.observation_type = str(
+            self.observation_type
+        ).strip()
+
+        self.title = str(
+            self.title or ""
+        ).strip()
+
+        self.description = str(
+            self.description or ""
+        ).strip()
+
+        self.impact = str(
+            self.impact or ""
+        ).strip()
+
+        self.remediation = str(
+            self.remediation or ""
+        ).strip()
+
+        self.severity = str(
+            self.severity or "Informational"
+        ).strip()
+
+        self.confidence = str(
+            self.confidence or "Informational"
+        ).strip()
+
+        self.status = str(
+            self.status or "Pending"
+        ).strip()
+
+        self.source_tool = str(
+            self.source_tool or ""
+        ).strip()
+
+        self.detection_method = str(
+            self.detection_method or ""
+        ).strip()
+
+        if self.target is not None:
+            self.target = str(
+                self.target
+            ).strip()
+
+        if self.host is not None:
+            self.host = str(
+                self.host
+            ).strip()
+
+        if self.url is not None:
+            self.url = str(
+                self.url
+            ).strip()
+
+        if self.parameter is not None:
+            self.parameter = str(
+                self.parameter
+            ).strip()
+
+        if self.cwe is not None:
+            self.cwe = str(
+                self.cwe
+            ).strip() or None
+
+        if self.cve is not None:
+            self.cve = str(
+                self.cve
+            ).strip() or None
+
+        if self.references is None:
+            self.references = []
+
+        else:
+            self.references = [
+                str(reference).strip()
+                for reference in self.references
+                if str(reference).strip()
+            ]
+
+        if self.metadata is None:
+            self.metadata = {}
+
+        elif not isinstance(
+            self.metadata,
+            dict,
+        ):
+            self.metadata = dict(
+                self.metadata
+            )
+
+        else:
+            self.metadata = dict(
+                self.metadata
+            )
+
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
         """
         Serialize the observation.
         """
@@ -119,6 +276,13 @@ class CollectorObservation:
                 self.observation_type
             ),
             "value": self.value,
+            "title": self.title,
+            "description": self.description,
+            "impact": self.impact,
+            "remediation": self.remediation,
+            "severity": self.severity,
+            "confidence": self.confidence,
+            "status": self.status,
             "target": self.target,
             "host": self.host,
             "port": self.port,
@@ -129,7 +293,11 @@ class CollectorObservation:
             "detection_method": (
                 self.detection_method
             ),
-            "confidence": self.confidence,
+            "cwe": self.cwe,
+            "cve": self.cve,
+            "references": list(
+                self.references
+            ),
             "metadata": dict(
                 self.metadata
             ),
@@ -176,7 +344,9 @@ class CollectorResult:
     )
 
     @property
-    def success(self) -> bool:
+    def success(
+        self,
+    ) -> bool:
         """
         Return whether collection completed without collector errors.
         """
@@ -184,7 +354,9 @@ class CollectorResult:
         return not self.errors
 
     @property
-    def observation_count(self) -> int:
+    def observation_count(
+        self,
+    ) -> int:
         """
         Return the number of collected observations.
         """
@@ -200,6 +372,15 @@ class CollectorResult:
         """
         Add one structured observation.
         """
+
+        if not isinstance(
+            observation,
+            CollectorObservation,
+        ):
+            raise TypeError(
+                "CollectorResult observations must be "
+                "CollectorObservation objects."
+            )
 
         self.observations.append(
             observation
@@ -252,7 +433,9 @@ class CollectorResult:
                 normalized
             )
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
         """
         Serialize the collector result.
         """
@@ -289,9 +472,9 @@ class CollectorResult:
 
 class CollectorBase(ABC):
     """
-    Abstract base class for all ScopeForgeX collectors.
+    Abstract base class for ScopeForgeX collectors.
 
-    A collector consumes already-produced evidence.
+    A collector consumes already-produced execution evidence.
 
     It must never invoke an external executable itself.
     """
@@ -311,7 +494,27 @@ class CollectorBase(ABC):
     ) -> None:
         """
         Validate collector metadata at construction time.
+
+        A number of migrated collectors historically defined ``name`` but
+        omitted ``tool``. For compatibility, the canonical tool name defaults
+        to ``name`` when necessary.
         """
+
+        if not self.name:
+            raise ValueError(
+                "Collector name cannot be empty."
+            )
+
+        if not self.tool:
+            self.tool = self.name
+
+        self.name = str(
+            self.name
+        ).strip()
+
+        self.tool = str(
+            self.tool
+        ).strip()
 
         if not self.name:
             raise ValueError(
@@ -328,7 +531,9 @@ class CollectorBase(ABC):
     # ------------------------------------------------------------------
 
     @property
-    def collector_name(self) -> str:
+    def collector_name(
+        self,
+    ) -> str:
         """
         Return the canonical collector name.
         """
@@ -336,14 +541,18 @@ class CollectorBase(ABC):
         return self.name
 
     @property
-    def source_tool(self) -> str:
+    def source_tool(
+        self,
+    ) -> str:
         """
         Return the canonical source tool name.
         """
 
         return self.tool
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
         """
         Return collector metadata.
         """
@@ -483,7 +692,7 @@ class CollectorBase(ABC):
         """
         Collect structured observations from an execution result.
 
-        This is the public collector entry point.
+        This is the canonical CollectorBase entry point.
         """
 
         self.validate_input(
@@ -515,6 +724,9 @@ class CollectorBase(ABC):
 
             return result
 
+        if observations is None:
+            observations = []
+
         for observation in observations:
 
             if not isinstance(
@@ -533,15 +745,19 @@ class CollectorBase(ABC):
                 observation
             )
 
-        result.source_files.extend(
-            str(path)
-            for path in context.get(
-                "artifacts",
-                [],
+        for path in context.get(
+            "artifacts",
+            [],
+        ):
+
+            normalized = str(
+                path
             )
-            if str(path)
-            not in result.source_files
-        )
+
+            if normalized not in result.source_files:
+                result.source_files.append(
+                    normalized
+                )
 
         result.metadata.update(
             self.build_metadata(
@@ -598,6 +814,17 @@ class CollectorBase(ABC):
                 )
             ),
         }
+
+
+###############################################################################
+# Compatibility Alias
+###############################################################################
+
+
+# Several migrated collectors historically imported ``BaseCollector``.
+# Keep the alias so the canonical base class remains backwards compatible
+# while the project converges on ``CollectorBase``.
+BaseCollector = CollectorBase
 
 
 ###############################################################################
@@ -676,6 +903,7 @@ __all__ = [
     "CollectorObservation",
     "CollectorResult",
     "CollectorBase",
+    "BaseCollector",
     "read_text_file",
     "read_lines",
     "first_existing_artifact",

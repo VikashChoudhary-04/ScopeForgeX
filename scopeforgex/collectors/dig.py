@@ -65,6 +65,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
+from scopeforgex.collectors.base import (
+    CollectorBase,
+    CollectorObservation,
+)
 from scopeforgex.models.finding import Finding
 
 
@@ -210,9 +214,6 @@ def _is_record_type(value: str) -> bool:
 class DNSRecord:
     """
     Internal normalized representation of a DNS record.
-
-    This is deliberately kept separate from Finding so parsing remains
-    straightforward and deterministic before canonical Finding creation.
     """
 
     __slots__ = (
@@ -252,7 +253,7 @@ class DNSRecord:
 ###############################################################################
 
 
-class DigCollector:
+class DigCollector(CollectorBase):
     """
     Parse ``dig`` output into canonical ScopeForgeX findings.
 
@@ -261,6 +262,7 @@ class DigCollector:
     """
 
     name = "dig"
+    tool = "dig"
 
     description = (
         "Parse deterministic dig DNS inspection output into normalized "
@@ -272,10 +274,197 @@ class DigCollector:
     )
 
     ###########################################################################
-    # Public API
+    # Canonical Collector Contract
     ###########################################################################
 
-    def collect(
+    @staticmethod
+    def _finding_to_observation(
+        finding: Any,
+    ) -> CollectorObservation:
+        """
+        Convert a canonical Finding into a CollectorObservation.
+        """
+
+        data = (
+            finding.as_dict()
+            if hasattr(
+                finding,
+                "as_dict",
+            )
+            else finding
+        )
+
+        if not isinstance(
+            data,
+            Mapping,
+        ):
+            data = {}
+
+        return CollectorObservation(
+            observation_type=str(
+                data.get(
+                    "category",
+                    data.get(
+                        "type",
+                        "finding",
+                    ),
+                )
+            ),
+            value=(
+                data.get("value")
+                or data.get("host")
+                or data.get("url")
+                or data.get("title")
+            ),
+            title=str(
+                data.get("title", "")
+            ),
+            description=str(
+                data.get("description", "")
+            ),
+            impact=str(
+                data.get("impact", "")
+            ),
+            remediation=str(
+                data.get("remediation", "")
+            ),
+            severity=str(
+                data.get(
+                    "severity",
+                    "Informational",
+                )
+            ),
+            confidence=str(
+                data.get(
+                    "confidence",
+                    "Informational",
+                )
+            ),
+            status=str(
+                data.get(
+                    "status",
+                    "Pending",
+                )
+            ),
+            target=data.get("target"),
+            host=data.get("host"),
+            port=data.get("port"),
+            url=data.get("url"),
+            parameter=data.get("parameter"),
+            evidence=data.get("evidence"),
+            source_tool=str(
+                data.get(
+                    "source_tool",
+                    "",
+                )
+            ),
+            detection_method=str(
+                data.get(
+                    "detection_method",
+                    "",
+                )
+            ),
+            cwe=data.get("cwe"),
+            cve=data.get("cve"),
+            references=list(
+                data.get(
+                    "references",
+                    [],
+                )
+                or []
+            ),
+            metadata=dict(
+                data.get(
+                    "metadata",
+                    {},
+                )
+                or {}
+            ),
+        )
+
+    def parse(
+        self,
+        execution_result: Any,
+        ctx: Mapping[str, Any],
+    ) -> list[CollectorObservation]:
+        """
+        Parse an already-completed dig execution result.
+
+        No network requests or command execution occur here.
+        """
+
+        context = dict(ctx or {})
+        output = ""
+
+        if isinstance(
+            execution_result,
+            Mapping,
+        ):
+            output = (
+                execution_result.get(
+                    "stdout",
+                    "",
+                )
+                or execution_result.get(
+                    "output",
+                    "",
+                )
+                or ""
+            )
+        else:
+            output = getattr(
+                execution_result,
+                "stdout",
+                "",
+            ) or ""
+
+        target = str(
+            context.get(
+                "target",
+                "",
+            )
+            or ""
+        ).strip()
+
+        query_type = context.get(
+            "query_type"
+        )
+
+        metadata = context.get(
+            "metadata",
+            {}
+        )
+
+        findings = self.collect_findings(
+            str(output),
+            target=target,
+            query_type=(
+                str(query_type)
+                if query_type
+                else None
+            ),
+            metadata=(
+                metadata
+                if isinstance(
+                    metadata,
+                    Mapping,
+                )
+                else None
+            ),
+        )
+
+        return [
+            self._finding_to_observation(
+                finding
+            )
+            for finding in findings
+        ]
+
+    ###########################################################################
+    # Existing Finding Collection API
+    ###########################################################################
+
+    def collect_findings(
         self,
         output: str,
         *,
@@ -285,31 +474,7 @@ class DigCollector:
         metadata: Mapping[str, Any] | None = None,
     ) -> list[Finding]:
         """
-        Parse raw ``dig`` output.
-
-        Args:
-            output:
-                Raw stdout produced by ``dig``.
-
-            target:
-                Assessment target.
-
-            query_type:
-                Optional DNS query type used for the request.
-
-            timestamp:
-                Observation timestamp. When omitted, the current UTC time is
-                used.
-
-            metadata:
-                Additional collector metadata.
-
-        Returns:
-            A deterministic list of canonical Finding objects.
-
-        Raises:
-            TypeError:
-                If output is not textual.
+        Parse raw ``dig`` output into canonical Finding objects.
         """
 
         if output is None:
@@ -320,10 +485,10 @@ class DigCollector:
             str,
         ):
             raise TypeError(
-                "DigCollector.collect() expects textual dig output."
+                "DigCollector.collect_findings() expects textual dig output."
             )
 
-        records = self.parse(
+        records = self._parse_output(
             output
         )
 
@@ -383,16 +548,12 @@ class DigCollector:
 
         return findings
 
-    def parse(
+    def _parse_output(
         self,
         output: str,
     ) -> list[DNSRecord]:
         """
         Parse raw ``dig`` output into normalized DNSRecord objects.
-
-        The parser primarily consumes ANSWER, AUTHORITY and ADDITIONAL
-        sections. It intentionally ignores comments, headers and diagnostic
-        lines.
         """
 
         if output is None:
@@ -403,11 +564,10 @@ class DigCollector:
             str,
         ):
             raise TypeError(
-                "DigCollector.parse() expects textual dig output."
+                "DigCollector._parse_output() expects textual dig output."
             )
 
         records: list[DNSRecord] = []
-
         section = ""
 
         for raw_line in output.splitlines():
@@ -461,9 +621,6 @@ class DigCollector:
     ) -> list[Finding]:
         """
         Parse multiple ``dig`` outputs.
-
-        Duplicate DNS observations across outputs are removed while preserving
-        deterministic input order.
         """
 
         if outputs is None:
@@ -477,7 +634,7 @@ class DigCollector:
 
         for output in outputs:
 
-            current = self.collect(
+            current = self.collect_findings(
                 output,
                 target=target,
                 query_type=query_type,
@@ -512,10 +669,6 @@ class DigCollector:
     def _section_from_header(
         line: str,
     ) -> str:
-        """
-        Identify the current ``dig`` output section.
-        """
-
         normalized = line.upper()
 
         if "ANSWER SECTION:" in normalized:
@@ -534,24 +687,9 @@ class DigCollector:
         cls,
         line: str,
     ) -> DNSRecord | None:
-        """
-        Parse a standard DNS presentation-format record.
-
-        Supported forms include:
-
-            name ttl IN A address
-            name IN A address
-            name ttl A address
-
-        Whitespace inside quoted TXT records is preserved as far as the
-        presentation format allows.
-        """
-
         tokens = line.split()
 
-        if len(
-            tokens
-        ) < 4:
+        if len(tokens) < 4:
             return None
 
         record_type_index = -1
@@ -575,9 +713,7 @@ class DigCollector:
         )
 
         name = tokens[0]
-
         ttl: int | None = None
-
         class_name = "IN"
 
         preceding = tokens[
@@ -626,10 +762,6 @@ class DigCollector:
         record_type: str,
         tokens: list[str],
     ) -> str:
-        """
-        Reconstruct the record RDATA value.
-        """
-
         if record_type == "TXT":
             return " ".join(
                 tokens
@@ -653,9 +785,6 @@ class DigCollector:
         timestamp: datetime,
         metadata: Mapping[str, Any] | None,
     ) -> Finding:
-        """
-        Convert one normalized DNSRecord into a canonical Finding.
-        """
 
         category = (
             CATEGORY_DNS_CONFIGURATION
@@ -670,10 +799,8 @@ class DigCollector:
         )
 
         description = (
-            f"The DNS record for "
-            f"{record.name} contains a "
-            f"{record.record_type} record "
-            f"with value "
+            f"The DNS record for {record.name} contains a "
+            f"{record.record_type} record with value "
             f"{record.value}."
         )
 
@@ -685,22 +812,16 @@ class DigCollector:
         }
 
         if record.ttl is not None:
-            evidence[
-                "ttl"
-            ] = record.ttl
+            evidence["ttl"] = record.ttl
 
         if query_type:
-            evidence[
-                "query_type"
-            ] = query_type
+            evidence["query_type"] = query_type
 
         finding_metadata: dict[str, Any] = {}
 
         if metadata is not None:
             finding_metadata.update(
-                dict(
-                    metadata
-                )
+                dict(metadata)
             )
 
         finding_metadata.update(
@@ -721,30 +842,34 @@ class DigCollector:
             target=target,
         )
 
-        return Finding(
-            finding_id=finding_id,
-            title=title,
-            category=category,
-            severity="Informational",
-            confidence="High",
-            target=target,
-            host=record.name or None,
-            port=None,
-            url=None,
-            parameter=None,
-            description=description,
-            evidence=evidence,
-            source_tool=SOURCE_TOOL,
-            detection_method=DETECTION_METHOD,
-            timestamp=timestamp,
-            references=[],
-            impact="DNS information discovered during assessment.",
-            remediation=(
+        finding_data = {
+            "title": title,
+            "category": category,
+            "severity": "Informational",
+            "confidence": "High",
+            "target": target,
+            "host": record.name or None,
+            "port": None,
+            "url": None,
+            "parameter": None,
+            "description": description,
+            "evidence": evidence,
+            "source_tool": SOURCE_TOOL,
+            "detection_method": DETECTION_METHOD,
+            "timestamp": timestamp,
+            "references": [],
+            "impact": "DNS information discovered during assessment.",
+            "remediation": (
                 "Review the DNS record and confirm that it is intentional "
                 "and consistent with the assessment scope."
             ),
-            status="detected",
-            metadata=finding_metadata,
+            "status": "detected",
+            "metadata": finding_metadata,
+        }
+
+        return Finding.from_mapping(
+            finding_data,
+            finding_id=finding_id,
         )
 
     ###########################################################################
@@ -757,13 +882,6 @@ class DigCollector:
         *,
         target: str,
     ) -> str:
-        """
-        Generate a deterministic finding identifier.
-
-        The identifier is based on normalized DNS observation content rather
-        than process order.
-        """
-
         import hashlib
 
         identity = (
@@ -777,9 +895,7 @@ class DigCollector:
             identity.encode(
                 "utf-8"
             )
-        ).hexdigest()[
-            :12
-        ]
+        ).hexdigest()[:12]
 
         return (
             f"{_FINDING_ID_PREFIX}"
@@ -790,10 +906,6 @@ class DigCollector:
     def _finding_identity(
         finding: Finding,
     ) -> tuple[str, str, str]:
-        """
-        Return a stable identity tuple for deduplication across outputs.
-        """
-
         metadata = getattr(
             finding,
             "metadata",
@@ -805,6 +917,18 @@ class DigCollector:
             Mapping,
         ):
             metadata = {}
+
+        evidence = getattr(
+            finding,
+            "evidence",
+            {},
+        )
+
+        if not isinstance(
+            evidence,
+            Mapping,
+        ):
+            evidence = {}
 
         return (
             _text(
@@ -818,26 +942,10 @@ class DigCollector:
                 )
             ).upper(),
             _text(
-                (
-                    getattr(
-                        finding,
-                        "evidence",
-                        {},
-                    )
-                    or {}
-                ).get(
+                evidence.get(
                     "record_value",
-                    ""
+                    "",
                 )
-                if isinstance(
-                    getattr(
-                        finding,
-                        "evidence",
-                        None,
-                    ),
-                    Mapping,
-                )
-                else ""
             ),
         )
 
@@ -855,11 +963,8 @@ def collect_dig_findings(
     timestamp: datetime | None = None,
     metadata: Mapping[str, Any] | None = None,
 ) -> list[Finding]:
-    """
-    Convenience function for collecting findings from ``dig`` output.
-    """
 
-    return DigCollector().collect(
+    return DigCollector().collect_findings(
         output,
         target=target,
         query_type=query_type,

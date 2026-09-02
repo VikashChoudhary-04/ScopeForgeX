@@ -53,7 +53,7 @@ Correlation / Deduplication
         v
 Risk Classification
 
-v1.0.0
+v1.1.0
 """
 
 from __future__ import annotations
@@ -82,19 +82,27 @@ DEFAULT_CONFIDENCE = "Medium"
 ###############################################################################
 
 
-def _text(value: Any) -> str:
+def _text(
+    value: Any,
+) -> str:
     """Return a normalized string representation."""
 
     if value is None:
         return ""
 
-    return str(value).strip()
+    return str(
+        value
+    ).strip()
 
 
-def _optional_text(value: Any) -> str | None:
+def _optional_text(
+    value: Any,
+) -> str | None:
     """Return normalized text or None when empty."""
 
-    normalized = _text(value)
+    normalized = _text(
+        value
+    )
 
     return normalized or None
 
@@ -118,33 +126,60 @@ def _normalize_headers(
 
     normalized: dict[str, str] = {}
 
-    if isinstance(headers, Mapping):
+    if isinstance(
+        headers,
+        Mapping,
+    ):
+
         for name, value in headers.items():
 
-            key = _text(name).lower()
+            key = _text(
+                name
+            ).lower()
 
             if not key:
                 continue
 
-            if isinstance(value, (list, tuple)):
+            if isinstance(
+                value,
+                (list, tuple),
+            ):
+
                 values = [
-                    _text(item)
+                    _text(
+                        item
+                    )
                     for item in value
-                    if _text(item)
+                    if _text(
+                        item
+                    )
                 ]
 
                 if values:
-                    normalized[key] = ", ".join(values)
+                    normalized[
+                        key
+                    ] = ", ".join(
+                        values
+                    )
 
             else:
-                value_text = _text(value)
+
+                value_text = _text(
+                    value
+                )
 
                 if value_text:
-                    normalized[key] = value_text
+                    normalized[
+                        key
+                    ] = value_text
 
         return normalized
 
-    if isinstance(headers, str):
+    if isinstance(
+        headers,
+        str,
+    ):
+
         for line in headers.splitlines():
 
             if ":" not in line:
@@ -159,21 +194,39 @@ def _normalize_headers(
             value_text = value.strip()
 
             if key and value_text:
-                normalized[key] = value_text
+                normalized[
+                    key
+                ] = value_text
 
         return normalized
 
-    if isinstance(headers, Iterable):
+    if isinstance(
+        headers,
+        Iterable,
+    ):
 
         for item in headers:
 
-            if isinstance(item, (list, tuple)) and len(item) >= 2:
+            if (
+                isinstance(
+                    item,
+                    (list, tuple),
+                )
+                and len(item) >= 2
+            ):
 
-                key = _text(item[0]).lower()
-                value = _text(item[1])
+                key = _text(
+                    item[0]
+                ).lower()
+
+                value = _text(
+                    item[1]
+                )
 
                 if key and value:
-                    normalized[key] = value
+                    normalized[
+                        key
+                    ] = value
 
         return normalized
 
@@ -222,7 +275,9 @@ class CORSObservation:
         default_factory=dict
     )
 
-    def as_dict(self) -> dict[str, Any]:
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
         """
         Convert the observation into a normalized finding-compatible mapping.
         """
@@ -238,10 +293,14 @@ class CORSObservation:
             "url": self.url,
             "severity": self.severity,
             "confidence": self.confidence,
-            "evidence": dict(self.evidence),
+            "evidence": dict(
+                self.evidence
+            ),
             "source_tool": self.source_tool,
             "detection_method": self.detection_method,
-            "metadata": dict(self.metadata),
+            "metadata": dict(
+                self.metadata
+            ),
         }
 
 
@@ -311,7 +370,9 @@ class CORSAnalyzer:
             )
             or (
                 target
-                if self._is_url(target)
+                if self._is_url(
+                    target
+                )
                 else None
             )
         )
@@ -405,6 +466,7 @@ class CORSAnalyzer:
             and not wildcard_credentials
             and not reflected_origin
         ):
+
             observations.append(
                 self._permissive_origin_observation(
                     target=target,
@@ -436,19 +498,25 @@ class CORSAnalyzer:
         if response is None:
             return {}
 
-        if isinstance(response, Mapping):
+        if isinstance(
+            response,
+            Mapping,
+        ):
 
             for key in (
                 "headers",
                 "response_headers",
                 "http_headers",
             ):
+
                 if key in response:
+
                     return _normalize_headers(
-                        response.get(key)
+                        response.get(
+                            key
+                        )
                     )
 
-            # A mapping containing actual HTTP header names.
             header_candidates = {
                 str(key).lower()
                 for key in response.keys()
@@ -460,6 +528,7 @@ class CORSAnalyzer:
                 or "access-control-allow-credentials"
                 in header_candidates
             ):
+
                 return _normalize_headers(
                     response
                 )
@@ -470,6 +539,7 @@ class CORSAnalyzer:
             "headers",
             "response_headers",
         ):
+
             value = getattr(
                 response,
                 attribute,
@@ -477,6 +547,7 @@ class CORSAnalyzer:
             )
 
             if value is not None:
+
                 return _normalize_headers(
                     value
                 )
@@ -489,19 +560,25 @@ class CORSAnalyzer:
     ) -> str | None:
         """Extract a response URL when available."""
 
-        if isinstance(response, Mapping):
+        if isinstance(
+            response,
+            Mapping,
+        ):
 
             for key in (
                 "url",
                 "response_url",
                 "final_url",
             ):
+
                 value = response.get(
                     key
                 )
 
                 if value:
-                    return _text(value)
+                    return _text(
+                        value
+                    )
 
             return None
 
@@ -509,6 +586,7 @@ class CORSAnalyzer:
             "url",
             "response_url",
         ):
+
             value = getattr(
                 response,
                 attribute,
@@ -516,7 +594,9 @@ class CORSAnalyzer:
             )
 
             if value:
-                return _text(value)
+                return _text(
+                    value
+                )
 
         return None
 
@@ -530,15 +610,22 @@ class CORSAnalyzer:
         request headers.
         """
 
-        if isinstance(response, Mapping):
+        if isinstance(
+            response,
+            Mapping,
+        ):
 
             for key in (
                 "request_headers",
                 "requestHeaders",
             ):
+
                 if key in response:
+
                     headers = _normalize_headers(
-                        response.get(key)
+                        response.get(
+                            key
+                        )
                     )
 
                     return headers.get(
@@ -554,6 +641,7 @@ class CORSAnalyzer:
         )
 
         if request_headers is not None:
+
             headers = _normalize_headers(
                 request_headers
             )
@@ -577,7 +665,10 @@ class CORSAnalyzer:
         if not value:
             return False
 
-        return value.strip().lower() == "true"
+        return (
+            value.strip().lower()
+            == "true"
+        )
 
     @staticmethod
     def _origin_is_reflected(
@@ -607,7 +698,9 @@ class CORSAnalyzer:
         explicitly enabled.
         """
 
-        normalized = allow_origin.strip().lower()
+        normalized = (
+            allow_origin.strip().lower()
+        )
 
         if normalized == "*":
             return True
@@ -637,7 +730,9 @@ class CORSAnalyzer:
         """Build a credentialed wildcard CORS observation."""
 
         return CORSObservation(
-            title="CORS Allows Wildcard Origin with Credentials",
+            title=(
+                "CORS Allows Wildcard Origin with Credentials"
+            ),
             description=(
                 "The HTTP response permits a wildcard cross-origin origin "
                 "while also enabling credentialed CORS requests. This is an "
@@ -651,11 +746,17 @@ class CORSAnalyzer:
             severity="High",
             confidence="High",
             evidence={
-                "access_control_allow_origin": allow_origin,
-                "access_control_allow_credentials": allow_credentials,
+                "access_control_allow_origin": (
+                    allow_origin
+                ),
+                "access_control_allow_credentials": (
+                    allow_credentials
+                ),
             },
             metadata={
-                "issue": "wildcard_origin_with_credentials",
+                "issue": (
+                    "wildcard_origin_with_credentials"
+                ),
             },
         )
 
@@ -678,11 +779,14 @@ class CORSAnalyzer:
         )
 
         if credentials_enabled:
+
             severity = "High"
             confidence = "High"
+
             title = (
                 "CORS Reflects Origin with Credentials"
             )
+
             description = (
                 "The response reflects the supplied Origin value in "
                 "Access-Control-Allow-Origin while allowing credentials. "
@@ -690,12 +794,16 @@ class CORSAnalyzer:
                 "credentialed cross-origin requests if the origin is not "
                 "properly validated."
             )
+
         else:
+
             severity = "Medium"
             confidence = "Medium"
+
             title = (
                 "CORS Reflects Request Origin"
             )
+
             description = (
                 "The response reflects the supplied Origin value in "
                 "Access-Control-Allow-Origin. Dynamic origin reflection "
@@ -714,12 +822,18 @@ class CORSAnalyzer:
             confidence=confidence,
             evidence={
                 "request_origin": request_origin,
-                "access_control_allow_origin": allow_origin,
-                "access_control_allow_credentials": allow_credentials,
+                "access_control_allow_origin": (
+                    allow_origin
+                ),
+                "access_control_allow_credentials": (
+                    allow_credentials
+                ),
             },
             metadata={
                 "issue": "origin_reflection",
-                "credentials_enabled": credentials_enabled,
+                "credentials_enabled": (
+                    credentials_enabled
+                ),
             },
         )
 
@@ -737,7 +851,9 @@ class CORSAnalyzer:
         """Build a generic permissive-origin observation."""
 
         return CORSObservation(
-            title="Permissive CORS Origin Configuration",
+            title=(
+                "Permissive CORS Origin Configuration"
+            ),
             description=(
                 "The response exposes a broadly permissive "
                 "Access-Control-Allow-Origin policy. The security impact "
@@ -751,8 +867,12 @@ class CORSAnalyzer:
             severity="Medium",
             confidence="Medium",
             evidence={
-                "access_control_allow_origin": allow_origin,
-                "access_control_allow_credentials": allow_credentials,
+                "access_control_allow_origin": (
+                    allow_origin
+                ),
+                "access_control_allow_credentials": (
+                    allow_credentials
+                ),
             },
             metadata={
                 "issue": "permissive_origin",
@@ -772,11 +892,17 @@ class CORSAnalyzer:
         if not value:
             return False
 
-        normalized = _text(value).lower()
+        normalized = _text(
+            value
+        ).lower()
 
         return (
-            normalized.startswith("http://")
-            or normalized.startswith("https://")
+            normalized.startswith(
+                "http://"
+            )
+            or normalized.startswith(
+                "https://"
+            )
         )
 
     @classmethod
@@ -786,10 +912,14 @@ class CORSAnalyzer:
     ) -> str | None:
         """Extract hostname from an HTTP(S) URL."""
 
-        if not cls._is_url(target):
+        if not cls._is_url(
+            target
+        ):
             return None
 
-        value = _text(target)
+        value = _text(
+            target
+        )
 
         without_scheme = value.split(
             "://",
@@ -812,24 +942,33 @@ class CORSAnalyzer:
         )[0]
 
         if "@" in authority:
+
             authority = authority.rsplit(
                 "@",
                 1,
             )[1]
 
-        if authority.startswith("["):
+        if authority.startswith(
+            "["
+        ):
 
-            closing = authority.find("]")
+            closing = authority.find(
+                "]"
+            )
 
             if closing != -1:
+
                 return authority[
                     1:closing
                 ]
 
-        return authority.split(
-            ":",
-            1,
-        )[0] or None
+        return (
+            authority.split(
+                ":",
+                1,
+            )[0]
+            or None
+        )
 
     @classmethod
     def _extract_port(
@@ -838,10 +977,14 @@ class CORSAnalyzer:
     ) -> int | None:
         """Extract an explicitly specified HTTP(S) port."""
 
-        if not cls._is_url(target):
+        if not cls._is_url(
+            target
+        ):
             return None
 
-        value = _text(target)
+        value = _text(
+            target
+        )
 
         authority = value.split(
             "://",
@@ -862,14 +1005,19 @@ class CORSAnalyzer:
         )[0]
 
         if "@" in authority:
+
             authority = authority.rsplit(
                 "@",
                 1,
             )[1]
 
-        if authority.startswith("["):
+        if authority.startswith(
+            "["
+        ):
 
-            closing = authority.find("]")
+            closing = authority.find(
+                "]"
+            )
 
             if closing != -1:
 
@@ -877,13 +1025,18 @@ class CORSAnalyzer:
                     closing + 1:
                 ]
 
-                if remainder.startswith(":"):
+                if remainder.startswith(
+                    ":"
+                ):
 
                     try:
+
                         return int(
                             remainder[1:]
                         )
+
                     except ValueError:
+
                         return None
 
                 return None
@@ -897,10 +1050,13 @@ class CORSAnalyzer:
         )[1]
 
         try:
+
             return int(
                 port_text
             )
+
         except ValueError:
+
             return None
 
     ###########################################################################
@@ -914,6 +1070,7 @@ class CORSAnalyzer:
         """Remove duplicate observations generated from the same response."""
 
         unique: list[CORSObservation] = []
+
         seen: set[tuple[Any, ...]] = set()
 
         for observation in observations:
@@ -947,6 +1104,7 @@ class CORSAnalyzer:
             seen.add(
                 fingerprint
             )
+
             unique.append(
                 observation
             )
@@ -959,6 +1117,13 @@ class CORSAnalyzer:
 ###############################################################################
 
 
+# CORSAnalyzer is the canonical implementation. These aliases preserve the
+# names consumed by the native analyzer package and NativeAnalyzerEngine
+# without introducing duplicate analyzer implementations.
+CORSSecurityAnalyzer = CORSAnalyzer
+
+CORSFinding = CORSObservation
+
 Analyzer = CORSAnalyzer
 
 
@@ -967,11 +1132,17 @@ Analyzer = CORSAnalyzer
 ###############################################################################
 
 
+CORS_MISCONFIGURATION = CATEGORY_CORS
+
+
 __all__ = [
     "CORSAnalyzer",
     "CORSObservation",
+    "CORSSecurityAnalyzer",
+    "CORSFinding",
     "Analyzer",
     "ANALYZER_NAME",
     "CATEGORY_CORS",
+    "CORS_MISCONFIGURATION",
     "DETECTION_METHOD",
 ]

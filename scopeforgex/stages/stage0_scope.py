@@ -3,10 +3,12 @@ ScopeForgeX Stage 0 — Scope Validation
 ======================================
 
 Responsible for:
+
 - Authorization confirmation
 - Target collection
 - Target classification
 - Pipeline initialization
+- Immutable assessment-run creation
 
 Stage 0 supports both:
 
@@ -23,11 +25,15 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from pathlib import Path
 from typing import Any
 
-from scopeforgex.stages.shared import pipeline_paths
+from scopeforgex.stages.shared import (
+    create_run_id,
+    init_output_dirs,
+    pipeline_paths,
+)
 from scopeforgex.ui import (
-    err,
     ok,
     stage,
     warn,
@@ -138,25 +144,6 @@ def classify_target(
 
 
 ###############################################################################
-# Pipeline Initialization
-###############################################################################
-
-
-def _initialize_pipeline(
-    ctx: dict[str, Any],
-) -> None:
-    """
-    Initialize canonical workflow pipeline paths.
-    """
-
-    ctx[
-        "pipeline"
-    ] = pipeline_paths(
-        ctx["outdir"]
-    )
-
-
-###############################################################################
 # Output Directory
 ###############################################################################
 
@@ -190,11 +177,43 @@ def _set_target_context(
     target: str,
 ) -> None:
     """
-    Populate target-derived workflow context.
+    Populate target-derived workflow context and create the immutable
+    per-assessment output directory.
+
+    A single run identifier is generated for the entire workflow and is
+    preserved in the workflow context so every stage writes into the same
+    assessment directory.
     """
 
     target_type = classify_target(
         target
+    )
+
+    run_id = str(
+        ctx.get(
+            "run_id",
+            "",
+        )
+    ).strip()
+
+    if not run_id:
+        run_id = create_run_id()
+
+    safe_target_name = _safe_target_name(
+        target
+    )
+
+    target_root = (
+        Path("outputs")
+        / safe_target_name
+    )
+
+    outdir = init_output_dirs(
+        str(
+            target_root.parent
+        ),
+        target_root.name,
+        run_id=run_id,
     )
 
     ctx[
@@ -206,14 +225,23 @@ def _set_target_context(
     ] = target_type
 
     ctx[
-        "outdir"
-    ] = (
-        f"outputs/"
-        f"{_safe_target_name(target)}"
+        "run_id"
+    ] = run_id
+
+    ctx[
+        "target_root"
+    ] = str(
+        target_root.resolve()
     )
 
-    _initialize_pipeline(
-        ctx
+    ctx[
+        "outdir"
+    ] = outdir
+
+    ctx[
+        "pipeline"
+    ] = pipeline_paths(
+        outdir
     )
 
 
@@ -347,6 +375,18 @@ def stage0_scope(
     ok(
         f"Target set: {target}"
     )
+
+    run_id = ctx.get(
+        "run_id"
+    )
+
+    if run_id:
+        info_message = (
+            f"Assessment run: {run_id}"
+        )
+        ok(
+            info_message
+        )
 
     if ctx.get(
         "target_type"

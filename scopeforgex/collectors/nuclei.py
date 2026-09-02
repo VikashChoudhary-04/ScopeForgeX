@@ -1,57 +1,51 @@
 """
 ScopeForgeX Nuclei Collector
-=============================
+============================
 
-Parses Nuclei scanner output into structured ScopeForgeX observations.
+Collector for parsing Nuclei scanner output into structured ScopeForgeX
+observations.
 
-Nuclei is the primary broad vulnerability assessment engine in ScopeForgeX.
-The collector converts Nuclei's structured or line-oriented output into
-normalized observations while preserving the original scanner evidence.
+The collector converts Nuclei structured JSON/JSONL and supported plain-text
+finding output into ``CollectorObservation`` objects while preserving the
+original scanner evidence.
 
-Primary observations:
+Responsibilities
+----------------
 
-    VULNERABILITY
-    MISCONFIGURATION
-    EXPOSED_RESOURCE
-    CVE
-    SECURITY_ISSUE
+- Parse Nuclei execution results.
+- Parse Nuclei JSON/JSONL output.
+- Parse genuine Nuclei plain-text finding lines.
+- Ignore Nuclei operational/status messages.
+- Normalize severity, host and URL information.
+- Preserve CVE/CWE identifiers and references.
+- Preserve raw scanner evidence.
+- Produce observations for the universal ScopeForgeX finding pipeline.
 
-Architecture
-------------
+The collector does not:
 
-Nuclei
-    ↓
-ExecutionResult
-    ↓
-Raw Evidence
-    ↓
-NucleiCollector
-    ↓
-CollectorObservation
-    ↓
-Finding Normalizer
-    ↓
-Universal Finding
+- Execute Nuclei.
+- Construct Nuclei commands.
+- Perform network requests.
+- Perform final risk classification.
+- Perform finding correlation.
+- Perform finding deduplication.
 
-Design Principles
------------------
+Important distinction
+---------------------
 
-- The collector never executes Nuclei.
-- The collector never constructs Nuclei commands.
-- Raw Nuclei output remains preserved in the ExecutionResult artifacts.
-- JSONL output is treated as the primary structured format.
-- Plain-text Nuclei output is also supported.
-- Duplicate observations are removed deterministically.
-- Severity is preserved when supplied by Nuclei.
-- Confidence is derived from the Nuclei result but is not treated as
-  manual confirmation.
-- CVE identifiers are preserved as structured metadata when available.
-- CWE identifiers are preserved when available.
-- References and matched evidence are retained.
-- Collection failures do not destroy the original execution result.
-- The collector does not perform network requests.
+Nuclei writes both security results and operational diagnostics.
 
-v1.0.0
+For example:
+
+    [INF] Current nuclei version: ...
+    [INF] Skipped example.com:80 ...
+    [INF] Scan completed in ...
+
+These are execution diagnostics, not findings.
+
+Only genuine security-result records are allowed across the collector boundary.
+
+v1.4.0
 """
 
 from __future__ import annotations
@@ -98,6 +92,27 @@ _CWE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_ANSI_PATTERN = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]"
+)
+
+_SEVERITY_PATTERN = re.compile(
+    r"\[(critical|high|medium|moderate|low|info|informational)\]",
+    re.IGNORECASE,
+)
+
+_OPERATIONAL_LEVELS = {
+    "INF",
+    "WRN",
+    "WARN",
+    "ERR",
+    "ERROR",
+    "DBG",
+    "DEBU",
+    "TRAC",
+    "TRACE",
+}
+
 _SEVERITY_ALIASES = {
     "info": "informational",
     "information": "informational",
@@ -118,6 +133,21 @@ _CONFIDENCE_BY_SEVERITY = {
     "informational": "informational",
 }
 
+_OPERATIONAL_MARKERS = (
+    "current nuclei version:",
+    "current nuclei-templates version:",
+    "new templates added",
+    "templates loaded for current scan:",
+    "executing ",
+    "targets loaded for current scan:",
+    "running httpx on input host",
+    "found 0 url from httpx",
+    "templates clustered:",
+    "skipped ",
+    "scan completed in ",
+    "no results found",
+)
+
 
 ###############################################################################
 # Collector
@@ -128,17 +158,18 @@ class NucleiCollector(CollectorBase):
     """
     Collect structured vulnerability observations from Nuclei output.
 
-    Nuclei normally emits JSONL records when the JSON output mode is enabled.
-    The collector also accepts plain-text output so that ScopeForgeX remains
-    compatible with executions that did not request structured output.
+    Nuclei normally emits JSONL records when JSON output is enabled. The
+    collector also accepts plain-text Nuclei finding output when structured
+    output is unavailable.
     """
 
     name = "nuclei"
+
     tool = "nuclei"
 
     description = (
-        "Parses Nuclei vulnerability and misconfiguration results into "
-        "structured ScopeForgeX observations."
+        "Parse Nuclei vulnerability, misconfiguration and exposure results "
+        "into structured ScopeForgeX observations."
     )
 
     supported_input_types = (
@@ -175,10 +206,10 @@ class NucleiCollector(CollectorBase):
         """
         Parse Nuclei output into structured observations.
 
-        Artifact content is preferred when available because artifacts are
-        persistent evidence associated with the execution. Stdout is also
-        inspected so executions without a dedicated output artifact remain
-        collectable.
+        Both stdout and execution artifacts are inspected.
+
+        Artifact content may contain the persistent Nuclei log/output produced
+        by ScopeForgeX. Duplicate source paths are processed only once.
         """
 
         target = self._resolve_target(
@@ -196,14 +227,19 @@ class NucleiCollector(CollectorBase):
 
         observations: list[CollectorObservation] = []
 
-        seen: set[tuple[str, str, str]] = set()
+        seen: set[
+            tuple[
+                str,
+                str,
+                str,
+            ]
+        ] = set()
 
         for source, content in contents:
 
             for record in self._iter_records(
                 content
             ):
-
                 parsed = self._parse_record(
                     record
                 )
@@ -218,28 +254,31 @@ class NucleiCollector(CollectorBase):
                 if normalized is None:
                     continue
 
-                url = normalized.get(
-                    "url"
-                ) or ""
+                url = (
+                    normalized.get(
+                        "url"
+                    )
+                    or ""
+                )
 
-                template_id = normalized.get(
-                    "template_id"
-                ) or ""
+                template_id = (
+                    normalized.get(
+                        "template_id"
+                    )
+                    or ""
+                )
 
-                title = normalized.get(
-                    "title"
-                ) or ""
+                title = (
+                    normalized.get(
+                        "title"
+                    )
+                    or ""
+                )
 
                 key = (
-                    str(
-                        url
-                    ),
-                    str(
-                        template_id
-                    ),
-                    str(
-                        title
-                    ).lower(),
+                    str(url),
+                    str(template_id),
+                    str(title).lower(),
                 )
 
                 if key in seen:
@@ -267,14 +306,23 @@ class NucleiCollector(CollectorBase):
         self,
         execution_result: Any,
         ctx: Mapping[str, Any],
-    ) -> list[tuple[str, str]]:
+    ) -> list[
+        tuple[str, str]
+    ]:
         """
         Return available Nuclei evidence as labelled text.
 
-        Duplicate artifact paths are processed only once.
+        Stdout is always considered when non-empty.
+
+        Artifact paths may come from the explicit collector context or the
+        ExecutionResult itself.
         """
 
-        contents: list[tuple[str, str]] = []
+        contents: list[
+            tuple[str, str]
+        ] = []
+
+        seen_paths: set[str] = set()
 
         stdout = getattr(
             execution_result,
@@ -290,14 +338,42 @@ class NucleiCollector(CollectorBase):
                 )
             )
 
-        artifacts = ctx.get(
+        artifact_values: list[Any] = []
+
+        context_artifacts = ctx.get(
             "artifacts",
             [],
         )
 
-        seen_paths: set[str] = set()
+        if isinstance(
+            context_artifacts,
+            Iterable,
+        ) and not isinstance(
+            context_artifacts,
+            (str, bytes, Mapping),
+        ):
+            artifact_values.extend(
+                context_artifacts
+            )
 
-        for artifact in artifacts:
+        execution_artifacts = getattr(
+            execution_result,
+            "artifacts",
+            [],
+        )
+
+        if isinstance(
+            execution_artifacts,
+            Iterable,
+        ) and not isinstance(
+            execution_artifacts,
+            (str, bytes, Mapping),
+        ):
+            artifact_values.extend(
+                execution_artifacts
+            )
+
+        for artifact in artifact_values:
 
             path = self._artifact_path(
                 artifact
@@ -317,9 +393,12 @@ class NucleiCollector(CollectorBase):
                 normalized_path
             )
 
-            content = read_text_file(
-                path
-            )
+            try:
+                content = read_text_file(
+                    path
+                )
+            except Exception:
+                continue
 
             if content:
                 contents.append(
@@ -336,7 +415,7 @@ class NucleiCollector(CollectorBase):
         artifact: Any,
     ) -> Path | None:
         """
-        Resolve an artifact into a filesystem path.
+        Resolve an artifact representation into a filesystem path.
         """
 
         if artifact is None:
@@ -347,60 +426,81 @@ class NucleiCollector(CollectorBase):
             "path",
         ):
             value = artifact.path
-
         else:
             value = artifact
 
         if value is None:
             return None
 
-        return Path(
+        if isinstance(
+            value,
+            Mapping,
+        ):
+            value = (
+                value.get("path")
+                or value.get("file")
+                or value.get("location")
+            )
+
+        if value is None:
+            return None
+
+        path = Path(
             str(value)
         )
 
+        if not path.exists():
+            return None
+
+        return path
+
     ###########################################################################
-    # Record Parsing
+    # Record Iteration
     ###########################################################################
 
+    @staticmethod
     def _iter_records(
-        self,
         content: str,
-    ) -> list[str | dict[str, Any]]:
+    ) -> list[
+        str | dict[str, Any]
+    ]:
         """
         Convert raw Nuclei content into logical records.
 
-        JSON objects are parsed individually. Non-JSON lines are retained as
-        plain-text records for compatibility with standard Nuclei output.
+        JSON objects are parsed individually. Non-JSON lines are retained so
+        genuine plain-text findings can be parsed separately.
         """
 
-        records: list[str | dict[str, Any]] = []
+        records: list[
+            str | dict[str, Any]
+        ] = []
 
-        for line in content.splitlines():
+        for line in str(
+            content
+        ).splitlines():
 
             stripped = line.strip()
 
             if not stripped:
                 continue
 
-            if stripped.startswith(
-                "{"
-            ) and stripped.endswith(
-                "}"
+            if (
+                stripped.startswith("{")
+                and stripped.endswith("}")
             ):
                 try:
-                    value = json.loads(
+                    decoded = json.loads(
                         stripped
                     )
-
                 except json.JSONDecodeError:
-                    value = None
+                    decoded = None
 
                 if isinstance(
-                    value,
+                    decoded,
                     dict,
                 ):
                     records.append(
-                        value
+                        decoded
                     )
                     continue
 
@@ -410,12 +510,12 @@ class NucleiCollector(CollectorBase):
 
         return records
 
+    @staticmethod
     def _parse_record(
-        self,
         record: str | dict[str, Any],
     ) -> dict[str, Any] | None:
         """
-        Normalize one raw Nuclei record into a parser-friendly structure.
+        Parse one record into a mapping.
         """
 
         if isinstance(
@@ -426,68 +526,101 @@ class NucleiCollector(CollectorBase):
                 record
             )
 
-        return self._parse_text_record(
-            record
+        return NucleiCollector._parse_text_record(
+            str(record)
         )
 
+    ###########################################################################
+    # Plain-Text Parsing
+    ###########################################################################
+
     @staticmethod
+    def _strip_ansi(
+        value: Any,
+    ) -> str:
+        """
+        Remove terminal control sequences.
+        """
+
+        return _ANSI_PATTERN.sub(
+            "",
+            str(
+                value
+                if value is not None
+                else ""
+            ),
+        )
+
+    @classmethod
+    def _is_operational_line(
+        cls,
+        value: str,
+    ) -> bool:
+        """
+        Determine whether a line is an Nuclei operational/diagnostic message.
+
+        Operational messages are never promoted to findings.
+        """
+
+        clean = cls._strip_ansi(
+            value
+        ).strip()
+
+        if not clean:
+            return True
+
+        level_match = re.match(
+            r"^\[\s*([A-Za-z]+)\s*\]",
+            clean,
+        )
+
+        if level_match:
+            level = (
+                level_match.group(1)
+                .strip()
+                .upper()
+            )
+
+            if level in _OPERATIONAL_LEVELS:
+                return True
+
+        lowered = clean.lower()
+
+        return lowered.startswith(
+            _OPERATIONAL_MARKERS
+        )
+
+    @classmethod
     def _parse_text_record(
+        cls,
         record: str,
     ) -> dict[str, Any] | None:
         """
-        Parse common Nuclei plain-text output.
+        Parse a genuine Nuclei plain-text result.
 
-        Typical output resembles:
+        Common finding format:
 
-            [template-id] [protocol] [severity] [url]
+            [medium] template-id [http] [https://example.com/path]
 
-        The parser intentionally remains conservative and does not attempt to
-        reconstruct fields that cannot be identified reliably.
+        Nuclei diagnostics such as ``[INF] Skipped ...`` are rejected before
+        any URL/template extraction occurs.
         """
 
-        value = str(
+        value = cls._strip_ansi(
             record
         ).strip()
 
         if not value:
             return None
 
-        severity = None
+        if cls._is_operational_line(
+            value
+        ):
+            return None
 
-        severity_match = re.search(
-            r"\[(critical|high|medium|low|info|informational)\]",
-            value,
-            re.IGNORECASE,
+        severity_match = _SEVERITY_PATTERN.search(
+            value
         )
-
-        if severity_match:
-            severity = severity_match.group(
-                1
-            )
-
-        urls = re.findall(
-            r"https?://[^\s\]]+",
-            value,
-            re.IGNORECASE,
-        )
-
-        url = (
-            urls[0]
-            if urls
-            else None
-        )
-
-        template_id = None
-
-        template_match = re.search(
-            r"^\[([^\]]+)\]",
-            value,
-        )
-
-        if template_match:
-            template_id = template_match.group(
-                1
-            )
 
         cves = [
             match.upper()
@@ -503,18 +636,85 @@ class NucleiCollector(CollectorBase):
             )
         ]
 
+        # Real plain-text findings should expose a recognized severity or
+        # an explicit CVE. This prevents arbitrary URLs/status lines from
+        # becoming SECURITY_ISSUE findings.
         if (
-            not url
+            severity_match is None
             and not cves
-            and not template_id
         ):
             return None
+
+        severity = (
+            severity_match.group(
+                1
+            )
+            if severity_match is not None
+            else "informational"
+        )
+
+        # Extract URLs while excluding surrounding punctuation and markup.
+        urls = re.findall(
+            r'https?://[^\s\]\)\}"\'<>]+',
+            value,
+            re.IGNORECASE,
+        )
+
+        url = None
+
+        if urls:
+            url = urls[0].rstrip(
+                "\"'.,:;"
+            )
+
+        remainder = value
+
+        if severity_match is not None:
+            remainder = value[
+                severity_match.end():
+            ].strip()
+
+        # The token immediately after the severity is normally the template
+        # identifier/name.
+        template_match = re.match(
+            r"([^\s\[\]]+)",
+            remainder,
+        )
+
+        template_id = (
+            template_match.group(
+                1
+            ).strip()
+            if template_match is not None
+            else None
+        )
+
+        if template_id:
+            template_id = template_id.rstrip(
+                "\"'.,:;"
+            )
+
+        if not (
+            template_id
+            or url
+            or cves
+        ):
+            return None
+
+        title = (
+            template_id
+            or (
+                cves[0]
+                if cves
+                else "Nuclei Security Finding"
+            )
+        )
 
         return {
             "template-id": template_id,
             "info": {
-                "name": template_id or "Nuclei Finding",
-                "severity": severity or "info",
+                "name": title,
+                "severity": severity,
             },
             "matched-at": url,
             "host": (
@@ -538,11 +738,17 @@ class NucleiCollector(CollectorBase):
         record: Mapping[str, Any],
     ) -> dict[str, Any] | None:
         """
-        Normalize a Nuclei JSON record.
+        Normalize a Nuclei structured record.
 
-        Nuclei has emitted slightly different field combinations across
-        versions and output modes, so this method accepts common aliases.
+        Operational records embedded in structured output are rejected when
+        they identify an operational log level rather than a security result.
         """
+
+        if not isinstance(
+            record,
+            Mapping,
+        ):
+            return None
 
         info = record.get(
             "info",
@@ -555,6 +761,27 @@ class NucleiCollector(CollectorBase):
         ):
             info = {}
 
+        raw_value = self._first_text(
+            record,
+            (
+                "raw",
+                "raw_output",
+                "message",
+            ),
+        )
+
+        clean_raw = self._strip_ansi(
+            raw_value
+        ).strip()
+
+        if (
+            clean_raw
+            and self._is_operational_line(
+                clean_raw
+            )
+        ):
+            return None
+
         template_id = self._first_text(
             record,
             (
@@ -564,6 +791,10 @@ class NucleiCollector(CollectorBase):
                 "templateID",
             ),
         )
+
+        template_id = self._strip_ansi(
+            template_id
+        ).strip()
 
         name = self._first_text(
             info,
@@ -581,6 +812,28 @@ class NucleiCollector(CollectorBase):
                     "title",
                 ),
             )
+
+        name = self._strip_ansi(
+            name
+        ).strip()
+
+        if (
+            template_id.upper()
+            in _OPERATIONAL_LEVELS
+            and not _CVE_PATTERN.search(
+                clean_raw
+            )
+        ):
+            return None
+
+        if (
+            name.upper()
+            in _OPERATIONAL_LEVELS
+            and not _CVE_PATTERN.search(
+                clean_raw
+            )
+        ):
+            return None
 
         severity = self._normalize_severity(
             self._first_text(
@@ -603,9 +856,12 @@ class NucleiCollector(CollectorBase):
                 "matched-at",
                 "matched_at",
                 "url",
-                "host",
                 "endpoint",
             ),
+        )
+
+        url = self._normalize_url(
+            url
         )
 
         host = self._first_text(
@@ -613,6 +869,10 @@ class NucleiCollector(CollectorBase):
             (
                 "host",
             ),
+        )
+
+        host = self._normalize_host(
+            host
         )
 
         if not host and url:
@@ -658,22 +918,6 @@ class NucleiCollector(CollectorBase):
             ),
         )
 
-        references = self._normalize_references(
-            info.get(
-                "reference",
-                info.get(
-                    "references",
-                    record.get(
-                        "reference",
-                        record.get(
-                            "references",
-                            [],
-                        ),
-                    ),
-                ),
-            )
-        )
-
         classification = info.get(
             "classification",
             {},
@@ -712,21 +956,79 @@ class NucleiCollector(CollectorBase):
             cwes
         )
 
-        raw_evidence = self._evidence_from_record(
-            record
+        references = self._normalize_references(
+            info.get(
+                "reference",
+                info.get(
+                    "references",
+                    record.get(
+                        "reference",
+                        record.get(
+                            "references",
+                            [],
+                        ),
+                    ),
+                ),
+            )
         )
 
-        if (
-            not name
-            and not url
-            and not template_id
-            and not cves
-            and not cwes
+        record_type = self._classify_record(
+            record,
+            info,
+        )
+
+        if not (
+            name
+            or url
+            or template_id
+            or cves
+            or cwes
         ):
             return None
 
+        # A structured informational record without any security semantics
+        # should not be promoted automatically.
+        if (
+            severity == "informational"
+            and not cves
+            and not self._structured_security_signal(
+                record,
+                info,
+            )
+        ):
+            return None
+
+        description = self._first_text(
+            info,
+            (
+                "description",
+            ),
+        )
+
+        impact = self._first_text(
+            info,
+            (
+                "impact",
+            ),
+        )
+
+        remediation = self._first_text(
+            info,
+            (
+                "remediation",
+                "remediation-code",
+            ),
+        )
+
+        evidence = self._evidence_from_record(
+            record
+        )
+
         return {
-            "template_id": template_id,
+            "template_id": (
+                template_id
+                or None
+            ),
             "title": (
                 name
                 or template_id
@@ -735,35 +1037,19 @@ class NucleiCollector(CollectorBase):
             "severity": severity,
             "url": url,
             "host": host,
-            "matcher_name": matcher_name,
+            "matcher_name": (
+                matcher_name
+                or None
+            ),
             "extracted_results": extracted_results,
             "cves": cves,
             "cwes": cwes,
             "references": references,
-            "description": self._first_text(
-                info,
-                (
-                    "description",
-                ),
-            ),
-            "impact": self._first_text(
-                info,
-                (
-                    "impact",
-                ),
-            ),
-            "remediation": self._first_text(
-                info,
-                (
-                    "remediation",
-                    "remediation-code",
-                ),
-            ),
-            "type": self._classify_record(
-                record,
-                info,
-            ),
-            "evidence": raw_evidence,
+            "description": description,
+            "impact": impact,
+            "remediation": remediation,
+            "type": record_type,
+            "evidence": evidence,
             "raw_record": dict(
                 record
             ),
@@ -781,22 +1067,26 @@ class NucleiCollector(CollectorBase):
         source: str,
     ) -> list[CollectorObservation]:
         """
-        Build the primary and identifier observations for one Nuclei result.
+        Build normalized Nuclei observations.
         """
 
-        observations: list[CollectorObservation] = []
+        observations: list[
+            CollectorObservation
+        ] = []
 
-        observation_type = self._primary_observation_type(
-            record
+        observation_type = (
+            self._primary_observation_type(
+                record
+            )
         )
 
-        url = self._optional_text(
+        url = self._normalize_url(
             record.get(
                 "url"
             )
         )
 
-        host = self._optional_text(
+        host = self._normalize_host(
             record.get(
                 "host"
             )
@@ -864,18 +1154,23 @@ class NucleiCollector(CollectorBase):
             ),
         }
 
+        title = self._optional_text(
+            record.get(
+                "title"
+            )
+        ) or "Nuclei Security Finding"
+
         primary = CollectorObservation(
             observation_type=observation_type,
             value=(
                 url
-                or record.get(
-                    "title"
-                )
+                or title
                 or record.get(
                     "template_id"
                 )
-                or "Nuclei finding"
+                or "Nuclei Security Finding"
             ),
+            title=title,
             target=target,
             host=host,
             port=port,
@@ -885,6 +1180,19 @@ class NucleiCollector(CollectorBase):
                     "description"
                 )
             ),
+            impact=self._optional_text(
+                record.get(
+                    "impact"
+                )
+            ),
+            remediation=self._optional_text(
+                record.get(
+                    "remediation"
+                )
+            ),
+            severity=severity.title(),
+            confidence=confidence,
+            status="Pending",
             evidence=record.get(
                 "evidence"
             ),
@@ -892,7 +1200,35 @@ class NucleiCollector(CollectorBase):
             detection_method=(
                 "Nuclei template detection"
             ),
-            confidence=confidence,
+            cwe=(
+                record.get(
+                    "cwes",
+                    [None],
+                )[0]
+                if record.get(
+                    "cwes",
+                    [],
+                )
+                else None
+            ),
+            cve=(
+                record.get(
+                    "cves",
+                    [None],
+                )[0]
+                if record.get(
+                    "cves",
+                    [],
+                )
+                else None
+            ),
+            references=list(
+                record.get(
+                    "references",
+                    [],
+                )
+                or []
+            ),
             metadata=metadata,
         )
 
@@ -908,6 +1244,9 @@ class NucleiCollector(CollectorBase):
                 CollectorObservation(
                     observation_type=OBSERVATION_CVE,
                     value=cve,
+                    title=str(
+                        cve
+                    ),
                     target=target,
                     host=host,
                     port=port,
@@ -920,6 +1259,7 @@ class NucleiCollector(CollectorBase):
                         "Nuclei CVE classification"
                     ),
                     confidence=confidence,
+                    status="Pending",
                     metadata={
                         "template_id": record.get(
                             "template_id"
@@ -947,7 +1287,7 @@ class NucleiCollector(CollectorBase):
         record_type = str(
             record.get(
                 "type",
-                ""
+                "",
             )
         ).strip().lower()
 
@@ -961,12 +1301,16 @@ class NucleiCollector(CollectorBase):
         text = " ".join(
             [
                 record_type,
-                " ".join(
-                    tags
-                ),
+                " ".join(tags),
                 str(
                     info.get(
                         "name",
+                        "",
+                    )
+                ),
+                str(
+                    info.get(
+                        "description",
                         "",
                     )
                 ),
@@ -1002,7 +1346,7 @@ class NucleiCollector(CollectorBase):
         record: Mapping[str, Any],
     ) -> str:
         """
-        Map a normalized Nuclei result to its primary observation type.
+        Map a normalized Nuclei record to a primary observation type.
         """
 
         result_type = str(
@@ -1028,6 +1372,61 @@ class NucleiCollector(CollectorBase):
 
         return OBSERVATION_SECURITY_ISSUE
 
+    @staticmethod
+    def _structured_security_signal(
+        record: Mapping[str, Any],
+        info: Mapping[str, Any],
+    ) -> bool:
+        """
+        Determine whether an informational structured result has explicit
+        security semantics and is therefore worth retaining.
+        """
+
+        meaningful_fields = (
+            "matched-at",
+            "matched_at",
+            "matcher-name",
+            "matcher_name",
+            "extracted-results",
+            "extracted_results",
+            "type",
+        )
+
+        if any(
+            field in record
+            and record.get(field) not in (
+                None,
+                "",
+                [],
+            )
+            for field in meaningful_fields
+        ):
+            return True
+
+        tags = NucleiCollector._normalize_list(
+            info.get(
+                "tags",
+                [],
+            )
+        )
+
+        return any(
+            token in {
+                "misconfig",
+                "misconfiguration",
+                "exposure",
+                "exposed",
+                "disclosure",
+                "vulnerability",
+                "cve",
+                "security",
+            }
+            for token in (
+                str(tag).lower()
+                for tag in tags
+            )
+        )
+
     ###########################################################################
     # Identifier Helpers
     ###########################################################################
@@ -1046,6 +1445,7 @@ class NucleiCollector(CollectorBase):
         values: list[Any] = []
 
         for key in keys:
+
             if key in record:
                 values.append(
                     record.get(
@@ -1080,7 +1480,7 @@ class NucleiCollector(CollectorBase):
         pattern: re.Pattern[str],
     ) -> list[str]:
         """
-        Extract identifiers from scalar or collection values.
+        Extract identifiers from scalar or iterable values.
         """
 
         if value is None:
@@ -1090,13 +1490,11 @@ class NucleiCollector(CollectorBase):
             value,
             str,
         ):
-            matches = pattern.findall(
-                value
-            )
-
             return [
                 match.upper()
-                for match in matches
+                for match in pattern.findall(
+                    value
+                )
             ]
 
         if isinstance(
@@ -1126,7 +1524,7 @@ class NucleiCollector(CollectorBase):
         )
 
     ###########################################################################
-    # Evidence / Reference Helpers
+    # Evidence / References
     ###########################################################################
 
     @staticmethod
@@ -1134,13 +1532,16 @@ class NucleiCollector(CollectorBase):
         record: Mapping[str, Any],
     ) -> dict[str, Any]:
         """
-        Preserve useful Nuclei evidence fields without discarding the
-        original structured record.
+        Preserve structured Nuclei evidence.
         """
 
+        import copy
+
         evidence: dict[str, Any] = {
-            "raw_record": dict(
-                record
+            "raw_record": copy.deepcopy(
+                dict(
+                    record
+                )
             ),
         }
 
@@ -1159,8 +1560,10 @@ class NucleiCollector(CollectorBase):
             "timestamp",
         ):
             if key in record:
-                evidence[key] = record.get(
-                    key
+                evidence[key] = copy.deepcopy(
+                    record.get(
+                        key
+                    )
                 )
 
         return evidence
@@ -1170,7 +1573,7 @@ class NucleiCollector(CollectorBase):
         value: Any,
     ) -> list[str]:
         """
-        Normalize Nuclei references into a unique ordered list.
+        Normalize Nuclei references into unique ordered strings.
         """
 
         if value is None:
@@ -1180,9 +1583,13 @@ class NucleiCollector(CollectorBase):
             value,
             str,
         ):
+            cleaned = (
+                value.strip()
+            )
+
             return (
-                [value.strip()]
-                if value.strip()
+                [cleaned]
+                if cleaned
                 else []
             )
 
@@ -1190,15 +1597,13 @@ class NucleiCollector(CollectorBase):
             value,
             Mapping,
         ):
-            return [
-                str(
-                    item
-                ).strip()
-                for item in value.values()
-                if str(
-                    item
-                ).strip()
-            ]
+            return NucleiCollector._unique_strings(
+                [
+                    str(item).strip()
+                    for item in value.values()
+                    if str(item).strip()
+                ]
+            )
 
         if isinstance(
             value,
@@ -1206,23 +1611,19 @@ class NucleiCollector(CollectorBase):
         ):
             return NucleiCollector._unique_strings(
                 [
-                    str(
-                        item
-                    ).strip()
+                    str(item).strip()
                     for item in value
-                    if str(
-                        item
-                    ).strip()
+                    if str(item).strip()
                 ]
             )
 
-        value = str(
+        cleaned = str(
             value
         ).strip()
 
         return (
-            [value]
-            if value
+            [cleaned]
+            if cleaned
             else []
         )
 
@@ -1236,10 +1637,11 @@ class NucleiCollector(CollectorBase):
         keys: Iterable[str],
     ) -> str | None:
         """
-        Return the first non-empty textual field from a mapping.
+        Return the first non-empty textual field.
         """
 
         for key in keys:
+
             value = mapping.get(
                 key
             )
@@ -1251,10 +1653,10 @@ class NucleiCollector(CollectorBase):
                 value,
                 str,
             ):
-                value = value.strip()
+                cleaned = value.strip()
 
-                if value:
-                    return value
+                if cleaned:
+                    return cleaned
 
             elif value:
                 return str(
@@ -1264,11 +1666,32 @@ class NucleiCollector(CollectorBase):
         return None
 
     @staticmethod
+    def _optional_text(
+        value: Any,
+    ) -> str | None:
+        """
+        Normalize an optional textual value.
+        """
+
+        if value is None:
+            return None
+
+        cleaned = str(
+            value
+        ).strip()
+
+        return (
+            cleaned
+            if cleaned
+            else None
+        )
+
+    @staticmethod
     def _normalize_list(
         value: Any,
     ) -> list[Any]:
         """
-        Normalize a value into a list without splitting scalar strings.
+        Normalize a scalar or iterable into a list.
         """
 
         if value is None:
@@ -1298,6 +1721,18 @@ class NucleiCollector(CollectorBase):
                 value
             )
 
+        if isinstance(
+            value,
+            str,
+        ):
+            cleaned = value.strip()
+
+            return (
+                [cleaned]
+                if cleaned
+                else []
+            )
+
         return [
             value
         ]
@@ -1307,23 +1742,31 @@ class NucleiCollector(CollectorBase):
         values: Iterable[Any],
     ) -> list[str]:
         """
-        Return unique non-empty strings while preserving input order.
+        Return unique non-empty strings in stable order.
         """
 
         result: list[str] = []
+        seen: set[str] = set()
 
         for value in values:
-            normalized = str(
+
+            cleaned = str(
                 value
             ).strip()
 
-            if (
-                normalized
-                and normalized not in result
-            ):
-                result.append(
-                    normalized
-                )
+            if not cleaned:
+                continue
+
+            if cleaned in seen:
+                continue
+
+            seen.add(
+                cleaned
+            )
+
+            result.append(
+                cleaned
+            )
 
         return result
 
@@ -1333,62 +1776,231 @@ class NucleiCollector(CollectorBase):
     ) -> str:
         """
         Normalize a Nuclei severity value.
-
-        Unknown or missing values become informational rather than introducing
-        a non-canonical severity into ScopeForgeX.
         """
 
-        normalized = (
-            str(
-                value
-            ).strip().lower()
+        normalized = str(
+            value
             if value is not None
-            else ""
-        )
+            else "informational"
+        ).strip().lower()
 
         return _SEVERITY_ALIASES.get(
             normalized,
             "informational",
         )
 
-    @staticmethod
-    def _optional_text(
+    @classmethod
+    def _normalize_url(
+        cls,
         value: Any,
     ) -> str | None:
         """
-        Normalize optional text.
+        Normalize a URL into a clean HTTP(S) URL.
+
+        Markdown links, terminal formatting and surrounding punctuation are
+        stripped from parser input before the URL is retained.
         """
 
         if value is None:
             return None
 
-        normalized = str(
+        text = cls._strip_ansi(
             value
         ).strip()
 
-        return normalized or None
+        if not text:
+            return None
+
+        # Convert Markdown link syntax:
+        #
+        # [https://example.com](https://example.com)
+        #
+        markdown_match = re.fullmatch(
+            r"\[([^\]]+)\]\((https?://[^)]+)\)",
+            text,
+            re.IGNORECASE,
+        )
+
+        if markdown_match:
+            text = markdown_match.group(
+                2
+            ).strip()
+
+        # If surrounding text contains a URL, prefer the actual URL token.
+        url_match = re.search(
+            r"https?://[^\s\]\)\}" "'<>]+",
+            text,
+            re.IGNORECASE,
+        )
+
+        if url_match:
+            text = url_match.group(
+                0
+            )
+
+        text = text.strip(
+            "\"'`"
+        ).rstrip(
+            "\"'.,:;"
+        )
+
+        try:
+            parsed = urlparse(
+                text
+            )
+        except ValueError:
+            return None
+
+        if parsed.scheme.lower() not in {
+            "http",
+            "https",
+        }:
+            return None
+
+        if not parsed.hostname:
+            return None
+
+        return text
+
+    @staticmethod
+    def _normalize_host(
+        value: Any,
+    ) -> str | None:
+        """
+        Normalize a hostname.
+
+        URLs are converted to hostnames. Paths and surrounding punctuation
+        are never retained in the host field.
+        """
+
+        if value is None:
+            return None
+
+        text = _ANSI_PATTERN.sub(
+            "",
+            str(value),
+        ).strip()
+
+        if not text:
+            return None
+
+        if "://" in text:
+
+            try:
+                parsed = urlparse(
+                    text
+                )
+            except ValueError:
+                return None
+
+            hostname = parsed.hostname
+
+        else:
+            text = text.strip(
+                "\"'`"
+            ).rstrip(
+                "\"'.,:;"
+            )
+
+            # Reject obvious URL paths.
+            if "/" in text:
+                return None
+
+            try:
+                parsed = urlparse(
+                    f"//{text}"
+                )
+                hostname = parsed.hostname
+            except ValueError:
+                return None
+
+        if not hostname:
+            return None
+
+        return hostname.lower().rstrip(
+            "."
+        )
+
+    @staticmethod
+    def _extract_host(
+        url: str | None,
+    ) -> str | None:
+        """
+        Extract a hostname from a normalized URL.
+        """
+
+        if not url:
+            return None
+
+        try:
+            parsed = urlparse(
+                url
+            )
+        except ValueError:
+            return None
+
+        hostname = parsed.hostname
+
+        if not hostname:
+            return None
+
+        return hostname.lower().rstrip(
+            "."
+        )
+
+    @staticmethod
+    def _extract_port(
+        url: str | None,
+    ) -> int | None:
+        """
+        Extract a valid TCP port from a URL.
+        """
+
+        if not url:
+            return None
+
+        try:
+            parsed = urlparse(
+                url
+            )
+            port = parsed.port
+        except ValueError:
+            return None
+
+        if port is None:
+            return (
+                443
+                if parsed.scheme.lower()
+                == "https"
+                else 80
+            )
+
+        if 1 <= port <= 65535:
+            return port
+
+        return None
 
     ###########################################################################
-    # Target / URL Helpers
+    # Target Resolution
     ###########################################################################
 
     @staticmethod
     def _resolve_target(
         execution_result: Any,
         ctx: Mapping[str, Any],
-    ) -> str | None:
+    ) -> str:
         """
         Resolve the assessment target from collector context or execution
         metadata.
         """
 
-        target = ctx.get(
+        context_target = ctx.get(
             "target"
         )
 
-        if target:
+        if context_target:
             return str(
-                target
+                context_target
             ).strip()
 
         metadata = getattr(
@@ -1410,66 +2022,37 @@ class NucleiCollector(CollectorBase):
                     target
                 ).strip()
 
-        return None
-
-    @staticmethod
-    def _extract_host(
-        value: str,
-    ) -> str | None:
-        """
-        Extract a hostname from a URL or host-like value.
-        """
-
-        try:
-            parsed = urlparse(
-                value
+            execution = metadata.get(
+                "execution",
+                {},
             )
 
-        except ValueError:
-            return None
+            if isinstance(
+                execution,
+                Mapping,
+            ):
+                target = execution.get(
+                    "target"
+                )
 
-        if parsed.hostname:
-            return parsed.hostname
+                if target:
+                    return str(
+                        target
+                    ).strip()
 
-        return (
-            value
-            if value
-            else None
-        )
+        return ""
 
-    @staticmethod
-    def _extract_port(
-        url: str,
-    ) -> int | None:
-        """
-        Extract an explicit or effective HTTP(S) port.
-        """
-
-        try:
-            parsed = urlparse(
-                url
-            )
-
-            if parsed.port is not None:
-                return parsed.port
-
-            if parsed.scheme.lower() == "http":
-                return 80
-
-            if parsed.scheme.lower() == "https":
-                return 443
-
-        except ValueError:
-            return None
-
-        return None
-
-
-###############################################################################
-# Public API
-###############################################################################
+    ###########################################################################
+    # Public API
+    ###########################################################################
 
 
 __all__ = [
+    "TOOL_NAME",
+    "OBSERVATION_VULNERABILITY",
+    "OBSERVATION_MISCONFIGURATION",
+    "OBSERVATION_EXPOSED_RESOURCE",
+    "OBSERVATION_CVE",
+    "OBSERVATION_SECURITY_ISSUE",
     "NucleiCollector",
 ]
