@@ -203,11 +203,21 @@ class SubhuntTool(
         if wordlist is None:
             wordlist = DEFAULT_WORDLIST
 
+        wordlist_path = Path(
+            str(wordlist).strip()
+        )
+
         if not str(
-            wordlist
-        ).strip():
+            wordlist_path
+        ):
             raise ValueError(
                 "Subhunt wordlist cannot be empty."
+            )
+
+        if not wordlist_path.is_file():
+            raise ValueError(
+                f"Subhunt wordlist does not exist or is not a file: "
+                f"{wordlist_path}"
             )
 
         for name in (
@@ -311,6 +321,52 @@ class SubhuntTool(
             )
 
     @staticmethod
+    def _execution_timeout(
+        context: Any,
+        default: int,
+    ) -> int:
+        """
+        Return the canonical execution timeout for a direct/custom run.
+
+        ToolExecutor propagates the assessment-level timeout into
+        ToolContext.options["tool_timeout"] before invoking a custom
+        adapter. The adapter-specific default remains available for
+        direct adapter execution outside ToolExecutor.
+        """
+
+        options = getattr(
+            context,
+            "options",
+            None,
+        )
+
+        if not isinstance(
+            options,
+            dict,
+        ):
+            return default
+
+        value = options.get(
+            "tool_timeout",
+            default,
+        )
+
+        try:
+            timeout = int(
+                value
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return default
+
+        if timeout <= 0:
+            return default
+
+        return timeout
+
+    @staticmethod
     def _strip_ansi(
         value: str,
     ) -> str:
@@ -319,7 +375,7 @@ class SubhuntTool(
         """
 
         return re.sub(
-            r"\x1b\[[0-9;?]*[ -/]*[@-~]",
+            r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])",
             "",
             value,
         )
@@ -466,14 +522,12 @@ class SubhuntTool(
         result = run_command(
             tool=self.name,
             capability=self.capability,
-            cmd=" ".join(
-                _shell_quote(
-                    argument
-                )
-                for argument in command
-            ),
+            cmd=command,
             outfile=str(log_file),
-            timeout=600,
+            timeout=self._execution_timeout(
+                self.context,
+                600,
+            ),
         )
 
         result.metadata.setdefault(
@@ -539,29 +593,10 @@ class SubhuntTool(
 
 
 ###############################################################################
-# Command Quoting
-###############################################################################
-
-
-def _shell_quote(
-    value: str,
-) -> str:
-    """
-    Quote one command argument for the legacy string-based runner.
-    """
-
-    import shlex
-
-    return shlex.quote(
-        str(value)
-    )
-
-
-###############################################################################
 # Public API
 ###############################################################################
 
 
 __all__ = [
     "SubhuntTool",
-    ]
+]

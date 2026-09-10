@@ -83,6 +83,9 @@ from scopeforgex.analyzers.http_methods import (
 from scopeforgex.analyzers.sensitive_information import (
     SensitiveInformationAnalyzer,
 )
+from scopeforgex.analyzers.software_identity import (
+    SoftwareIdentityAnalyzer,
+)
 
 
 ###############################################################################
@@ -244,6 +247,7 @@ class NativeAnalyzerEngine:
                 HTTPMethodsAnalyzer(),
                 SensitiveInformationAnalyzer(),
                 APIAnalyzer(),
+                SoftwareIdentityAnalyzer(),
             ]
 
         self.analyzers = list(

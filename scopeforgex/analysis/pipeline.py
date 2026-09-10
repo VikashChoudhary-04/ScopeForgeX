@@ -13,29 +13,28 @@ Collector / Native Analyzer
             v
         Observation
             |
-            v
-        Normalization
-            |
-            v
-          Finding
-            |
-            +--> Confidence Assessment
-            |
-            +--> Risk Classification
-            |
-            v
-       Deduplication
-            |
-            v
-        Unique Findings
-            |
-            v
-         Correlation
-            |
-            +--> Correlation Groups
-            |
-            v
-      Final Findings
+            +------------------------------+
+            |                              |
+            | Attack-surface observation   | Security observation
+            |                              |
+            v                              v
+       Retained as input             Normalization
+       but not a Finding                   |
+                                           v
+                                         Finding
+                                           |
+                                           +--> Confidence Assessment
+                                           |
+                                           +--> Risk Classification
+                                           |
+                                           v
+                                      Deduplication
+                                           |
+                                           v
+                                       Correlation
+                                           |
+                                           v
+                                      Final Findings
 
 Responsibilities
 ----------------
@@ -64,19 +63,77 @@ Design Principles
 - Processing failures are recorded rather than silently discarded.
 - Dependency injection allows individual processing components to be tested
   independently.
-- The canonical Finding model is ``scopeforgex.findings.model.Finding``.
+- Attack-surface observations are not automatically elevated into security
+  findings.
+- Explicit security observations continue through the canonical Finding
+  pipeline.
+- Existing canonical Finding instances are always preserved.
+- Unknown/custom observation types remain eligible for normalization rather
+  than being silently discarded.
+- The canonical Finding model is
+  ``scopeforgex.findings.model.Finding``.
 
 ScopeForgeX 3.0.0
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from scopeforgex.collectors.base import CollectorObservation
 from scopeforgex.findings.model import Finding
 from scopeforgex.findings.normalizer import FindingNormalizer
+
+
+###############################################################################
+# Constants
+###############################################################################
+
+
+# Observation types that describe attack-surface inventory rather than
+# security findings. These observations remain available to the collector
+# and reporting layers but must not be automatically elevated into Findings.
+#
+# This list is intentionally explicit and conservative. Unknown observation
+# types are still eligible for normal Finding conversion so that a newly
+# introduced security observation is not silently discarded.
+ATTACK_SURFACE_OBSERVATION_TYPES: frozenset[str] = frozenset(
+    {
+        "OPEN_PORT",
+        "SERVICE",
+        "SERVICE_VERSION",
+        "HOST",
+        "HOST_UP",
+        "HOST_DISCOVERY",
+        "HTTP_SERVICE",
+        "HTTP_STATUS",
+        "TECHNOLOGY",
+        "TECHNOLOGY_DETECTION",
+        "ENDPOINT",
+        "URL",
+        "API_ENDPOINT",
+        "API_ROUTE",
+        "ROUTE",
+        "PARAMETER",
+        "RESOURCE",
+        "DNS",
+        "DNS_RECORD",
+        "DNS_CONFIGURATION",
+        "DNS_A",
+        "DNS_AAAA",
+        "DNS_CNAME",
+        "DNS_MX",
+        "DNS_NS",
+        "DNS_SOA",
+        "SOA",
+        "SUBDOMAIN",
+        "SUBDOMAIN_DISCOVERY",
+        "NETWORK_CONFIGURATION",
+    }
+)
 
 
 ###############################################################################
@@ -171,6 +228,10 @@ class AnalysisResult:
     duplicate_count:
         Number of duplicate findings removed.
 
+    observation_count:
+        Number of supplied observations that were recognized as
+        attack-surface observations and therefore not elevated into Findings.
+
     error_count:
         Number of observations that could not be processed.
 
@@ -194,6 +255,8 @@ class AnalysisResult:
     finding_count: int = 0
 
     duplicate_count: int = 0
+
+    observation_count: int = 0
 
     error_count: int = 0
 
@@ -237,6 +300,7 @@ class AnalysisResult:
             "input_count": self.input_count,
             "finding_count": self.finding_count,
             "duplicate_count": self.duplicate_count,
+            "observation_count": self.observation_count,
             "error_count": self.error_count,
             "errors": list(
                 self.errors
@@ -260,6 +324,8 @@ class AnalysisPipeline:
 
         observation
             ↓
+        observation classification
+            ↓
         normalization
             ↓
         confidence assessment
@@ -271,6 +337,10 @@ class AnalysisPipeline:
         correlation
             ↓
         final findings + correlation groups
+
+    Attack-surface observations are intentionally excluded from Finding
+    conversion. They remain represented by the collector result and its
+    observation data.
 
     Every processing component is optional.
     """
@@ -318,6 +388,9 @@ class AnalysisPipeline:
     ) -> AnalysisResult:
         """
         Process observations through the complete analysis pipeline.
+
+        Attack-surface observations are retained as assessment observations
+        but are not converted into canonical Findings.
         """
 
         normalized_inputs = self._coerce_inputs(
@@ -332,10 +405,31 @@ class AnalysisPipeline:
 
         findings: list[Finding] = []
 
+        skipped_observations = 0
+        skipped_observation_types: Counter[str] = Counter()
+
         for index, observation in enumerate(
             normalized_inputs
         ):
             try:
+                if self._is_attack_surface_observation(
+                    observation
+                ):
+                    skipped_observations += 1
+
+                    observation_type = (
+                        self._observation_type(
+                            observation
+                        )
+                    )
+
+                    if observation_type:
+                        skipped_observation_types[
+                            observation_type
+                        ] += 1
+
+                    continue
+
                 finding = self._to_finding(
                     observation
                 )
@@ -370,6 +464,10 @@ class AnalysisPipeline:
                 if self.fail_fast:
                     raise
 
+        result.observation_count = (
+            skipped_observations
+        )
+
         result.finding_count = len(
             findings
         )
@@ -396,6 +494,14 @@ class AnalysisPipeline:
             findings
         )
 
+        evidence_bearing_finding_count = sum(
+            1
+            for finding in findings
+            if self._finding_has_evidence(
+                finding
+            )
+        )
+
         result.metadata = {
             "normalizer_enabled": (
                 self.normalizer is not None
@@ -414,6 +520,47 @@ class AnalysisPipeline:
             ),
             "canonical_finding_model": (
                 "scopeforgex.findings.model.Finding"
+            ),
+            "input_observation_count": (
+                len(
+                    normalized_inputs
+                )
+            ),
+            "attack_surface_observation_count": (
+                skipped_observations
+            ),
+            "attack_surface_observation_types": (
+                dict(
+                    sorted(
+                        skipped_observation_types.items()
+                    )
+                )
+            ),
+            "security_finding_candidate_count": (
+                len(
+                    findings
+                )
+                + duplicate_count
+            ),
+            "final_finding_count": (
+                len(
+                    findings
+                )
+            ),
+            "evidence_bearing_finding_count": (
+                evidence_bearing_finding_count
+            ),
+            "findings_without_evidence_count": (
+                len(
+                    findings
+                )
+                - evidence_bearing_finding_count
+            ),
+            "duplicate_count": (
+                duplicate_count
+            ),
+            "processing_error_count": (
+                result.error_count
             ),
             "correlation_group_count": (
                 len(
@@ -500,6 +647,115 @@ class AnalysisPipeline:
         ]
 
     ###########################################################################
+    # Observation Classification
+    ###########################################################################
+
+    @staticmethod
+    def _observation_type(
+        observation: Any,
+    ) -> str:
+        """
+        Return the normalized observation type when available.
+
+        Existing Finding instances deliberately return an empty value because
+        canonical Findings must always continue through the finding pipeline.
+        """
+
+        if isinstance(
+            observation,
+            Finding,
+        ):
+            return ""
+
+        if isinstance(
+            observation,
+            CollectorObservation,
+        ):
+            return str(
+                observation.observation_type or ""
+            ).strip().upper()
+
+        if isinstance(
+            observation,
+            Mapping,
+        ):
+            value = observation.get(
+                "observation_type",
+                observation.get(
+                    "type",
+                    "",
+                ),
+            )
+
+            return str(
+                value or ""
+            ).strip().upper()
+
+        serializer = getattr(
+            observation,
+            "as_dict",
+            None,
+        )
+
+        if callable(
+            serializer,
+        ):
+            try:
+                data = serializer()
+            except Exception:
+                return ""
+
+            if isinstance(
+                data,
+                Mapping,
+            ):
+                value = data.get(
+                    "observation_type",
+                    data.get(
+                        "type",
+                        "",
+                    ),
+                )
+
+                return str(
+                    value or ""
+                ).strip().upper()
+
+        return ""
+
+    @classmethod
+    def _is_attack_surface_observation(
+        cls,
+        observation: Any,
+    ) -> bool:
+        """
+        Return whether an observation represents attack-surface inventory.
+
+        Canonical Finding instances are never filtered.
+
+        The classifier is intentionally conservative. Only explicitly known
+        attack-surface observation types are excluded from Finding conversion.
+        Unknown observation types remain eligible for normalization.
+        """
+
+        if isinstance(
+            observation,
+            Finding,
+        ):
+            return False
+
+        observation_type = cls._observation_type(
+            observation
+        )
+
+        if not observation_type:
+            return False
+
+        return observation_type in (
+            ATTACK_SURFACE_OBSERVATION_TYPES
+        )
+
+    ###########################################################################
     # Finding Conversion
     ###########################################################################
 
@@ -511,6 +767,9 @@ class AnalysisPipeline:
         Convert an observation into the canonical ScopeForgeX Finding model.
 
         Existing canonical Finding instances are preserved.
+
+        Attack-surface observations must be filtered before this method is
+        called.
 
         Mappings and supported observation objects are normalized through the
         canonical FindingNormalizer. No second Finding representation is
@@ -696,6 +955,58 @@ class AnalysisPipeline:
         return list(
             processed
         )
+
+    ###########################################################################
+    # Evidence Inspection
+    ###########################################################################
+
+    @staticmethod
+    def _finding_has_evidence(
+        finding: Finding,
+    ) -> bool:
+        """
+        Return whether a Finding already carries evidence.
+
+        This method does not create, persist, or rewrite evidence references.
+        It only exposes the evidence state already present on the canonical
+        Finding so downstream reporting can distinguish evidence-backed
+        findings from findings without attached evidence.
+        """
+
+        evidence = getattr(
+            finding,
+            "evidence",
+            None,
+        )
+
+        if evidence is None:
+            return False
+
+        if isinstance(
+            evidence,
+            str,
+        ):
+            return bool(
+                evidence.strip()
+            )
+
+        if isinstance(
+            evidence,
+            Mapping,
+        ):
+            return bool(
+                evidence
+            )
+
+        if isinstance(
+            evidence,
+            (list, tuple, set, frozenset),
+        ):
+            return bool(
+                evidence
+            )
+
+        return True
 
     ###########################################################################
     # Return-Value Normalization
@@ -904,5 +1215,6 @@ __all__ = [
     "RiskProtocol",
     "DeduplicatorProtocol",
     "CorrelatorProtocol",
+    "ATTACK_SURFACE_OBSERVATION_TYPES",
     "analyze",
 ]

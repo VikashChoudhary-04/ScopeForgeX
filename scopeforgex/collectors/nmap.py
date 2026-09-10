@@ -193,15 +193,28 @@ class NmapCollector(CollectorBase):
     ) -> bool:
         """
         Determine whether an execution artifact is an Nmap XML artifact.
+
+        ExecutionResult stores artifacts as filesystem path strings. The
+        collector also accepts artifact-like objects exposing a ``name``
+        attribute for compatibility with other execution paths.
         """
 
-        name = str(
-            getattr(
-                artifact,
-                "name",
-                "",
-            )
-        ).strip().lower()
+        if isinstance(
+            artifact,
+            (str, Path),
+        ):
+            name = Path(
+                artifact
+            ).name.strip().lower()
+
+        else:
+            name = str(
+                getattr(
+                    artifact,
+                    "name",
+                    "",
+                )
+            ).strip().lower()
 
         if name in NMAP_XML_ARTIFACT_NAMES:
             return True
@@ -218,7 +231,24 @@ class NmapCollector(CollectorBase):
     ) -> Path | None:
         """
         Extract a filesystem path from an execution artifact.
+
+        ExecutionResult uses ``list[str]`` for artifacts, while some runtime
+        paths may expose artifact objects with path-like attributes.
         """
+
+        if isinstance(
+            artifact,
+            (str, Path),
+        ):
+            value = str(
+                artifact
+            ).strip()
+
+            return (
+                Path(value)
+                if value
+                else None
+            )
 
         for field_name in (
             "path",
@@ -319,7 +349,6 @@ class NmapCollector(CollectorBase):
                 self._host_status_observation(
                     host,
                     host_state,
-                    ctx,
                     source_path,
                 )
             )
@@ -337,7 +366,6 @@ class NmapCollector(CollectorBase):
             self._parse_host_scripts(
                 host_element,
                 host,
-                ctx,
                 source_path,
             )
         )
@@ -352,48 +380,59 @@ class NmapCollector(CollectorBase):
         Extract the preferred host address.
 
         IPv4/IPv6 addresses are preferred over hostnames because they provide
-        a stable network-asset identity.
+        deterministic network asset identity.
         """
 
         addresses = host_element.findall(
             "./address"
         )
 
-        preferred_types = (
-            "ipv4",
-            "ipv6",
-            "mac",
-        )
+        for address in addresses:
+            address_type = str(
+                address.attrib.get(
+                    "addrtype",
+                    "",
+                )
+            ).strip().lower()
 
-        for address_type in preferred_types:
-            for address in addresses:
-                if (
+            if address_type in {
+                "ipv4",
+                "ipv6",
+            }:
+                value = str(
                     address.attrib.get(
-                        "addrtype",
-                        "",
-                    ).lower()
-                    == address_type
-                ):
-                    value = address.attrib.get(
                         "addr",
                         "",
-                    ).strip()
+                    )
+                ).strip()
 
-                    if value:
-                        return value
+                if value:
+                    return value
+
+        for address in addresses:
+            value = str(
+                address.attrib.get(
+                    "addr",
+                    "",
+                )
+            ).strip()
+
+            if value:
+                return value
 
         hostname = host_element.find(
             "./hostnames/hostname"
         )
 
-        return (
-            hostname.attrib.get(
-                "name",
-                "",
+        if hostname is not None:
+            return str(
+                hostname.attrib.get(
+                    "name",
+                    "",
+                )
             ).strip()
-            if hostname is not None
-            else ""
-        )
+
+        return ""
 
     ###########################################################################
     # Host Status
@@ -403,7 +442,6 @@ class NmapCollector(CollectorBase):
         self,
         host: str,
         state: str,
-        ctx: Mapping[str, Any],
         source_path: Path,
     ) -> CollectorObservation:
         """
@@ -413,22 +451,22 @@ class NmapCollector(CollectorBase):
         return CollectorObservation(
             observation_type=OBSERVATION_NETWORK_CONFIGURATION,
             value=state,
-            target=ctx.get(
-                "target"
+            title=f"Nmap host state: {state}",
+            description=(
+                f"Nmap reported host {host} as {state}."
             ),
+            severity="Informational",
+            confidence="High",
+            status="Observed",
             host=host,
             evidence={
-                "host_state": state,
-                "artifact": str(
+                "source": str(
                     source_path
                 ),
+                "host_state": state,
             },
-            source_tool=self.tool,
+            source_tool=NMAP_TOOL,
             detection_method="nmap_host_status",
-            confidence="high",
-            metadata={
-                "state": state,
-            },
         )
 
     ###########################################################################
@@ -458,14 +496,6 @@ class NmapCollector(CollectorBase):
             if port is None:
                 continue
 
-            protocol = (
-                port_element.attrib.get(
-                    "protocol",
-                    "",
-                ).strip().lower()
-                or None
-            )
-
             state_element = port_element.find(
                 "./state"
             )
@@ -473,22 +503,17 @@ class NmapCollector(CollectorBase):
             state = self._attribute(
                 state_element,
                 "state",
-            ).lower()
+            )
 
             if state == "open":
                 observations.append(
                     self._open_port_observation(
                         host=host,
                         port=port,
-                        protocol=protocol,
-                        state_element=state_element,
-                        ctx=ctx,
+                        port_element=port_element,
                         source_path=source_path,
                     )
                 )
-
-            if state != "open":
-                continue
 
             service_element = port_element.find(
                 "./service"
@@ -517,14 +542,17 @@ class NmapCollector(CollectorBase):
                 "extrainfo",
             )
 
+            cpe = self._attribute(
+                service_element,
+                "cpe",
+            )
+
             if service_name:
                 observations.append(
                     self._service_observation(
                         host=host,
                         port=port,
-                        protocol=protocol,
                         service_element=service_element,
-                        ctx=ctx,
                         source_path=source_path,
                     )
                 )
@@ -532,29 +560,28 @@ class NmapCollector(CollectorBase):
             if (
                 product
                 or version
-                or extrainfo
+                or cpe
             ):
                 observations.append(
                     self._service_version_observation(
                         host=host,
                         port=port,
-                        protocol=protocol,
                         service_element=service_element,
-                        ctx=ctx,
                         source_path=source_path,
                     )
                 )
 
-            observations.extend(
-                self._parse_port_scripts(
-                    port_element=port_element,
-                    host=host,
-                    port=port,
-                    protocol=protocol,
-                    ctx=ctx,
-                    source_path=source_path,
+            if port_element.findall(
+                "./script"
+            ):
+                observations.extend(
+                    self._parse_port_scripts(
+                        port_element=port_element,
+                        host=host,
+                        port=port,
+                        source_path=source_path,
+                    )
                 )
-            )
 
         return observations
 
@@ -564,56 +591,50 @@ class NmapCollector(CollectorBase):
 
     def _open_port_observation(
         self,
-        *,
         host: str,
         port: int,
-        protocol: str | None,
-        state_element: ET.Element | None,
-        ctx: Mapping[str, Any],
+        port_element: ET.Element,
         source_path: Path,
     ) -> CollectorObservation:
         """
-        Build an OPEN_PORT observation.
+        Build an open-port observation.
         """
 
-        evidence = {
-            "state": self._attribute(
-                state_element,
-                "state",
-            ),
-            "reason": self._attribute(
-                state_element,
-                "reason",
-            ),
-            "reason_ttl": self._attribute(
-                state_element,
-                "reason_ttl",
-            ),
-            "artifact": str(
-                source_path
-            ),
-        }
+        state_element = port_element.find(
+            "./state"
+        )
 
-        metadata = {
-            "protocol": protocol,
-            "state": "open",
-        }
+        state = self._attribute(
+            state_element,
+            "state",
+        )
 
         return CollectorObservation(
             observation_type=OBSERVATION_OPEN_PORT,
-            value=str(
-                port
+            value=f"{host}:{port}",
+            title=f"Open port {host}:{port}",
+            description=(
+                f"Nmap reported TCP/UDP port {port} on {host} "
+                f"as {state or 'open'}."
             ),
-            target=ctx.get(
-                "target"
-            ),
+            severity="Informational",
+            confidence="High",
+            status="Observed",
             host=host,
             port=port,
-            evidence=evidence,
-            source_tool=self.tool,
+            evidence={
+                "source": str(
+                    source_path
+                ),
+                "state": state,
+                "protocol": (
+                    port_element.attrib.get(
+                        "protocol"
+                    )
+                ),
+            },
+            source_tool=NMAP_TOOL,
             detection_method="nmap_port_state",
-            confidence="high",
-            metadata=metadata,
         )
 
     ###########################################################################
@@ -622,16 +643,13 @@ class NmapCollector(CollectorBase):
 
     def _service_observation(
         self,
-        *,
         host: str,
         port: int,
-        protocol: str | None,
         service_element: ET.Element,
-        ctx: Mapping[str, Any],
         source_path: Path,
     ) -> CollectorObservation:
         """
-        Build a SERVICE observation.
+        Build a service observation.
         """
 
         service_name = self._attribute(
@@ -639,48 +657,65 @@ class NmapCollector(CollectorBase):
             "name",
         )
 
-        evidence = {
-            "name": service_name,
-            "product": self._attribute(
-                service_element,
-                "product",
-            ),
-            "version": self._attribute(
-                service_element,
-                "version",
-            ),
-            "extrainfo": self._attribute(
-                service_element,
-                "extrainfo",
-            ),
-            "method": self._attribute(
-                service_element,
-                "method",
-            ),
-            "conf": self._attribute(
-                service_element,
-                "conf",
-            ),
-            "artifact": str(
-                source_path
-            ),
-        }
-
         return CollectorObservation(
             observation_type=OBSERVATION_SERVICE,
             value=service_name,
-            target=ctx.get(
-                "target"
+            title=(
+                f"Detected service: {service_name}"
             ),
+            description=(
+                f"Nmap identified service {service_name} on "
+                f"{host}:{port}."
+            ),
+            severity="Informational",
+            confidence=self._service_confidence(
+                service_element
+            ),
+            status="Observed",
             host=host,
             port=port,
-            evidence=evidence,
-            source_tool=self.tool,
-            detection_method="nmap_service_detection",
-            confidence="high",
-            metadata={
-                "protocol": protocol,
+            evidence={
+                "source": str(
+                    source_path
+                ),
                 "service": service_name,
+                "product": self._attribute(
+                    service_element,
+                    "product",
+                ),
+                "version": self._attribute(
+                    service_element,
+                    "version",
+                ),
+                "extrainfo": self._attribute(
+                    service_element,
+                    "extrainfo",
+                ),
+                "method": self._attribute(
+                    service_element,
+                    "method",
+                ),
+                "conf": self._attribute(
+                    service_element,
+                    "conf",
+                ),
+            },
+            source_tool=NMAP_TOOL,
+            detection_method="nmap_service_detection",
+            metadata={
+                "service": service_name,
+                "product": self._attribute(
+                    service_element,
+                    "product",
+                ),
+                "version": self._attribute(
+                    service_element,
+                    "version",
+                ),
+                "cpe": self._attribute(
+                    service_element,
+                    "cpe",
+                ),
             },
         )
 
@@ -690,16 +725,13 @@ class NmapCollector(CollectorBase):
 
     def _service_version_observation(
         self,
-        *,
         host: str,
         port: int,
-        protocol: str | None,
         service_element: ET.Element,
-        ctx: Mapping[str, Any],
         source_path: Path,
     ) -> CollectorObservation:
         """
-        Build a SERVICE_VERSION observation.
+        Build a service/version observation.
         """
 
         product = self._attribute(
@@ -712,53 +744,73 @@ class NmapCollector(CollectorBase):
             "version",
         )
 
-        extrainfo = self._attribute(
+        service_name = self._attribute(
             service_element,
-            "extrainfo",
+            "name",
         )
 
-        components = [
-            value
-            for value in (
+        cpe = self._attribute(
+            service_element,
+            "cpe",
+        )
+
+        value_parts = [
+            part
+            for part in (
                 product,
                 version,
-                extrainfo,
             )
-            if value
+            if part
         ]
 
         value = " ".join(
-            components
+            value_parts
         )
+
+        if not value:
+            value = (
+                service_name
+                or cpe
+                or "unknown"
+            )
 
         return CollectorObservation(
             observation_type=OBSERVATION_SERVICE_VERSION,
             value=value,
-            target=ctx.get(
-                "target"
+            title=(
+                f"Detected service version: {value}"
             ),
+            description=(
+                f"Nmap reported service/version information for "
+                f"{host}:{port}."
+            ),
+            severity="Informational",
+            confidence=self._service_confidence(
+                service_element
+            ),
+            status="Observed",
             host=host,
             port=port,
             evidence={
-                "product": product,
-                "version": version,
-                "extrainfo": extrainfo,
-                "cpe": self._attribute(
-                    service_element,
-                    "cpe",
-                ),
-                "artifact": str(
+                "source": str(
                     source_path
                 ),
-            },
-            source_tool=self.tool,
-            detection_method="nmap_service_version",
-            confidence="high",
-            metadata={
-                "protocol": protocol,
+                "service": service_name,
                 "product": product,
                 "version": version,
-                "extrainfo": extrainfo,
+                "extrainfo": self._attribute(
+                    service_element,
+                    "extrainfo",
+                ),
+                "cpe": cpe,
+            },
+            source_tool=NMAP_TOOL,
+            detection_method="nmap_service_version",
+            metadata={
+                "service": service_name,
+                "product": product,
+                "version": version,
+                "cpe": cpe,
             },
         )
 
@@ -768,19 +820,13 @@ class NmapCollector(CollectorBase):
 
     def _parse_port_scripts(
         self,
-        *,
         port_element: ET.Element,
         host: str,
         port: int,
-        protocol: str | None,
-        ctx: Mapping[str, Any],
         source_path: Path,
     ) -> list[CollectorObservation]:
         """
         Parse NSE script output attached to an individual port.
-
-        Script output is represented as an assessment observation. It is not
-        automatically considered a confirmed vulnerability.
         """
 
         observations: list[CollectorObservation] = []
@@ -788,29 +834,22 @@ class NmapCollector(CollectorBase):
         for script in port_element.findall(
             "./script"
         ):
-            observation = self._script_observation(
-                script=script,
-                host=host,
-                port=port,
-                protocol=protocol,
-                ctx=ctx,
-                source_path=source_path,
-                scope="port",
-            )
-
-            if observation is not None:
-                observations.append(
-                    observation
+            observations.append(
+                self._script_observation(
+                    script=script,
+                    host=host,
+                    port=port,
+                    source_path=source_path,
+                    scope="port",
                 )
+            )
 
         return observations
 
     def _parse_host_scripts(
         self,
-        *,
         host_element: ET.Element,
         host: str,
-        ctx: Mapping[str, Any],
         source_path: Path,
     ) -> list[CollectorObservation]:
         """
@@ -822,36 +861,28 @@ class NmapCollector(CollectorBase):
         for script in host_element.findall(
             "./hostscript/script"
         ):
-            observation = self._script_observation(
-                script=script,
-                host=host,
-                port=None,
-                protocol=None,
-                ctx=ctx,
-                source_path=source_path,
-                scope="host",
-            )
-
-            if observation is not None:
-                observations.append(
-                    observation
+            observations.append(
+                self._script_observation(
+                    script=script,
+                    host=host,
+                    port=None,
+                    source_path=source_path,
+                    scope="host",
                 )
+            )
 
         return observations
 
     def _script_observation(
         self,
-        *,
         script: ET.Element,
         host: str,
         port: int | None,
-        protocol: str | None,
-        ctx: Mapping[str, Any],
         source_path: Path,
         scope: str,
-    ) -> CollectorObservation | None:
+    ) -> CollectorObservation:
         """
-        Convert one NSE script result into an observation.
+        Preserve an NSE script result as a structured observation.
         """
 
         script_id = self._attribute(
@@ -864,48 +895,49 @@ class NmapCollector(CollectorBase):
             "output",
         )
 
-        if not script_id and not output:
-            return None
-
         value = (
-            script_id
+            output
+            or script_id
             or "NSE script result"
         )
-
-        metadata = {
-            "script_id": script_id,
-            "scope": scope,
-            "protocol": protocol,
-        }
-
-        evidence = {
-            "script_id": script_id,
-            "output": output,
-            "artifact": str(
-                source_path
-            ),
-            "xml": self._element_to_dict(
-                script
-            ),
-        }
 
         return CollectorObservation(
             observation_type=OBSERVATION_NSE_SECURITY_FINDING,
             value=value,
-            target=ctx.get(
-                "target"
+            title=(
+                f"Nmap NSE result: {script_id or 'unknown'}"
             ),
+            description=(
+                "Nmap NSE script output preserved as assessment evidence. "
+                "The result is not automatically treated as a confirmed "
+                "vulnerability."
+            ),
+            severity="Informational",
+            confidence="Medium",
+            status="Observed",
             host=host,
             port=port,
-            evidence=evidence,
-            source_tool=self.tool,
+            evidence={
+                "source": str(
+                    source_path
+                ),
+                "scope": scope,
+                "script_id": script_id,
+                "output": output,
+                "xml": self._element_to_dict(
+                    script
+                ),
+            },
+            source_tool=NMAP_TOOL,
             detection_method="nmap_nse",
-            confidence="medium",
-            metadata=metadata,
+            metadata={
+                "script_id": script_id,
+                "scope": scope,
+            },
         )
 
     ###########################################################################
-    # XML Helpers
+    # Generic Helpers
     ###########################################################################
 
     @staticmethod
@@ -914,7 +946,7 @@ class NmapCollector(CollectorBase):
         name: str,
     ) -> str:
         """
-        Safely retrieve an XML attribute.
+        Return a stripped XML attribute value.
         """
 
         if element is None:
@@ -960,12 +992,13 @@ class NmapCollector(CollectorBase):
         Retrieve a host value from workflow context.
         """
 
-        for field_name in (
+        for key in (
             "host",
+            "target_host",
             "target",
         ):
             value = ctx.get(
-                field_name
+                key
             )
 
             if value:
@@ -975,58 +1008,71 @@ class NmapCollector(CollectorBase):
 
         return ""
 
-    ###########################################################################
-    # XML Evidence Serialization
-    ###########################################################################
+    @staticmethod
+    def _service_confidence(
+        service_element: ET.Element,
+    ) -> str:
+        """
+        Convert Nmap service confidence into ScopeForgeX confidence.
+        """
 
-    @classmethod
+        value = service_element.attrib.get(
+            "conf"
+        )
+
+        try:
+            confidence = int(
+                str(
+                    value
+                )
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return "Medium"
+
+        if confidence >= 7:
+            return "High"
+
+        if confidence >= 4:
+            return "Medium"
+
+        return "Low"
+
+    @staticmethod
     def _element_to_dict(
-        cls,
         element: ET.Element,
     ) -> dict[str, Any]:
         """
         Convert an XML element into a JSON-compatible dictionary.
-
-        This preserves nested NSE table/list output while keeping the
-        observation evidence serializable.
         """
 
         result: dict[str, Any] = {
             "tag": element.tag,
-        }
-
-        if element.attrib:
-            result[
-                "attributes"
-            ] = dict(
+            "attributes": dict(
                 element.attrib
-            )
-
-        text = (
-            element.text.strip()
-            if element.text
-            and element.text.strip()
-            else ""
-        )
-
-        if text:
-            result[
-                "text"
-            ] = text
+            ),
+        }
 
         children: list[dict[str, Any]] = []
 
         for child in element:
             children.append(
-                cls._element_to_dict(
+                NmapCollector._element_to_dict(
                     child
                 )
             )
 
         if children:
-            result[
-                "children"
-            ] = children
+            result["children"] = children
+
+        text = (
+            element.text or ""
+        ).strip()
+
+        if text:
+            result["text"] = text
 
         return result
 
@@ -1037,11 +1083,5 @@ class NmapCollector(CollectorBase):
 
 
 __all__ = [
-    "NMAP_TOOL",
-    "OBSERVATION_OPEN_PORT",
-    "OBSERVATION_SERVICE",
-    "OBSERVATION_SERVICE_VERSION",
-    "OBSERVATION_NETWORK_CONFIGURATION",
-    "OBSERVATION_NSE_SECURITY_FINDING",
     "NmapCollector",
 ]

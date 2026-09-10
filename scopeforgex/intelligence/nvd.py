@@ -10,9 +10,14 @@ Design rules
 - Network access is explicitly opt-in.
 - Responses are cached on disk.
 - CPE resolution never guesses between ambiguous candidates.
-- CVE applicability is evaluated against a specific CPE name.
+- CVE applicability is evaluated against NVD applicability statements.
 - NVD results represent vulnerability intelligence, not target-specific
   exploitation confirmation.
+- Paginated NVD responses are consumed up to the requested result limit.
+- Transient NVD rate limiting is handled with bounded retries.
+- Product/version CVE correlation uses NVD virtualMatchString candidate
+  discovery followed by local evaluation of the returned applicability
+  statements.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -43,6 +49,22 @@ CVE_ENDPOINT = (
 DEFAULT_TIMEOUT = 30
 
 DEFAULT_CACHE_TTL = 86400
+
+DEFAULT_PAGE_SIZE = 2000
+
+MAX_CPE_PAGE_SIZE = 10000
+
+MAX_CVE_PAGE_SIZE = 2000
+
+MAX_RETRIES = 3
+
+DEFAULT_RETRY_DELAY = 2.0
+
+MAX_RETRY_DELAY = 30.0
+
+_CPE_23_FIELD_COUNT = 13
+
+_CPE_VERSION_INDEX = 5
 
 
 def _cache_key(
@@ -82,6 +104,30 @@ def _copy(
             value
         )
     )
+
+
+def _positive_int(
+    value: Any,
+    default: int,
+) -> int:
+    """
+    Normalize a positive integer value.
+    """
+
+    try:
+        normalized = int(
+            value
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return default
+
+    if normalized <= 0:
+        return default
+
+    return normalized
 
 
 class NVDClient:
@@ -159,8 +205,12 @@ class NVDClient:
         """
         Return CPE candidates matching a product keyword and optional version.
 
-        This is candidate discovery only. It does not itself establish that
-        a vulnerability applies.
+        This is candidate discovery only. It does not establish vulnerability
+        applicability.
+
+        NVD CPE API records contain the actual CPE name under:
+
+            products[].cpe.cpeName
         """
 
         keyword = str(
@@ -170,86 +220,123 @@ class NVDClient:
         if not keyword:
             return []
 
-        payload = self._get_json(
-            CPE_ENDPOINT,
-            {
-                "keywordSearch": keyword,
-                "resultsPerPage": min(
-                    max(
-                        int(limit),
-                        1,
-                    ),
-                    10000,
-                ),
-            },
+        requested_limit = min(
+            _positive_int(
+                limit,
+                100,
+            ),
+            MAX_CPE_PAGE_SIZE,
         )
-
-        products = payload.get(
-            "products",
-            [],
-        )
-
-        if not isinstance(
-            products,
-            list,
-        ):
-            return []
 
         candidates: list[
             dict[str, Any]
         ] = []
 
-        for item in products:
-            if not isinstance(
-                item,
-                dict,
-            ):
-                continue
+        start_index = 0
 
-            cpe = item.get(
-                "cpe",
-                {},
+        while len(candidates) < requested_limit:
+            remaining = (
+                requested_limit
+                - len(candidates)
+            )
+
+            page_size = min(
+                remaining,
+                MAX_CPE_PAGE_SIZE,
+            )
+
+            payload = self._get_json(
+                CPE_ENDPOINT,
+                {
+                    "keywordSearch": keyword,
+                    "startIndex": start_index,
+                    "resultsPerPage": page_size,
+                },
+            )
+
+            products = payload.get(
+                "products",
+                [],
             )
 
             if not isinstance(
-                cpe,
-                dict,
+                products,
+                list,
             ):
-                continue
+                break
 
-            criteria = (
-                cpe.get(
-                    "criteria"
+            if not products:
+                break
+
+            processed = 0
+
+            for item in products:
+                processed += 1
+
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    continue
+
+                cpe = item.get(
+                    "cpe",
+                    {},
                 )
-                or cpe.get(
-                    "cpe23Uri"
+
+                if not isinstance(
+                    cpe,
+                    dict,
+                ):
+                    continue
+
+                cpe_name = (
+                    self._cpe_name_from_record(
+                        cpe
+                    )
                 )
-                or ""
+
+                if not cpe_name:
+                    continue
+
+                if (
+                    version
+                    and not self._candidate_version_matches(
+                        cpe_name,
+                        version,
+                    )
+                ):
+                    continue
+
+                candidates.append(
+                    _copy(item)
+                )
+
+                if (
+                    len(candidates)
+                    >= requested_limit
+                ):
+                    break
+
+            if processed == 0:
+                break
+
+            start_index += processed
+
+            total_results = (
+                self._total_results(
+                    payload
+                )
             )
 
             if (
-                not isinstance(
-                    criteria,
-                    str,
-                )
-                or not criteria
+                total_results is not None
+                and start_index >= total_results
             ):
-                continue
+                break
 
-            if (
-                version
-                and not self._candidate_version_matches(
-                    criteria,
-                    version,
-                )
-            ):
-                continue
-
-            candidates.append(
-                _copy(
-                    item
-                )
-            )
+            if len(products) < page_size:
+                break
 
         return candidates
 
@@ -265,19 +352,15 @@ class NVDClient:
         vendor: str | None = None,
     ) -> tuple[str | None, list[str]]:
         """
-        Resolve an observed product/version to one CPE.
+        Resolve an observed product/version to one CPE identity.
 
-        Returns:
+        Exact version-aware candidates are preferred. When no unique exact
+        identity can be resolved, candidates are normalized to CPE families
+        by replacing only the version component.
 
-            (
-                resolved_cpe,
-                candidate_cpes,
-            )
-
-        A CPE is returned only when the candidate set contains exactly one
-        identity.
-
-        Ambiguous results return ``None`` instead of manufacturing a CPE.
+        A family is returned only when exactly one unique family identity is
+        available. Ambiguous results return None instead of manufacturing a
+        CPE identity.
         """
 
         terms = [
@@ -296,11 +379,14 @@ class NVDClient:
                 [],
             )
 
+        keyword = " ".join(
+            terms
+        )
+
         candidates = self.search_cpes(
-            keyword=" ".join(
-                terms
-            ),
+            keyword=keyword,
             version=version,
+            limit=100,
         )
 
         cpes: list[str] = []
@@ -317,25 +403,15 @@ class NVDClient:
             ):
                 continue
 
-            criteria = (
-                cpe.get(
-                    "criteria"
+            cpe_name = (
+                self._cpe_name_from_record(
+                    cpe
                 )
-                or cpe.get(
-                    "cpe23Uri"
-                )
-                or ""
             )
 
-            if (
-                isinstance(
-                    criteria,
-                    str,
-                )
-                and criteria
-            ):
+            if cpe_name:
                 cpes.append(
-                    criteria
+                    cpe_name
                 )
 
         unique = list(
@@ -350,13 +426,1025 @@ class NVDClient:
                 unique,
             )
 
+        # If the version-aware lookup did not produce one unique CPE,
+        # retry without a version filter so that a product family can be
+        # resolved for versions missing from the NVD CPE dictionary.
+        family_candidates = self.search_cpes(
+            keyword=keyword,
+            version=None,
+            limit=100,
+        )
+
+        families: list[str] = []
+
+        for item in family_candidates:
+            cpe = item.get(
+                "cpe",
+                {},
+            )
+
+            if not isinstance(
+                cpe,
+                dict,
+            ):
+                continue
+
+            cpe_name = (
+                self._cpe_name_from_record(
+                    cpe
+                )
+            )
+
+            if not cpe_name:
+                continue
+
+            family = self._virtual_match_cpe(
+                cpe_name
+            )
+
+            if family:
+                families.append(
+                    family
+                )
+
+        unique_families = list(
+            dict.fromkeys(
+                families
+            )
+        )
+
+        if len(unique_families) == 1:
+            return (
+                unique_families[0],
+                unique_families,
+            )
+
         return (
             None,
-            unique,
+            unique_families or unique,
         )
 
     ###########################################################################
+    # CVE Candidate Discovery
+    ###########################################################################
+
+    def search_cves(
+        self,
+        *,
+        keyword: str,
+        limit: int = 2000,
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieve CVE records using NVD keyword search.
+
+        This method is retained for generic CVE discovery.
+
+        It must not be treated as authoritative product/version correlation.
+        For software applicability, use cves_for_software(), which uses
+        NVD's virtualMatchString mechanism.
+        """
+
+        keyword = str(
+            keyword
+        ).strip()
+
+        if not keyword:
+            return []
+
+        requested_limit = min(
+            _positive_int(
+                limit,
+                DEFAULT_PAGE_SIZE,
+            ),
+            MAX_CVE_PAGE_SIZE,
+        )
+
+        return self._paginate_cve_request(
+            {
+                "keywordSearch": keyword,
+            },
+            requested_limit,
+        )
+
+    def search_cves_by_virtual_match_string(
+        self,
+        *,
+        virtual_match_string: str,
+        limit: int = 2000,
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieve CVE candidates using NVD's virtualMatchString parameter.
+
+        virtualMatchString is used only for candidate discovery. The returned
+        CVE configurations must still be evaluated before a CVE is considered
+        applicable to an observed software version.
+        """
+
+        virtual_match_string = str(
+            virtual_match_string or ""
+        ).strip()
+
+        if not virtual_match_string:
+            return []
+
+        if not self._is_formatted_cpe_23(
+            virtual_match_string
+        ):
+            return []
+
+        requested_limit = min(
+            _positive_int(
+                limit,
+                DEFAULT_PAGE_SIZE,
+            ),
+            MAX_CVE_PAGE_SIZE,
+        )
+
+        return self._paginate_cve_request(
+            {
+                "virtualMatchString": (
+                    virtual_match_string
+                ),
+            },
+            requested_limit,
+        )
+
+    def _paginate_cve_request(
+        self,
+        base_params: dict[str, Any],
+        requested_limit: int,
+    ) -> list[dict[str, Any]]:
+        """
+        Consume paginated CVE API responses up to requested_limit.
+        """
+
+        vulnerabilities: list[
+            dict[str, Any]
+        ] = []
+
+        start_index = 0
+
+        while len(vulnerabilities) < requested_limit:
+            remaining = (
+                requested_limit
+                - len(vulnerabilities)
+            )
+
+            page_size = min(
+                remaining,
+                MAX_CVE_PAGE_SIZE,
+            )
+
+            params = dict(
+                base_params
+            )
+
+            params.update(
+                {
+                    "startIndex": start_index,
+                    "resultsPerPage": page_size,
+                }
+            )
+
+            payload = self._get_json(
+                CVE_ENDPOINT,
+                params,
+            )
+
+            page = payload.get(
+                "vulnerabilities",
+                [],
+            )
+
+            if not isinstance(
+                page,
+                list,
+            ):
+                break
+
+            if not page:
+                break
+
+            processed = 0
+
+            for item in page:
+                processed += 1
+
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    continue
+
+                vulnerabilities.append(
+                    _copy(item)
+                )
+
+                if (
+                    len(vulnerabilities)
+                    >= requested_limit
+                ):
+                    break
+
+            if processed == 0:
+                break
+
+            start_index += processed
+
+            total_results = (
+                self._total_results(
+                    payload
+                )
+            )
+
+            if (
+                total_results is not None
+                and start_index >= total_results
+            ):
+                break
+
+            if len(page) < page_size:
+                break
+
+        return vulnerabilities
+
+    ###########################################################################
     # CVE Applicability
+    ###########################################################################
+
+    def cves_for_software(
+        self,
+        *,
+        cpe: str,
+        version: str,
+        limit: int = 2000,
+    ) -> list[dict[str, Any]]:
+        """
+        Return CVEs whose NVD applicability rules match observed software.
+
+        Pipeline:
+
+            observed CPE
+                |
+                v
+            virtualMatchString
+                |
+                v
+            candidate CVEs
+                |
+                v
+            NVD applicability configurations
+                |
+                v
+            applicable CVEs
+
+        The version is never treated as vulnerable merely because a CVE was
+        returned by virtualMatchString.
+        """
+
+        cpe = str(
+            cpe or ""
+        ).strip()
+
+        version = str(
+            version or ""
+        ).strip()
+
+        if not cpe or not version:
+            return []
+
+        if not self._is_formatted_cpe_23(
+            cpe
+        ):
+            return []
+
+        virtual_match_string = (
+            self._virtual_match_cpe(
+                cpe
+            )
+        )
+
+        if not virtual_match_string:
+            return []
+
+        records = (
+            self.search_cves_by_virtual_match_string(
+                virtual_match_string=(
+                    virtual_match_string
+                ),
+                limit=limit,
+            )
+        )
+
+        results: list[
+            dict[str, Any]
+        ] = []
+
+        seen: set[str] = set()
+
+        for record in records:
+            cve = record.get(
+                "cve",
+                {},
+            )
+
+            if not isinstance(
+                cve,
+                dict,
+            ):
+                continue
+
+            identifier = str(
+                cve.get(
+                    "id",
+                    "",
+                )
+            ).strip().upper()
+
+            if (
+                not identifier
+                or identifier in seen
+            ):
+                continue
+
+            if not self._cve_applies_to_software(
+                cve,
+                cpe,
+                version,
+            ):
+                continue
+
+            seen.add(
+                identifier
+            )
+
+            results.append(
+                _copy(record)
+            )
+
+        return results
+
+    def _cve_applies_to_software(
+        self,
+        cve: dict[str, Any],
+        observed_cpe: str,
+        observed_version: str,
+    ) -> bool:
+        """
+        Determine whether at least one NVD configuration applies.
+        """
+
+        configurations = cve.get(
+            "configurations",
+            [],
+        )
+
+        if not isinstance(
+            configurations,
+            list,
+        ):
+            return False
+
+        for configuration in configurations:
+            if not isinstance(
+                configuration,
+                dict,
+            ):
+                continue
+
+            if self._configuration_applies(
+                configuration,
+                observed_cpe,
+                observed_version,
+            ):
+                return True
+
+        return False
+
+    def _configuration_applies(
+        self,
+        configuration: dict[str, Any],
+        observed_cpe: str,
+        observed_version: str,
+    ) -> bool:
+        """
+        Evaluate one NVD configuration.
+
+        NVD configurations normally contain one or more logical nodes.
+        """
+
+        nodes = configuration.get(
+            "nodes",
+            [],
+        )
+
+        if not isinstance(
+            nodes,
+            list,
+        ):
+            return False
+
+        for node in nodes:
+            if not isinstance(
+                node,
+                dict,
+            ):
+                continue
+
+            if self._node_applies(
+                node,
+                observed_cpe,
+                observed_version,
+            ):
+                return True
+
+        return False
+
+    def _node_applies(
+        self,
+        node: dict[str, Any],
+        observed_cpe: str,
+        observed_version: str,
+    ) -> bool:
+        """
+        Evaluate one NVD logical applicability node.
+        """
+
+        evaluations: list[
+            bool
+        ] = []
+
+        matches = node.get(
+            "cpeMatch",
+            [],
+        )
+
+        if isinstance(
+            matches,
+            list,
+        ):
+            for match in matches:
+                if not isinstance(
+                    match,
+                    dict,
+                ):
+                    continue
+
+                if match.get(
+                    "vulnerable"
+                ) is False:
+                    continue
+
+                criteria = str(
+                    match.get(
+                        "criteria",
+                        "",
+                    )
+                ).strip()
+
+                if not criteria:
+                    continue
+
+                evaluations.append(
+                    self._cpe_match_applies(
+                        match,
+                        criteria,
+                        observed_cpe,
+                        observed_version,
+                    )
+                )
+
+        children = node.get(
+            "children",
+            [],
+        )
+
+        if isinstance(
+            children,
+            list,
+        ):
+            for child in children:
+                if not isinstance(
+                    child,
+                    dict,
+                ):
+                    continue
+
+                evaluations.append(
+                    self._node_applies(
+                        child,
+                        observed_cpe,
+                        observed_version,
+                    )
+                )
+
+        if not evaluations:
+            return False
+
+        operator = str(
+            node.get(
+                "operator",
+                "OR",
+            )
+        ).upper()
+
+        if operator == "AND":
+            result = all(
+                evaluations
+            )
+        else:
+            result = any(
+                evaluations
+            )
+
+        if node.get(
+            "negate"
+        ) is True:
+            result = not result
+
+        return result
+
+    def _cpe_match_applies(
+        self,
+        match: dict[str, Any],
+        criteria: str,
+        observed_cpe: str,
+        observed_version: str,
+    ) -> bool:
+        """
+        Evaluate one NVD CPE match criterion.
+
+        This method handles:
+
+        - CPE identity matching
+        - exact criteria versions
+        - ANY (`*`)
+        - NOT APPLICABLE (`-`)
+        - versionStartIncluding
+        - versionStartExcluding
+        - versionEndIncluding
+        - versionEndExcluding
+        """
+
+        criteria_parts = (
+            self._parse_cpe23(
+                criteria
+            )
+        )
+
+        observed_parts = (
+            self._parse_cpe23(
+                observed_cpe
+            )
+        )
+
+        if (
+            criteria_parts is None
+            or observed_parts is None
+        ):
+            return False
+
+        for index in range(
+            2,
+            _CPE_23_FIELD_COUNT,
+        ):
+            if index == _CPE_VERSION_INDEX:
+                continue
+
+            expected = criteria_parts[
+                index
+            ]
+
+            actual = observed_parts[
+                index
+            ]
+
+            if expected == "*":
+                continue
+
+            if expected == "-":
+                if actual != "-":
+                    return False
+
+                continue
+
+            if not self._cpe_component_matches(
+                expected,
+                actual,
+            ):
+                return False
+
+        criteria_version = (
+            criteria_parts[
+                _CPE_VERSION_INDEX
+            ]
+        )
+
+        if criteria_version == "-":
+            if (
+                observed_parts[
+                    _CPE_VERSION_INDEX
+                ]
+                != "-"
+            ):
+                return False
+
+        elif criteria_version != "*":
+            expected_version = (
+                self._unescape_cpe_component(
+                    criteria_version
+                )
+            )
+
+            if not self._version_equal(
+                observed_version,
+                expected_version,
+            ):
+                return False
+
+        return self._version_range_matches(
+            observed_version,
+            match,
+        )
+
+    @staticmethod
+    def _cpe_component_matches(
+        expected: str,
+        actual: str,
+    ) -> bool:
+        """
+        Compare non-version CPE components conservatively.
+        """
+
+        expected = (
+            NVDClient._unescape_cpe_component(
+                expected
+            ).lower()
+        )
+
+        actual = (
+            NVDClient._unescape_cpe_component(
+                actual
+            ).lower()
+        )
+
+        if expected == "*":
+            return True
+
+        if expected == "-":
+            return actual == "-"
+
+        return expected == actual
+
+    @staticmethod
+    def _parse_cpe23(
+        cpe: str,
+    ) -> list[str] | None:
+        """
+        Parse a CPE 2.3 formatted string.
+
+        CPE 2.3 formatted strings contain 13 colon-separated fields:
+
+            cpe:2.3:
+                part:
+                vendor:
+                product:
+                version:
+                update:
+                edition:
+                language:
+                sw_edition:
+                target_sw:
+                target_hw:
+                other
+        """
+
+        parts = str(
+            cpe or ""
+        ).strip().split(
+            ":"
+        )
+
+        if (
+            len(parts)
+            != _CPE_23_FIELD_COUNT
+        ):
+            return None
+
+        if (
+            parts[0].lower()
+            != "cpe"
+            or parts[1] != "2.3"
+        ):
+            return None
+
+        return parts
+
+    @staticmethod
+    def _unescape_cpe_component(
+        value: str,
+    ) -> str:
+        """
+        Remove CPE formatted-string escaping conservatively.
+        """
+
+        text = str(
+            value or ""
+        )
+
+        result: list[str] = []
+
+        index = 0
+
+        while index < len(text):
+            character = text[
+                index
+            ]
+
+            if (
+                character == "\\"
+                and index + 1 < len(text)
+            ):
+                index += 1
+                result.append(
+                    text[index]
+                )
+            else:
+                result.append(
+                    character
+                )
+
+            index += 1
+
+        return "".join(
+            result
+        )
+
+    @classmethod
+    def _version_range_matches(
+        cls,
+        version: str,
+        match: dict[str, Any],
+    ) -> bool:
+        """
+        Evaluate NVD CPE Match Criteria version bounds.
+        """
+
+        start_including = match.get(
+            "versionStartIncluding"
+        )
+
+        start_excluding = match.get(
+            "versionStartExcluding"
+        )
+
+        end_including = match.get(
+            "versionEndIncluding"
+        )
+
+        end_excluding = match.get(
+            "versionEndExcluding"
+        )
+
+        if (
+            start_including is not None
+            and str(start_including).strip()
+        ):
+            if (
+                cls._version_compare(
+                    version,
+                    str(start_including),
+                )
+                < 0
+            ):
+                return False
+
+        if (
+            start_excluding is not None
+            and str(start_excluding).strip()
+        ):
+            if (
+                cls._version_compare(
+                    version,
+                    str(start_excluding),
+                )
+                <= 0
+            ):
+                return False
+
+        if (
+            end_including is not None
+            and str(end_including).strip()
+        ):
+            if (
+                cls._version_compare(
+                    version,
+                    str(end_including),
+                )
+                > 0
+            ):
+                return False
+
+        if (
+            end_excluding is not None
+            and str(end_excluding).strip()
+        ):
+            if (
+                cls._version_compare(
+                    version,
+                    str(end_excluding),
+                )
+                >= 0
+            ):
+                return False
+
+        return True
+
+    @staticmethod
+    def _version_equal(
+        left: str,
+        right: str,
+    ) -> bool:
+        return (
+            NVDClient._version_compare(
+                left,
+                right,
+            )
+            == 0
+        )
+
+    @staticmethod
+    def _version_compare(
+        left: str,
+        right: str,
+    ) -> int:
+        """
+        Conservative natural version comparison.
+
+        Numeric components compare numerically. Alphabetic components compare
+        case-insensitively. This is intentionally dependency-free and is used
+        only for vulnerability applicability correlation.
+        """
+
+        def tokenize(
+            value: str,
+        ) -> list[
+            tuple[int, Any]
+        ]:
+            tokens = re.findall(
+                r"[0-9]+|[A-Za-z]+",
+                str(value).lower(),
+            )
+
+            result: list[
+                tuple[int, Any]
+            ] = []
+
+            for token in tokens:
+                if token.isdigit():
+                    result.append(
+                        (
+                            1,
+                            int(token),
+                        )
+                    )
+                else:
+                    result.append(
+                        (
+                            0,
+                            token,
+                        )
+                    )
+
+            return result
+
+        first = tokenize(
+            left
+        )
+
+        second = tokenize(
+            right
+        )
+
+        for left_token, right_token in zip(
+            first,
+            second,
+        ):
+            if left_token == right_token:
+                continue
+
+            if (
+                left_token[0]
+                != right_token[0]
+            ):
+                return (
+                    -1
+                    if left_token[0]
+                    < right_token[0]
+                    else 1
+                )
+
+            return (
+                -1
+                if left_token[1]
+                < right_token[1]
+                else 1
+            )
+
+        if len(first) == len(second):
+            return 0
+
+        return (
+            -1
+            if len(first) < len(second)
+            else 1
+        )
+
+    @staticmethod
+    def _cpe_name_from_record(
+        cpe: dict[str, Any],
+    ) -> str:
+        """
+        Extract a CPE name from an NVD CPE record.
+
+        NVD 2.0 CPE responses use:
+
+            cpe.cpeName
+
+        Older/alternate representations are accepted for compatibility.
+        """
+
+        value = (
+            cpe.get(
+                "cpeName"
+            )
+            or cpe.get(
+                "criteria"
+            )
+            or cpe.get(
+                "cpe23Uri"
+            )
+            or ""
+        )
+
+        if isinstance(
+            value,
+            list,
+        ):
+            if not value:
+                return ""
+
+            first = value[0]
+
+            if isinstance(
+                first,
+                dict,
+            ):
+                value = (
+                    first.get(
+                        "cpeName"
+                    )
+                    or first.get(
+                        "cpe23Uri"
+                    )
+                    or ""
+                )
+            else:
+                value = first
+
+        return (
+            str(value).strip()
+            if value
+            else ""
+        )
+
+    @staticmethod
+    def _virtual_match_cpe(
+        cpe: str,
+    ) -> str:
+        """
+        Convert an exact CPE name into an NVD virtualMatchString.
+
+        Only the version field is replaced with ANY (`*`).
+        """
+
+        parts = NVDClient._parse_cpe23(
+            cpe
+        )
+
+        if parts is None:
+            return ""
+
+        parts[
+            _CPE_VERSION_INDEX
+        ] = "*"
+
+        return ":".join(
+            parts
+        )
+
+    ###########################################################################
+    # Backward-Compatible CVE Lookup
     ###########################################################################
 
     def cves_for_cpe(
@@ -366,7 +1454,12 @@ class NVDClient:
         limit: int = 2000,
     ) -> list[dict[str, Any]]:
         """
-        Return NVD CVE records applicable to the supplied CPE name.
+        Return CVEs associated with a supplied CPE name.
+
+        This method remains for compatibility with the existing intelligence
+        engine and tests.
+
+        New product/version correlation should use cves_for_software().
         """
 
         cpe = str(
@@ -376,41 +1469,96 @@ class NVDClient:
         if not cpe:
             return []
 
-        payload = self._get_json(
-            CVE_ENDPOINT,
-            {
-                "cpeName": cpe,
-                "resultsPerPage": min(
-                    max(
-                        int(limit),
-                        1,
-                    ),
-                    2000,
-                ),
-            },
+        requested_limit = min(
+            _positive_int(
+                limit,
+                DEFAULT_PAGE_SIZE,
+            ),
+            MAX_CVE_PAGE_SIZE,
         )
 
-        vulnerabilities = payload.get(
-            "vulnerabilities",
-            [],
-        )
+        vulnerabilities: list[
+            dict[str, Any]
+        ] = []
 
-        if not isinstance(
-            vulnerabilities,
-            list,
-        ):
-            return []
+        start_index = 0
 
-        return [
-            _copy(
-                item
+        while len(vulnerabilities) < requested_limit:
+            remaining = (
+                requested_limit
+                - len(vulnerabilities)
             )
-            for item in vulnerabilities
-            if isinstance(
-                item,
-                dict,
+
+            page_size = min(
+                remaining,
+                MAX_CVE_PAGE_SIZE,
             )
-        ]
+
+            payload = self._get_json(
+                CVE_ENDPOINT,
+                {
+                    "cpeName": cpe,
+                    "startIndex": start_index,
+                    "resultsPerPage": page_size,
+                },
+            )
+
+            page = payload.get(
+                "vulnerabilities",
+                [],
+            )
+
+            if not isinstance(
+                page,
+                list,
+            ):
+                break
+
+            if not page:
+                break
+
+            processed = 0
+
+            for item in page:
+                processed += 1
+
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+                    continue
+
+                vulnerabilities.append(
+                    _copy(item)
+                )
+
+                if (
+                    len(vulnerabilities)
+                    >= requested_limit
+                ):
+                    break
+
+            if processed == 0:
+                break
+
+            start_index += processed
+
+            total_results = (
+                self._total_results(
+                    payload
+                )
+            )
+
+            if (
+                total_results is not None
+                and start_index >= total_results
+            ):
+                break
+
+            if len(page) < page_size:
+                break
+
+        return vulnerabilities
 
     ###########################################################################
     # HTTP / Cache
@@ -423,6 +1571,8 @@ class NVDClient:
     ) -> dict[str, Any]:
         """
         Get one JSON API response through the local cache when possible.
+
+        Network access remains explicitly opt-in.
         """
 
         cache_file = (
@@ -453,49 +1603,221 @@ class NVDClient:
                 "apiKey"
             ] = self.api_key
 
-        try:
-            query = urlencode(
-                params
-            )
+        for attempt in range(
+            MAX_RETRIES + 1
+        ):
+            try:
+                query = urlencode(
+                    params
+                )
 
-            request = Request(
-                f"{url}?{query}",
-                headers=headers,
-                method="GET",
-            )
+                request = Request(
+                    f"{url}?{query}",
+                    headers=headers,
+                    method="GET",
+                )
 
-            with urlopen(
-                request,
-                timeout=self.timeout,
-            ) as response:
-                payload = json.loads(
-                    response.read().decode(
-                        "utf-8",
-                        errors="replace",
+                with urlopen(
+                    request,
+                    timeout=self.timeout,
+                ) as response:
+                    payload = json.loads(
+                        response.read().decode(
+                            "utf-8",
+                            errors="replace",
+                        )
+                    )
+
+                if not isinstance(
+                    payload,
+                    dict,
+                ):
+                    return {}
+
+                self._write_cache(
+                    cache_file,
+                    payload,
+                )
+
+                return payload
+
+            except HTTPError as exc:
+                if (
+                    exc.code != 429
+                    or attempt >= MAX_RETRIES
+                ):
+                    return {}
+
+                time.sleep(
+                    self._retry_delay(
+                        exc,
+                        attempt,
                     )
                 )
 
-            if not isinstance(
-                payload,
-                dict,
+            except (
+                URLError,
+                TimeoutError,
+                OSError,
+                json.JSONDecodeError,
             ):
                 return {}
 
-            self._write_cache(
-                cache_file,
-                payload,
+        return {}
+
+    @staticmethod
+    def _retry_delay(
+        error: HTTPError,
+        attempt: int,
+    ) -> float:
+        """
+        Calculate a bounded retry delay for NVD rate limiting.
+        """
+
+        retry_after = (
+            error.headers.get(
+                "Retry-After"
             )
+        )
 
-            return payload
+        if retry_after:
+            try:
+                delay = float(
+                    retry_after
+                )
 
+                if delay >= 0:
+                    return min(
+                        delay,
+                        MAX_RETRY_DELAY,
+                    )
+
+            except (
+                TypeError,
+                ValueError,
+            ):
+                pass
+
+        return min(
+            DEFAULT_RETRY_DELAY
+            * (
+                2 ** attempt
+            ),
+            MAX_RETRY_DELAY,
+        )
+
+    @staticmethod
+    def _total_results(
+        payload: dict[str, Any],
+    ) -> int | None:
+        """
+        Extract NVD's total result count.
+        """
+
+        value = payload.get(
+            "totalResults"
+        )
+
+        try:
+            total = int(
+                value
+            )
         except (
-            HTTPError,
-            URLError,
-            TimeoutError,
-            OSError,
-            json.JSONDecodeError,
+            TypeError,
+            ValueError,
         ):
-            return {}
+            return None
+
+        if total < 0:
+            return None
+
+        return total
+
+    @staticmethod
+    def _is_formatted_cpe_23(
+        value: str,
+    ) -> bool:
+        """
+        Return True when value is a valid CPE 2.3 formatted structure.
+        """
+
+        text = str(
+            value or ""
+        ).strip()
+
+        if not text:
+            return False
+
+        parts = text.split(
+            ":"
+        )
+
+        return (
+            len(parts)
+            == _CPE_23_FIELD_COUNT
+            and parts[0].lower()
+            == "cpe"
+            and parts[1] == "2.3"
+        )
+
+    @staticmethod
+    def _candidate_version_matches(
+        cpe: str,
+        version: str,
+    ) -> bool:
+        """
+        Perform a conservative CPE candidate version check.
+
+        `*` means ANY and therefore remains a candidate.
+
+        `-` means NOT APPLICABLE. It is not treated as a wildcard.
+        """
+
+        parts = str(
+            cpe or ""
+        ).strip().split(
+            ":"
+        )
+
+        if (
+            len(parts)
+            != _CPE_23_FIELD_COUNT
+        ):
+            return False
+
+        if (
+            parts[0].lower()
+            != "cpe"
+            or parts[1] != "2.3"
+        ):
+            return False
+
+        cpe_version = parts[
+            _CPE_VERSION_INDEX
+        ]
+
+        if cpe_version == "*":
+            return True
+
+        if cpe_version == "-":
+            return False
+
+        normalized_cpe_version = (
+            NVDClient._unescape_cpe_component(
+                cpe_version
+            ).lower()
+        )
+
+        normalized_version = (
+            str(version)
+            .strip()
+            .lower()
+        )
+
+        return (
+            normalized_cpe_version
+            == normalized_version
+        )
 
     def _read_cache(
         self,
@@ -540,39 +1862,6 @@ class NVDClient:
             json.JSONDecodeError,
         ):
             return None
-
-    @staticmethod
-    def _candidate_version_matches(
-        cpe: str,
-        version: str,
-    ) -> bool:
-        """
-        Perform a conservative candidate-level version check.
-
-        NVD remains authoritative for actual CVE applicability.
-        """
-
-        parts = cpe.split(
-            ":"
-        )
-
-        if len(parts) != 13:
-            return False
-
-        cpe_version = parts[5]
-
-        if cpe_version in {
-            "*",
-            "-",
-        }:
-            return True
-
-        return (
-            cpe_version.lower()
-            == str(
-                version
-            ).strip().lower()
-        )
 
     def _write_cache(
         self,

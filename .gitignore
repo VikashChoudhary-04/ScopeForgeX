@@ -11,3 +11,10 @@ outputs/*
 
 .env
 .DS_Store
+
+# Generated local assessment artifacts
+.cache/
+findings.md
+report.md
+report.json
+report/

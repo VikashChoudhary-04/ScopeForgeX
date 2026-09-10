@@ -24,6 +24,13 @@ KEV_URL = (
     "known_exploited_vulnerabilities.json"
 )
 
+DEFAULT_TIMEOUT = 30
+DEFAULT_CACHE_TTL = 86400
+
+MAX_RETRIES = 3
+DEFAULT_RETRY_DELAY = 2.0
+MAX_RETRY_DELAY = 30.0
+
 
 class KEVClient:
     """
@@ -37,8 +44,8 @@ class KEVClient:
             ".cache/scopeforgex/kev/"
             "known_exploited_vulnerabilities.json"
         ),
-        timeout: int = 30,
-        cache_ttl: int = 86400,
+        timeout: int = DEFAULT_TIMEOUT,
+        cache_ttl: int = DEFAULT_CACHE_TTL,
         allow_network: bool = False,
     ) -> None:
         if timeout <= 0:
@@ -67,6 +74,16 @@ class KEVClient:
             allow_network
         )
 
+        self._catalog_cache: dict[
+            str,
+            Any,
+        ] | None = None
+
+        self._kev_index: dict[
+            str,
+            dict[str, Any],
+        ] | None = None
+
     ###########################################################################
     # Catalog
     ###########################################################################
@@ -76,11 +93,21 @@ class KEVClient:
     ) -> dict[str, Any]:
         """
         Return the cached or freshly downloaded KEV catalog.
+
+        The catalog is retained in memory for the lifetime of this client so
+        repeated CVE lookups do not repeatedly parse the same JSON document.
         """
+
+        if self._catalog_cache is not None:
+            return self._catalog_cache
 
         cached = self._read_cache()
 
         if cached is not None:
+            self._catalog_cache = cached
+            self._build_index(
+                cached
+            )
             return cached
 
         if not self.allow_network:
@@ -98,38 +125,64 @@ class KEVClient:
             method="GET",
         )
 
-        try:
-            with urlopen(
-                request,
-                timeout=self.timeout,
-            ) as response:
-                payload = json.loads(
-                    response.read().decode(
-                        "utf-8",
-                        errors="replace",
+        for attempt in range(
+            MAX_RETRIES + 1
+        ):
+            try:
+                with urlopen(
+                    request,
+                    timeout=self.timeout,
+                ) as response:
+
+                    payload = json.loads(
+                        response.read().decode(
+                            "utf-8",
+                            errors="replace",
+                        )
+                    )
+
+                if not isinstance(
+                    payload,
+                    dict,
+                ):
+                    return {}
+
+                self._write_cache(
+                    payload
+                )
+
+                self._catalog_cache = payload
+
+                self._build_index(
+                    payload
+                )
+
+                return payload
+
+            except HTTPError as exc:
+
+                if (
+                    exc.code != 429
+                    or attempt >= MAX_RETRIES
+                ):
+                    return {}
+
+                time.sleep(
+                    self._retry_delay(
+                        exc,
+                        attempt,
                     )
                 )
 
-            if not isinstance(
-                payload,
-                dict,
+            except (
+                URLError,
+                TimeoutError,
+                OSError,
+                json.JSONDecodeError,
             ):
                 return {}
 
-            self._write_cache(
-                payload
-            )
-
-            return payload
-
-        except (
-            HTTPError,
-            URLError,
-            TimeoutError,
-            OSError,
-            json.JSONDecodeError,
-        ):
-            return {}
+        return {}
 
     ###########################################################################
     # Lookup
@@ -141,6 +194,9 @@ class KEVClient:
     ) -> dict[str, Any] | None:
         """
         Return the KEV entry for one CVE when present.
+
+        CVE lookup uses an in-memory index populated when the catalog is first
+        loaded, avoiding a full catalog scan for every vulnerability.
         """
 
         identifier = str(
@@ -150,7 +206,43 @@ class KEVClient:
         if not identifier:
             return None
 
-        entries = self.catalog().get(
+        catalog = self.catalog()
+
+        if not catalog:
+            return None
+
+        if self._kev_index is None:
+            self._build_index(
+                catalog
+            )
+
+        if self._kev_index is None:
+            return None
+
+        entry = self._kev_index.get(
+            identifier
+        )
+
+        if entry is None:
+            return None
+
+        return dict(
+            entry
+        )
+
+    ###########################################################################
+    # Index
+    ###########################################################################
+
+    def _build_index(
+        self,
+        payload: dict[str, Any],
+    ) -> None:
+        """
+        Build a normalized CVE-to-KEV-entry lookup index.
+        """
+
+        entries = payload.get(
             "vulnerabilities",
             [],
         )
@@ -159,9 +251,16 @@ class KEVClient:
             entries,
             list,
         ):
-            return None
+            self._kev_index = {}
+            return
+
+        index: dict[
+            str,
+            dict[str, Any],
+        ] = {}
 
         for entry in entries:
+
             if not isinstance(
                 entry,
                 dict,
@@ -175,12 +274,58 @@ class KEVClient:
                 )
             ).strip().upper()
 
-            if entry_id == identifier:
-                return dict(
-                    entry
+            if not entry_id:
+                continue
+
+            if entry_id in index:
+                continue
+
+            index[
+                entry_id
+            ] = dict(
+                entry
+            )
+
+        self._kev_index = index
+
+    @staticmethod
+    def _retry_delay(
+        error: HTTPError,
+        attempt: int,
+    ) -> float:
+        """
+        Calculate a bounded retry delay for a rate-limit response.
+        """
+
+        retry_after = error.headers.get(
+            "Retry-After"
+        )
+
+        if retry_after:
+            try:
+                delay = float(
+                    retry_after
                 )
 
-        return None
+                if delay >= 0:
+                    return min(
+                        delay,
+                        MAX_RETRY_DELAY,
+                    )
+
+            except (
+                TypeError,
+                ValueError,
+            ):
+                pass
+
+        return min(
+            DEFAULT_RETRY_DELAY
+            * (
+                2 ** attempt
+            ),
+            MAX_RETRY_DELAY,
+        )
 
     ###########################################################################
     # Cache

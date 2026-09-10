@@ -5,7 +5,7 @@ ScopeForgeX dig Collector
 Collector for the ``dig`` DNS inspection utility.
 
 The collector converts deterministic ``dig`` output into normalized
-ScopeForgeX Finding objects.
+ScopeForgeX observations.
 
 Primary assessment capability
 -----------------------------
@@ -22,9 +22,12 @@ Supported DNS observations
 - NS records
 - TXT records
 - SOA records
+- PTR records
+- SRV records
+- CAA records
 
-Finding categories
-------------------
+Observation categories
+----------------------
 
 - DNS_RECORD
 - DNS_CONFIGURATION
@@ -36,12 +39,15 @@ Design Principles
 - It never performs network requests itself.
 - Command execution remains the responsibility of the execution layer.
 - Raw output must remain available to the assessment evidence layer.
-- Every parsed observation becomes a canonical Finding.
+- DNS records are attack-surface observations, not vulnerabilities by
+  themselves.
 - Malformed records are ignored rather than producing fabricated findings.
 - Parsing is deterministic.
 - Source-tool attribution is preserved.
-- The collector does not classify DNS observations as vulnerabilities.
-- DNS findings remain compatible with correlation, deduplication and reporting.
+- DNS observations remain compatible with correlation, deduplication
+  and reporting.
+- The legacy ``collect_findings()`` API is retained for compatibility
+  with callers that explicitly request Finding objects.
 
 Expected input
 --------------
@@ -57,7 +63,7 @@ Example::
 The collector may also parse output containing multiple records, such as
 the result of a query against a broader DNS record set.
 
-v1.3.0
+v1.4.0
 """
 
 from __future__ import annotations
@@ -127,7 +133,7 @@ def _normalize_name(value: str) -> str:
     Normalize a DNS name.
 
     DNS names are case-insensitive. A trailing root dot is removed so that
-    equivalent names produce deterministic finding identities.
+    equivalent names produce deterministic identities.
     """
 
     value = _text(value).lower()
@@ -201,9 +207,27 @@ def _is_record_type(value: str) -> bool:
     Determine whether a token represents a supported DNS record type.
     """
 
-    return _normalize_record_type(
-        value
-    ) in SUPPORTED_RECORD_TYPES
+    return (
+        _normalize_record_type(value)
+        in SUPPORTED_RECORD_TYPES
+    )
+
+
+def _record_category(record_type: str) -> str:
+    """
+    Return the attack-surface observation category for a DNS record.
+
+    DNS_CONFIGURATION is used for record types that describe mail,
+    delegation, authority or certificate-authority configuration.
+    Other supported DNS records remain DNS_RECORD observations.
+    """
+
+    normalized = _normalize_record_type(record_type)
+
+    if normalized in _CONFIGURATION_RECORD_TYPES:
+        return CATEGORY_DNS_CONFIGURATION
+
+    return CATEGORY_DNS_RECORD
 
 
 ###############################################################################
@@ -255,7 +279,10 @@ class DNSRecord:
 
 class DigCollector(CollectorBase):
     """
-    Parse ``dig`` output into canonical ScopeForgeX findings.
+    Parse ``dig`` output into canonical ScopeForgeX observations.
+
+    DNS records discovered by ``dig`` are attack-surface observations.
+    They are not security vulnerabilities merely because they exist.
 
     The collector does not execute ``dig``. Command construction and process
     execution belong to the tool adapter/execution layer.
@@ -266,7 +293,7 @@ class DigCollector(CollectorBase):
 
     description = (
         "Parse deterministic dig DNS inspection output into normalized "
-        "ScopeForgeX findings."
+        "ScopeForgeX attack-surface observations."
     )
 
     supported_record_types = frozenset(
@@ -282,7 +309,11 @@ class DigCollector(CollectorBase):
         finding: Any,
     ) -> CollectorObservation:
         """
-        Convert a canonical Finding into a CollectorObservation.
+        Convert a legacy canonical Finding into an attack-surface
+        CollectorObservation.
+
+        This compatibility path intentionally marks the resulting
+        observation as non-vulnerability data.
         """
 
         data = (
@@ -300,16 +331,58 @@ class DigCollector(CollectorBase):
         ):
             data = {}
 
-        return CollectorObservation(
-            observation_type=str(
+        category = str(
+            data.get(
+                "category",
                 data.get(
-                    "category",
+                    "type",
+                    CATEGORY_DNS_RECORD,
+                ),
+            )
+            or CATEGORY_DNS_RECORD
+        ).upper()
+
+        if category not in {
+            CATEGORY_DNS_RECORD,
+            CATEGORY_DNS_CONFIGURATION,
+        }:
+            category = CATEGORY_DNS_RECORD
+
+        metadata = dict(
+            data.get(
+                "metadata",
+                {},
+            )
+            or {}
+        )
+
+        metadata.update(
+            {
+                "collector": DigCollector.name,
+                "observation_only": True,
+                "is_security_finding": False,
+                "dns_record_type": (
                     data.get(
-                        "type",
-                        "finding",
-                    ),
-                )
-            ),
+                        "metadata",
+                        {},
+                    ).get(
+                        "dns_record_type",
+                        "",
+                    )
+                    if isinstance(
+                        data.get(
+                            "metadata",
+                            {},
+                        ),
+                        Mapping,
+                    )
+                    else ""
+                ),
+            }
+        )
+
+        return CollectorObservation(
+            observation_type=category,
             value=(
                 data.get("value")
                 or data.get("host")
@@ -328,44 +401,29 @@ class DigCollector(CollectorBase):
             remediation=str(
                 data.get("remediation", "")
             ),
-            severity=str(
-                data.get(
-                    "severity",
-                    "Informational",
-                )
-            ),
+            severity="Informational",
             confidence=str(
                 data.get(
                     "confidence",
-                    "Informational",
+                    "High",
                 )
             ),
             status=str(
                 data.get(
                     "status",
-                    "Pending",
+                    "detected",
                 )
             ),
             target=data.get("target"),
             host=data.get("host"),
             port=data.get("port"),
             url=data.get("url"),
-            parameter=data.get("parameter"),
+            parameter=None,
             evidence=data.get("evidence"),
-            source_tool=str(
-                data.get(
-                    "source_tool",
-                    "",
-                )
-            ),
-            detection_method=str(
-                data.get(
-                    "detection_method",
-                    "",
-                )
-            ),
-            cwe=data.get("cwe"),
-            cve=data.get("cve"),
+            source_tool=SOURCE_TOOL,
+            detection_method=DETECTION_METHOD,
+            cwe=None,
+            cve=None,
             references=list(
                 data.get(
                     "references",
@@ -373,13 +431,102 @@ class DigCollector(CollectorBase):
                 )
                 or []
             ),
-            metadata=dict(
-                data.get(
-                    "metadata",
-                    {},
-                )
-                or {}
+            metadata=metadata,
+        )
+
+    @classmethod
+    def _record_to_observation(
+        cls,
+        record: DNSRecord,
+        *,
+        target: str,
+        query_type: str,
+        metadata: Mapping[str, Any] | None,
+    ) -> CollectorObservation:
+        """
+        Convert a normalized DNS record into a canonical attack-surface
+        observation.
+        """
+
+        category = _record_category(
+            record.record_type
+        )
+
+        evidence: dict[str, Any] = {
+            "record_name": record.name,
+            "record_type": record.record_type,
+            "record_value": record.value,
+            "class": record.class_name,
+        }
+
+        if record.ttl is not None:
+            evidence["ttl"] = record.ttl
+
+        if query_type:
+            evidence["query_type"] = query_type
+
+        observation_metadata: dict[str, Any] = {}
+
+        if metadata is not None:
+            observation_metadata.update(
+                dict(metadata)
+            )
+
+        observation_metadata.update(
+            {
+                "collector": cls.name,
+                "observation_only": True,
+                "is_security_finding": False,
+                "dns_record_type": record.record_type,
+                "dns_record_name": record.name,
+            }
+        )
+
+        if record.ttl is not None:
+            observation_metadata[
+                "dns_ttl"
+            ] = record.ttl
+
+        title = (
+            f"DNS {record.record_type} Record: "
+            f"{record.name}"
+        )
+
+        description = (
+            f"The DNS inspection discovered a "
+            f"{record.record_type} record for "
+            f"{record.name} with value "
+            f"{record.value}."
+        )
+
+        return CollectorObservation(
+            observation_type=category,
+            value=record.value,
+            title=title,
+            description=description,
+            impact=(
+                "DNS attack-surface information discovered "
+                "during assessment."
             ),
+            remediation=(
+                "Review the DNS record and confirm that it is "
+                "intentional and consistent with the assessment scope."
+            ),
+            severity="Informational",
+            confidence="High",
+            status="detected",
+            target=target or None,
+            host=record.name or None,
+            port=None,
+            url=None,
+            parameter=None,
+            evidence=evidence,
+            source_tool=SOURCE_TOOL,
+            detection_method=DETECTION_METHOD,
+            cwe=None,
+            cve=None,
+            references=[],
+            metadata=observation_metadata,
         )
 
     def parse(
@@ -389,6 +536,9 @@ class DigCollector(CollectorBase):
     ) -> list[CollectorObservation]:
         """
         Parse an already-completed dig execution result.
+
+        The canonical collector path returns DNS records as
+        CollectorObservation objects rather than vulnerability Findings.
 
         No network requests or command execution occur here.
         """
@@ -430,17 +580,25 @@ class DigCollector(CollectorBase):
             "query_type"
         )
 
+        query_type_normalized = (
+            _normalize_record_type(
+                str(query_type)
+            )
+            if query_type
+            else ""
+        )
+
         metadata = context.get(
             "metadata",
             {}
         )
 
-        findings = self.collect_findings(
+        return self.collect_observations(
             str(output),
             target=target,
             query_type=(
-                str(query_type)
-                if query_type
+                query_type_normalized
+                if query_type_normalized
                 else None
             ),
             metadata=(
@@ -453,12 +611,88 @@ class DigCollector(CollectorBase):
             ),
         )
 
-        return [
-            self._finding_to_observation(
-                finding
+    ###########################################################################
+    # Canonical Observation Collection API
+    ###########################################################################
+
+    def collect_observations(
+        self,
+        output: str,
+        *,
+        target: str = "",
+        query_type: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> list[CollectorObservation]:
+        """
+        Parse raw ``dig`` output into attack-surface observations.
+
+        DNS observations are explicitly marked as non-security findings.
+        """
+
+        if output is None:
+            return []
+
+        if not isinstance(
+            output,
+            str,
+        ):
+            raise TypeError(
+                "DigCollector.collect_observations() expects "
+                "textual dig output."
             )
-            for finding in findings
-        ]
+
+        records = self._parse_output(
+            output
+        )
+
+        if not records:
+            return []
+
+        target = _text(
+            target
+        )
+
+        query_type = (
+            _normalize_record_type(
+                query_type
+            )
+            if query_type
+            else ""
+        )
+
+        observations: list[
+            CollectorObservation
+        ] = []
+
+        seen: set[
+            tuple[str, str, str]
+        ] = set()
+
+        for record in records:
+
+            identity = (
+                record.name,
+                record.record_type,
+                record.value,
+            )
+
+            if identity in seen:
+                continue
+
+            seen.add(
+                identity
+            )
+
+            observations.append(
+                self._record_to_observation(
+                    record,
+                    target=target,
+                    query_type=query_type,
+                    metadata=metadata,
+                )
+            )
+
+        return observations
 
     ###########################################################################
     # Existing Finding Collection API
@@ -474,7 +708,14 @@ class DigCollector(CollectorBase):
         metadata: Mapping[str, Any] | None = None,
     ) -> list[Finding]:
         """
-        Parse raw ``dig`` output into canonical Finding objects.
+        Parse raw ``dig`` output into legacy canonical Finding objects.
+
+        This method is retained for backward compatibility with callers
+        explicitly requesting the historical Finding representation.
+
+        The canonical collector ``parse()`` path does not use this method;
+        it returns CollectorObservation objects so DNS records are not
+        automatically treated as security findings.
         """
 
         if output is None:
@@ -620,7 +861,7 @@ class DigCollector(CollectorBase):
         metadata: Mapping[str, Any] | None = None,
     ) -> list[Finding]:
         """
-        Parse multiple ``dig`` outputs.
+        Parse multiple ``dig`` outputs using the legacy Finding API.
         """
 
         if outputs is None:
@@ -772,7 +1013,7 @@ class DigCollector(CollectorBase):
         )
 
     ###########################################################################
-    # Finding Conversion
+    # Legacy Finding Conversion
     ###########################################################################
 
     @classmethod
@@ -785,12 +1026,15 @@ class DigCollector(CollectorBase):
         timestamp: datetime,
         metadata: Mapping[str, Any] | None,
     ) -> Finding:
+        """
+        Convert a DNS record into the historical Finding representation.
 
-        category = (
-            CATEGORY_DNS_CONFIGURATION
-            if record.record_type
-            in _CONFIGURATION_RECORD_TYPES
-            else CATEGORY_DNS_RECORD
+        This method exists only for the legacy ``collect_findings()`` API.
+        The canonical ``parse()`` path uses ``_record_to_observation()``.
+        """
+
+        category = _record_category(
+            record.record_type
         )
 
         title = (
@@ -829,6 +1073,8 @@ class DigCollector(CollectorBase):
                 "collector": cls.name,
                 "dns_record_type": record.record_type,
                 "dns_record_name": record.name,
+                "observation_only": True,
+                "is_security_finding": False,
             }
         )
 
@@ -858,7 +1104,9 @@ class DigCollector(CollectorBase):
             "detection_method": DETECTION_METHOD,
             "timestamp": timestamp,
             "references": [],
-            "impact": "DNS information discovered during assessment.",
+            "impact": (
+                "DNS information discovered during assessment."
+            ),
             "remediation": (
                 "Review the DNS record and confirm that it is intentional "
                 "and consistent with the assessment scope."
@@ -951,8 +1199,27 @@ class DigCollector(CollectorBase):
 
 
 ###############################################################################
-# Convenience API
+# Convenience APIs
 ###############################################################################
+
+
+def collect_dig_observations(
+    output: str,
+    *,
+    target: str = "",
+    query_type: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> list[CollectorObservation]:
+    """
+    Parse ``dig`` output into canonical attack-surface observations.
+    """
+
+    return DigCollector().collect_observations(
+        output,
+        target=target,
+        query_type=query_type,
+        metadata=metadata,
+    )
 
 
 def collect_dig_findings(
@@ -963,6 +1230,11 @@ def collect_dig_findings(
     timestamp: datetime | None = None,
     metadata: Mapping[str, Any] | None = None,
 ) -> list[Finding]:
+    """
+    Legacy convenience API returning Finding objects.
+
+    Prefer ``collect_dig_observations()`` for the canonical assessment path.
+    """
 
     return DigCollector().collect_findings(
         output,
@@ -986,5 +1258,6 @@ __all__ = [
     "SUPPORTED_RECORD_TYPES",
     "DNSRecord",
     "DigCollector",
+    "collect_dig_observations",
     "collect_dig_findings",
 ]

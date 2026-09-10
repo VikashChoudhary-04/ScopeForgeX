@@ -2,45 +2,22 @@
 ScopeForgeX Network Reconnaissance Tools
 ========================================
 
-Adapters for network-oriented reconnaissance tools in the frozen
-ScopeForgeX core toolset.
+Canonical network reconnaissance adapters for ScopeForgeX 3.0.
 
-Tools
------
+Tools:
+    - Amass
+    - Nmap
+    - Dig
 
-- Amass
-- Nmap
-- dig
+The adapters are responsible for:
 
-Architecture
-------------
+    - Tool-specific option validation
+    - Command construction
+    - Tool execution through the shared execution layer
+    - Raw artifact registration
+    - Network-target normalization
 
-Workflow Engine
-    |
-    v
-Tool Registry
-    |
-    v
-Network Recon ToolAdapter
-    |
-    +-- ToolDefinition
-    +-- ToolContext
-    +-- option validation
-    +-- command construction
-    +-- execution delegation
-    +-- artifact preservation
-    |
-    v
-Execution Layer
-    |
-    v
-ExecutionResult
-
-The adapters in this module own tool-specific command construction.
-
-They do NOT implement subprocess execution directly.
-
-ScopeForgeX 3.0.0
+The execution layer remains responsible for process execution semantics.
 """
 
 from __future__ import annotations
@@ -48,14 +25,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from scopeforgex.models.execution_result import ExecutionResult
+from scopeforgex.models import ExecutionResult
 from scopeforgex.registry.tool_base import (
     ToolAdapter,
+    ToolContext,
     ToolDefinition,
     ToolOption,
 )
 from scopeforgex.runner import run_command
-from scopeforgex.toolcheck import is_tool_installed
 
 
 ###############################################################################
@@ -63,67 +40,254 @@ from scopeforgex.toolcheck import is_tool_installed
 ###############################################################################
 
 
-def _recon_directory(
-    context,
-) -> Path:
+def _normalize_target(target: str) -> str:
     """
-    Return the Stage 1 reconnaissance output directory.
-    """
+    Normalize a network target for command construction.
 
-    directory = (
-        context.output_dir
-        / "recon"
+    URL schemes are removed where appropriate while preserving:
+        - hostname
+        - IPv4 address
+        - IPv6 address
+        - optional port
+    """
+    value = str(target or "").strip()
+
+    if not value:
+        return ""
+
+    for scheme in (
+        "http://",
+        "https://",
+        "tcp://",
+        "udp://",
+    ):
+        if value.lower().startswith(scheme):
+            value = value[len(scheme):]
+            break
+
+    value = value.split("/", 1)[0]
+
+    if value.startswith("[") and "]" in value:
+        host = value[1:value.index("]")]
+        remainder = value[value.index("]") + 1:]
+
+        if remainder.startswith(":"):
+            return f"{host}{remainder}"
+
+        return host
+
+    return value
+
+
+def _target_host(target: str) -> str:
+    """
+    Extract the host portion from a normalized target.
+    """
+    value = _normalize_target(target)
+
+    if not value:
+        return ""
+
+    if value.startswith("[") and "]" in value:
+        return value[1:value.index("]")]
+
+    if value.count(":") == 1:
+        host, port = value.rsplit(":", 1)
+
+        if port.isdigit():
+            return host
+
+    return value
+
+
+def _target_port(target: str) -> int | None:
+    """
+    Extract an explicit target port when one is present.
+    """
+    value = _normalize_target(target)
+
+    if not value:
+        return None
+
+    if value.startswith("[") and "]" in value:
+        remainder = value[value.index("]") + 1:]
+
+        if remainder.startswith(":") and remainder[1:].isdigit():
+            return int(remainder[1:])
+
+        return None
+
+    if value.count(":") == 1:
+        _, port = value.rsplit(":", 1)
+
+        if port.isdigit():
+            return int(port)
+
+    return None
+
+
+def _execution_timeout(
+    context: ToolContext,
+    default: int,
+) -> int:
+    """
+    Resolve a tool execution timeout from the context.
+    """
+    options = getattr(
+        context,
+        "options",
+        {},
+    ) or {}
+
+    value = options.get(
+        "timeout",
+        default,
     )
 
-    directory.mkdir(
+    try:
+        timeout = int(value)
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        timeout = default
+
+    return max(
+        timeout,
+        1,
+    )
+
+
+def _artifact_path(
+    context: ToolContext,
+    tool_name: str,
+    filename: str,
+) -> Path:
+    """
+    Construct the raw artifact path for a network reconnaissance tool.
+    """
+    base = Path(
+        context.output_dir
+    )
+
+    tool_dir = (
+        base
+        / "recon"
+        / tool_name.lower()
+    )
+
+    tool_dir.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    return directory
+    return tool_dir / filename
 
 
-def _write_stdout_artifact(
+def _register_artifact(
     result: ExecutionResult,
     path: Path,
 ) -> None:
     """
-    Preserve command stdout as a deterministic raw-output artifact.
+    Register an artifact on an execution result.
     """
+    path_value = str(path)
 
-    stdout = getattr(
-        result,
-        "stdout",
+    if path_value not in result.artifacts:
+        result.artifacts.append(
+            path_value
+        )
+
+
+def _record_execution_summary(
+    result: ExecutionResult,
+) -> dict[str, Any]:
+    """
+    Convert an individual execution result into a non-recursive summary.
+
+    ExecutionResult objects must never be stored inside another
+    ExecutionResult.metadata structure.
+
+    This summary preserves useful per-record execution information without
+    embedding another ExecutionResult object or duplicating stdout/stderr.
+    """
+    metadata = dict(
+        result.metadata or {}
+    )
+
+    return {
+        "record_type": metadata.get(
+            "record_type"
+        ),
+        "success": bool(
+            result.success
+        ),
+        "status": result.status,
+        "duration": result.duration,
+        "output_file": metadata.get(
+            "output_file"
+        ),
+        "command": metadata.get(
+            "command"
+        ),
+        "artifacts": list(
+            result.artifacts
+        ),
+        "warnings": list(
+            result.warnings
+        ),
+        "errors": list(
+            result.errors
+        ),
+    }
+
+
+def _normalize_nmap_timing(value: Any) -> str | None:
+    """
+    Normalize a configured Nmap timing template.
+
+    The profile may express timing as either:
+        - 3
+        - 4
+        - "3"
+        - "4"
+        - "T3"
+        - "T4"
+
+    Nmap's canonical command-line form is:
+        -T3
+        -T4
+    """
+    if value in (
+        None,
         "",
-    )
-
-    if isinstance(
-        stdout,
-        bytes,
+        False,
     ):
-        stdout = stdout.decode(
-            "utf-8",
-            errors="replace",
+        return None
+
+    text = str(value).strip().upper()
+
+    if text.startswith("-T"):
+        text = text[2:]
+
+    elif text.startswith("T"):
+        text = text[1:]
+
+    if text not in {
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+    }:
+        raise ValueError(
+            f"Invalid Nmap timing template: {value!r}. "
+            "Expected T0 through T5."
         )
 
-    path.write_text(
-        str(stdout or ""),
-        encoding="utf-8",
-    )
-
-
-def _add_log_artifact(
-    result: ExecutionResult,
-    path: Path,
-) -> None:
-    """
-    Add a log artifact when the execution layer created one.
-    """
-
-    if path.exists():
-        result.add_artifact(
-            path
-        )
+    return f"-T{text}"
 
 
 ###############################################################################
@@ -131,14 +295,9 @@ def _add_log_artifact(
 ###############################################################################
 
 
-class AmassTool(
-    ToolAdapter
-):
+class AmassTool(ToolAdapter):
     """
-    Amass reconnaissance adapter.
-
-    Purpose:
-        Broad attack-surface discovery and DNS relationship enumeration.
+    Amass network reconnaissance adapter.
     """
 
     definition = ToolDefinition(
@@ -146,248 +305,148 @@ class AmassTool(
         capability="attack_surface_discovery",
         phase="reconnaissance",
         purpose=(
-            "Broad attack-surface discovery, DNS relationships, "
-            "subdomains and infrastructure relationships."
+            "Passive and active attack-surface discovery using Amass."
         ),
         executable="amass",
-        input_type="target",
+        input_type="domain",
         output_type="raw",
         finding_types=(
             "SUBDOMAIN",
-            "DNS_ASSET",
-            "HOST",
         ),
         dependencies=(
             "amass",
         ),
         options=(
             ToolOption(
+                name="active",
+                flag="-active",
+                description=(
+                    "Enable active Amass enumeration."
+                ),
+                option_type="boolean",
+                default=False,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
                 name="passive",
                 flag="-passive",
-                description="Run Amass in passive mode.",
+                description=(
+                    "Enable passive Amass enumeration."
+                ),
                 option_type="boolean",
                 default=True,
                 safe=True,
                 aggressive=False,
             ),
             ToolOption(
-                name="active",
-                flag="-active",
-                description="Enable active Amass enumeration.",
+                name="bruteforce",
+                flag="-brute",
+                description=(
+                    "Enable Amass DNS brute-force enumeration."
+                ),
                 option_type="boolean",
                 default=False,
-                safe=False,
+                safe=True,
                 aggressive=True,
             ),
             ToolOption(
-                name="brute",
-                flag="-brute",
-                description="Enable Amass brute-force enumeration.",
-                option_type="boolean",
-                default=False,
-                safe=False,
-                aggressive=True,
+                name="wordlist",
+                flag="-w",
+                description=(
+                    "Wordlist used for active Amass enumeration."
+                ),
+                option_type="path",
+                default=None,
+                safe=True,
+                aggressive=False,
             ),
             ToolOption(
                 name="timeout",
-                flag="-timeout",
-                description="Amass enumeration timeout in minutes.",
+                flag="--timeout",
+                description="Amass execution timeout.",
                 option_type="integer",
-                default=None,
+                default=300,
                 safe=True,
                 aggressive=False,
             ),
         ),
         safe=True,
-        aggressive=True,
+        aggressive=False,
     )
 
-    def validate_options(
-        self,
-    ) -> None:
-        """Validate Amass-specific option types and ranges."""
-
-        super().validate_options()
-
-        for key in (
-            "passive",
-            "active",
-            "brute",
-        ):
-            if not self.has_option(
-                key
-            ):
-                continue
-
-            value = self.get_option(
-                key
-            )
-
-            if not isinstance(
-                value,
-                bool,
-            ):
-                raise TypeError(
-                    f"{key} option for Amass must be boolean."
-                )
-
-        if self.has_option(
-            "timeout"
-        ):
-            timeout = self.get_option(
-                "timeout"
-            )
-
-            if (
-                not isinstance(
-                    timeout,
-                    int,
-                )
-                or isinstance(
-                    timeout,
-                    bool,
-                )
-            ):
-                raise TypeError(
-                    "Amass timeout must be an integer."
-                )
-
-            if timeout <= 0:
-                raise ValueError(
-                    "Amass timeout must be greater than zero."
-                )
-
-    def build_arguments(
-        self,
-    ) -> list[str]:
-        """Build Amass-specific command-line arguments."""
-
+    def build_arguments(self) -> list[str]:
+        """
+        Build Amass-specific command-line arguments.
+        """
         self.validate_options()
 
-        arguments: list[str] = [
-            "enum",
-        ]
+        target = _target_host(
+            self.context.target
+        )
 
-        if self.get_option(
-            "passive",
-            True,
-        ):
-            arguments.append(
-                "-passive"
+        if not target:
+            raise ValueError(
+                "Amass requires a network target."
             )
 
-        if self.get_option(
-            "active",
-            False,
-        ):
+        arguments = [
+            "enum",
+            "-d",
+            target,
+        ]
+
+        active = bool(
+            self.get_option(
+                "active"
+            )
+        )
+
+        passive = bool(
+            self.get_option(
+                "passive"
+            )
+        )
+
+        bruteforce = bool(
+            self.get_option(
+                "bruteforce"
+            )
+        )
+
+        wordlist = self.get_option(
+            "wordlist"
+        )
+
+        if active:
             arguments.append(
                 "-active"
             )
 
-        if self.get_option(
-            "brute",
-            False,
-        ):
+        if passive:
+            arguments.append(
+                "-passive"
+            )
+
+        if bruteforce:
             arguments.append(
                 "-brute"
             )
 
-        timeout = self.get_option(
-            "timeout"
-        )
+        if wordlist:
+            if not bruteforce:
+                arguments.append(
+                    "-brute"
+                )
 
-        if timeout is not None:
             arguments.extend(
                 [
-                    "-timeout",
-                    str(timeout),
+                    "-w",
+                    str(wordlist),
                 ]
             )
 
-        arguments.extend(
-            [
-                "-d",
-                self.context.target,
-            ]
-        )
-
         return arguments
-
-    def run(
-        self,
-    ) -> ExecutionResult:
-        """
-        Execute Amass through the ScopeForgeX execution layer.
-        """
-
-        if not is_tool_installed(
-            self.executable
-        ):
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability=self.capability,
-                error="amass not installed",
-            )
-
-        recon_dir = _recon_directory(
-            self.context
-        )
-
-        output_file = (
-            recon_dir
-            / "amass.txt"
-        )
-
-        log_file = (
-            recon_dir
-            / "amass.log"
-        )
-
-        try:
-            command = self.build_command()
-        except (
-            TypeError,
-            ValueError,
-        ) as exc:
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability=self.capability,
-                error=str(exc),
-            )
-
-        result = run_command(
-            tool=self.name,
-            capability=self.capability,
-            cmd=command,
-            outfile=str(log_file),
-            timeout=600,
-        )
-
-        _write_stdout_artifact(
-            result,
-            output_file,
-        )
-
-        result.add_artifact(
-            output_file
-        )
-
-        _add_log_artifact(
-            result,
-            log_file,
-        )
-
-        result.metadata.update(
-            {
-                "target": self.context.target,
-                "output_file": str(
-                    output_file
-                ),
-                "command": command,
-            }
-        )
-
-        return result
 
 
 ###############################################################################
@@ -395,14 +454,9 @@ class AmassTool(
 ###############################################################################
 
 
-class NmapTool(
-    ToolAdapter
-):
+class NmapTool(ToolAdapter):
     """
-    Nmap network reconnaissance adapter.
-
-    Purpose:
-        Port discovery, service detection and controlled NSE checks.
+    Nmap network service discovery adapter.
     """
 
     definition = ToolDefinition(
@@ -410,8 +464,7 @@ class NmapTool(
         capability="network_service_discovery",
         phase="reconnaissance",
         purpose=(
-            "Port discovery, port state, service detection, "
-            "version detection and NSE security checks."
+            "Network port and service discovery using Nmap."
         ),
         executable="nmap",
         input_type="host",
@@ -420,46 +473,52 @@ class NmapTool(
             "OPEN_PORT",
             "SERVICE",
             "SERVICE_VERSION",
-            "NETWORK_CONFIGURATION",
-            "NSE_SECURITY_FINDING",
         ),
         dependencies=(
             "nmap",
         ),
         options=(
             ToolOption(
-                name="ports",
-                flag="-p",
-                description="Ports or port ranges to scan.",
+                name="nse_profile",
+                flag="--script",
+                description=(
+                    "Nmap NSE script profile to execute."
+                ),
                 option_type="string",
                 default=None,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="os_detection",
+                flag="-O",
+                description=(
+                    "Enable Nmap operating-system detection."
+                ),
+                option_type="boolean",
+                default=False,
                 safe=True,
                 aggressive=True,
             ),
             ToolOption(
                 name="service_detection",
                 flag="-sV",
-                description="Enable service and version detection.",
+                description=(
+                    "Enable Nmap service/version detection."
+                ),
                 option_type="boolean",
                 default=True,
                 safe=True,
-                aggressive=True,
-            ),
-            ToolOption(
-                name="os_detection",
-                flag="-O",
-                description="Enable operating system detection.",
-                option_type="boolean",
-                default=False,
-                safe=False,
-                aggressive=True,
+                aggressive=False,
             ),
             ToolOption(
                 name="timing",
-                flag="",
-                description="Nmap timing template.",
+                flag="-T",
+                description=(
+                    "Nmap timing template."
+                ),
                 option_type="string",
-                default=None,
+                default="T3",
                 choices=(
                     "T0",
                     "T1",
@@ -467,294 +526,169 @@ class NmapTool(
                     "T3",
                     "T4",
                     "T5",
+                    "0",
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5",
                 ),
                 safe=True,
-                aggressive=True,
+                aggressive=False,
             ),
             ToolOption(
-                name="nse_profile",
-                flag="--script",
-                description="NSE script profile.",
-                option_type="string",
-                default=None,
-                choices=(
-                    "safe",
-                    "default",
-                    "none",
+                name="top_ports",
+                flag="--top-ports",
+                description=(
+                    "Scan the specified number of most common ports."
                 ),
+                option_type="integer",
+                default=None,
                 safe=True,
-                aggressive=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="timeout",
+                flag="--timeout",
+                description="Nmap execution timeout.",
+                option_type="integer",
+                default=300,
+                safe=True,
+                aggressive=False,
             ),
         ),
         safe=True,
-        aggressive=True,
+        aggressive=False,
     )
 
-    def validate_options(
-        self,
-    ) -> None:
-        """Validate Nmap-specific option types and values."""
+    def build_arguments(self) -> list[str]:
+        """
+        Build Nmap-specific command-line arguments.
 
-        super().validate_options()
+        When the original ScopeForgeX target contains an explicit port,
+        that port is preserved and passed to Nmap with ``-p``. This prevents
+        a target such as ``http://127.0.0.1:3000`` from being reduced to only
+        the host and accidentally causing Nmap to scan its default port set.
 
-        for key in (
-            "service_detection",
-            "os_detection",
-        ):
-            if not self.has_option(
-                key
-            ):
-                continue
-
-            value = self.get_option(
-                key
-            )
-
-            if not isinstance(
-                value,
-                bool,
-            ):
-                raise TypeError(
-                    f"{key} option for Nmap must be boolean."
-                )
-
-        if self.has_option(
-            "ports"
-        ):
-            ports = self.get_option(
-                "ports"
-            )
-
-            if ports is not None:
-                ports = str(
-                    ports
-                ).strip()
-
-                if not ports:
-                    raise ValueError(
-                        "Nmap ports cannot be empty."
-                    )
-
-        if self.has_option(
-            "timing"
-        ):
-            timing = str(
-                self.get_option(
-                    "timing"
-                )
-            )
-
-            if timing not in {
-                "T0",
-                "T1",
-                "T2",
-                "T3",
-                "T4",
-                "T5",
-            }:
-                raise ValueError(
-                    "Nmap timing must be one of T0 through T5."
-                )
-
-        if self.has_option(
-            "nse_profile"
-        ):
-            nse_profile = str(
-                self.get_option(
-                    "nse_profile"
-                )
-            ).lower()
-
-            if nse_profile not in {
-                "safe",
-                "default",
-                "none",
-            }:
-                raise ValueError(
-                    "Nmap nse_profile must be safe, default or none."
-                )
-
-    def build_arguments(
-        self,
-    ) -> list[str]:
-        """Build Nmap-specific command-line arguments."""
-
+        ``timing`` accepts both ``T4`` and ``4`` style profile values but is
+        normalized to Nmap's canonical ``-T4`` form.
+        """
         self.validate_options()
+
+        target = _target_host(
+            self.context.target
+        )
+
+        if not target:
+            raise ValueError(
+                "Nmap requires a network target."
+            )
 
         arguments: list[str] = []
 
-        ports = self.get_option(
-            "ports"
+        service_detection = self.get_option(
+            "service_detection"
         )
 
-        if ports:
-            arguments.extend(
-                [
-                    "-p",
-                    str(ports),
-                ]
-            )
-
-        if self.get_option(
-            "service_detection",
-            True,
-        ):
+        if service_detection:
             arguments.append(
                 "-sV"
             )
 
-        if self.get_option(
-            "os_detection",
-            False,
-        ):
+        os_detection = self.get_option(
+            "os_detection"
+        )
+
+        if os_detection:
             arguments.append(
                 "-O"
             )
 
-        timing = self.get_option(
-            "timing"
+        timing = _normalize_nmap_timing(
+            self.get_option(
+                "timing"
+            )
         )
 
         if timing:
             arguments.append(
-                f"-{timing}"
+                timing
             )
 
         nse_profile = self.get_option(
             "nse_profile"
         )
 
-        if nse_profile == "safe":
+        if nse_profile:
+            profile = str(
+                nse_profile
+            ).strip()
+
+            if profile:
+                arguments.extend(
+                    [
+                        "--script",
+                        profile,
+                    ]
+                )
+
+        explicit_port = _target_port(
+            self.context.target
+        )
+
+        top_ports = self.get_option(
+            "top_ports"
+        )
+
+        if explicit_port is not None:
             arguments.extend(
                 [
-                    "--script",
-                    "safe",
+                    "-p",
+                    str(explicit_port),
                 ]
             )
 
-        elif nse_profile == "default":
+        elif top_ports:
             arguments.extend(
                 [
-                    "--script",
-                    "default",
+                    "--top-ports",
+                    str(top_ports),
                 ]
             )
 
         arguments.append(
-            self.context.target
+            target
         )
 
         return arguments
 
-    def run(
-        self,
-    ) -> ExecutionResult:
-        """
-        Execute Nmap through the ScopeForgeX execution layer.
-        """
-
-        if not is_tool_installed(
-            self.executable
-        ):
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability=self.capability,
-                error="nmap not installed",
-            )
-
-        recon_dir = _recon_directory(
-            self.context
-        )
-
-        output_file = (
-            recon_dir
-            / "nmap.txt"
-        )
-
-        log_file = (
-            recon_dir
-            / "nmap.log"
-        )
-
-        try:
-            command = self.build_command()
-        except (
-            TypeError,
-            ValueError,
-        ) as exc:
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability=self.capability,
-                error=str(exc),
-            )
-
-        result = run_command(
-            tool=self.name,
-            capability=self.capability,
-            cmd=command,
-            outfile=str(log_file),
-            timeout=600,
-        )
-
-        _write_stdout_artifact(
-            result,
-            output_file,
-        )
-
-        result.add_artifact(
-            output_file
-        )
-
-        _add_log_artifact(
-            result,
-            log_file,
-        )
-
-        result.metadata.update(
-            {
-                "target": self.context.target,
-                "output_file": str(
-                    output_file
-                ),
-                "command": command,
-            }
-        )
-
-        return result
-
 
 ###############################################################################
-# dig
+# Dig
 ###############################################################################
 
 
-class DigTool(
-    ToolAdapter
-):
+class DigTool(ToolAdapter):
     """
-    dig DNS inspection adapter.
+    DNS reconnaissance adapter.
 
-    Purpose:
-        Deterministic DNS record inspection.
+    Dig is executed separately for each configured record type. The first
+    execution result remains the canonical ExecutionResult while all
+    individual record executions are represented through compact,
+    non-recursive metadata summaries.
+
+    Raw command output remains available through the generated artifacts.
     """
-
-    _DEFAULT_RECORD_TYPES = (
-        "A",
-        "AAAA",
-        "CNAME",
-        "MX",
-        "NS",
-        "TXT",
-        "SOA",
-    )
 
     definition = ToolDefinition(
         name="dig",
-        capability="dns_enumeration",
+        capability="dns_reconnaissance",
         phase="reconnaissance",
-        purpose="Deterministic DNS inspection.",
+        purpose=(
+            "DNS record reconnaissance using dig."
+        ),
         executable="dig",
-        input_type="domain",
+        input_type="host",
         output_type="raw",
         finding_types=(
             "DNS_RECORD",
@@ -767,9 +701,27 @@ class DigTool(
             ToolOption(
                 name="record_types",
                 flag="",
-                description="DNS record type(s) to query.",
-                option_type="sequence",
-                default=_DEFAULT_RECORD_TYPES,
+                description=(
+                    "DNS record types to query."
+                ),
+                option_type="list",
+                default=(
+                    "A",
+                    "AAAA",
+                    "CNAME",
+                    "MX",
+                    "NS",
+                    "SOA",
+                ),
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
+                name="timeout",
+                flag="--timeout",
+                description="Dig execution timeout.",
+                option_type="integer",
+                default=60,
                 safe=True,
                 aggressive=False,
             ),
@@ -778,200 +730,182 @@ class DigTool(
         aggressive=False,
     )
 
-    _VALID_RECORD_TYPES = {
+    DEFAULT_RECORD_TYPES = (
         "A",
         "AAAA",
         "CNAME",
         "MX",
         "NS",
-        "TXT",
         "SOA",
-        "CAA",
-        "PTR",
-        "SRV",
-    }
+    )
 
-    def _record_types(
-        self,
-    ) -> tuple[str, ...]:
+    def build_arguments(self) -> list[str]:
         """
-        Return configured DNS record types, falling back to the adapter
-        declaration when the profile does not provide the option.
+        Build the default Dig command arguments.
+
+        Dig uses a custom run() implementation because one ScopeForgeX Dig
+        execution intentionally performs multiple DNS record-type queries.
+        The returned arguments represent the first/default query and satisfy
+        the canonical ToolAdapter command-construction contract.
         """
-
-        record_types = self.get_option(
-            "record_types",
-            self._DEFAULT_RECORD_TYPES,
-        )
-
-        if record_types is None:
-            record_types = self._DEFAULT_RECORD_TYPES
-
-        if isinstance(
-            record_types,
-            str,
-        ):
-            record_types = (
-                record_types,
-            )
-
-        if not isinstance(
-            record_types,
-            (tuple, list),
-        ):
-            raise TypeError(
-                "dig record_types must be a sequence of strings."
-            )
-
-        normalized_types: list[str] = []
-
-        for record_type in record_types:
-            value = str(
-                record_type
-            ).strip().upper()
-
-            if value not in self._VALID_RECORD_TYPES:
-                raise ValueError(
-                    f"Unsupported dig record type: {record_type}"
-                )
-
-            normalized_types.append(
-                value
-            )
-
-        if not normalized_types:
-            raise ValueError(
-                "dig requires at least one record type."
-            )
-
-        return tuple(
-            normalized_types
-        )
-
-    def validate_options(
-        self,
-    ) -> None:
-        """Validate configured DNS record types."""
-
-        super().validate_options()
-
-        self._record_types()
-
-    def build_arguments(
-        self,
-    ) -> list[str]:
-        """
-        Build dig-specific command-line arguments.
-
-        dig accepts one query type per invocation. The adapter therefore uses
-        the first configured record type.
-        """
-
         self.validate_options()
+
+        target = _target_host(
+            self.context.target
+        )
+
+        if not target:
+            raise ValueError(
+                "dig requires a network target."
+            )
 
         record_types = self._record_types()
 
-        record_type = record_types[0]
-
         return [
-            self.context.target,
-            record_type,
+            "+noall",
+            "+answer",
+            target,
+            record_types[0],
         ]
 
-    def run(
-        self,
-    ) -> ExecutionResult:
+    def _record_types(self) -> tuple[str, ...]:
         """
-        Execute dig through the ScopeForgeX execution layer.
-
-        One invocation is performed using the first configured record type.
+        Resolve configured DNS record types.
         """
+        configured_record_types = self.get_option(
+            "record_types"
+        )
 
-        if not is_tool_installed(
-            self.executable
+        if not configured_record_types:
+            return self.DEFAULT_RECORD_TYPES
+
+        if isinstance(
+            configured_record_types,
+            str,
         ):
+            record_types = tuple(
+                item.strip().upper()
+                for item in configured_record_types.split(",")
+                if item.strip()
+            )
+
+        else:
+            record_types = tuple(
+                str(item).strip().upper()
+                for item in configured_record_types
+                if str(item).strip()
+            )
+
+        return (
+            record_types
+            if record_types
+            else self.DEFAULT_RECORD_TYPES
+        )
+
+    def run(self) -> ExecutionResult:
+        """
+        Execute Dig separately for each configured DNS record type.
+
+        The custom execution path is intentional: a single Dig assessment
+        produces multiple raw DNS artifacts and therefore cannot be represented
+        by one command without losing the per-record execution boundary.
+        """
+        self.validate_context()
+
+        target = _target_host(
+            self.context.target
+        )
+
+        if not target:
             return ExecutionResult.failure(
                 tool=self.name,
                 capability=self.capability,
-                error="dig not installed",
+                error="dig requires a network target.",
             )
 
-        recon_dir = _recon_directory(
-            self.context
+        record_types = self._record_types()
+
+        timeout = _execution_timeout(
+            self.context,
+            60,
         )
 
-        try:
-            record_types = self._record_types()
-        except (
-            TypeError,
-            ValueError,
-        ) as exc:
+        results: list[ExecutionResult] = []
+
+        for record_type in record_types:
+
+            command = [
+                "dig",
+                "+noall",
+                "+answer",
+                target,
+                record_type,
+            ]
+
+            output_file = _artifact_path(
+                self.context,
+                self.name,
+                f"{record_type.lower()}.txt",
+            )
+
+            result = run_command(
+                tool=self.name,
+                capability=self.capability,
+                cmd=command,
+                outfile=str(output_file),
+                timeout=timeout,
+            )
+
+            result.metadata.update(
+                {
+                    "target": self.context.target,
+                    "network_target": target,
+                    "target_port": _target_port(
+                        self.context.target
+                    ),
+                    "record_type": record_type,
+                    "output_file": str(output_file),
+                    "command": command,
+                }
+            )
+
+            _register_artifact(
+                result,
+                output_file,
+            )
+
+            results.append(
+                result
+            )
+
+        if not results:
             return ExecutionResult.failure(
                 tool=self.name,
                 capability=self.capability,
-                error=str(exc),
+                error="No DNS record executions were created.",
             )
 
-        record_type = str(
-            record_types[0]
-        ).lower()
+        first = results[0]
 
-        output_file = (
-            recon_dir
-            / f"dig_{record_type}.txt"
-        )
+        if len(results) == 1:
+            return first
 
-        log_file = (
-            recon_dir
-            / f"dig_{record_type}.log"
-        )
-
-        try:
-            command = self.build_command()
-        except (
-            TypeError,
-            ValueError,
-        ) as exc:
-            return ExecutionResult.failure(
-                tool=self.name,
-                capability=self.capability,
-                error=str(exc),
+        # Preserve compact, non-recursive summaries for all per-record
+        # executions. Never store ExecutionResult instances here.
+        first.metadata[
+            "record_results"
+        ] = [
+            _record_execution_summary(
+                result
             )
+            for result in results
+        ]
 
-        result = run_command(
-            tool=self.name,
-            capability=self.capability,
-            cmd=command,
-            outfile=str(log_file),
-            timeout=120,
-        )
+        first.metadata[
+            "record_result_count"
+        ] = len(results)
 
-        _write_stdout_artifact(
-            result,
-            output_file,
-        )
-
-        result.add_artifact(
-            output_file
-        )
-
-        _add_log_artifact(
-            result,
-            log_file,
-        )
-
-        result.metadata.update(
-            {
-                "target": self.context.target,
-                "record_type": record_type,
-                "output_file": str(
-                    output_file
-                ),
-                "command": command,
-            }
-        )
-
-        return result
+        return first
 
 
 ###############################################################################
@@ -979,8 +913,16 @@ class DigTool(
 ###############################################################################
 
 
+ALL_STAGE1_NETWORK_TOOLS = [
+    AmassTool,
+    NmapTool,
+    DigTool,
+]
+
+
 __all__ = [
     "AmassTool",
     "NmapTool",
     "DigTool",
+    "ALL_STAGE1_NETWORK_TOOLS",
 ]

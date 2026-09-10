@@ -48,9 +48,12 @@ Design Principles
 - The collector does not assign final risk beyond preserving the available
   detection severity/confidence information.
 - Collection failures do not destroy the original execution result.
+- Operational failures are not converted into vulnerability findings.
+- HTTP status codes are only preserved when they are part of an actual
+  Nikto finding record.
 - The collector never performs network requests.
 
-v1.0.0
+v1.0.1
 """
 
 from __future__ import annotations
@@ -115,6 +118,54 @@ _HTTP_STATUS_PATTERN = re.compile(
 _SEVERITY_PATTERN = re.compile(
     r"\b(critical|high|medium|moderate|low|info|informational)\b",
     re.IGNORECASE,
+)
+
+
+###############################################################################
+# Operational / Diagnostic Patterns
+###############################################################################
+
+
+_OPERATIONAL_FAILURE_PATTERNS = (
+    re.compile(
+        r"\bunable\s+to\s+connect\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bconnection\s+(?:failed|refused|reset|timed\s*out)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bfailed\s+to\s+(?:connect|open|resolve|reach)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bconnection\s+error\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bhost\s+(?:is\s+)?unreachable\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bno\s+route\s+to\s+host\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bnetwork\s+is\s+unreachable\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\btimeout(?:ed)?\b",
+        re.IGNORECASE,
+    ),
+)
+
+_DIAGNOSTIC_PREFIXES = (
+    "[FAIL]",
+    "[ERROR]",
+    "[WARNING]",
+    "[WARN]",
 )
 
 
@@ -659,8 +710,9 @@ class NiktoCollector(CollectorBase):
 
             +
 
-        The parser preserves the complete original line as evidence and uses
-        conservative heuristics for URL, status and identifier extraction.
+        Operational diagnostics such as connection failures are deliberately
+        excluded from finding records. They belong to execution status and
+        warnings rather than the vulnerability/finding stream.
         """
 
         records: list[dict[str, Any]] = []
@@ -703,6 +755,11 @@ class NiktoCollector(CollectorBase):
             ].strip()
 
             if not finding_text:
+                continue
+
+            if self._is_operational_failure(
+                finding_text
+            ):
                 continue
 
             record: dict[str, Any] = {
@@ -759,6 +816,43 @@ class NiktoCollector(CollectorBase):
 
         return records
 
+    @staticmethod
+    def _is_operational_failure(
+        text: str,
+    ) -> bool:
+        """
+        Determine whether a Nikto text line represents an operational
+        failure rather than a security finding.
+        """
+
+        normalized = text.strip()
+
+        if not normalized:
+            return False
+
+        upper = normalized.upper()
+
+        if any(
+            upper.startswith(
+                prefix
+            )
+            for prefix in _DIAGNOSTIC_PREFIXES
+        ):
+            if any(
+                pattern.search(
+                    normalized
+                )
+                for pattern in _OPERATIONAL_FAILURE_PATTERNS
+            ):
+                return True
+
+        return any(
+            pattern.search(
+                normalized
+            )
+            for pattern in _OPERATIONAL_FAILURE_PATTERNS
+        )
+
     ###########################################################################
     # Record Normalization
     ###########################################################################
@@ -793,6 +887,11 @@ class NiktoCollector(CollectorBase):
             )
 
         if not description:
+            return None
+
+        if self._is_operational_failure(
+            description
+        ):
             return None
 
         url = self._record_url(

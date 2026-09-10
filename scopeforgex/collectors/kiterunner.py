@@ -42,6 +42,8 @@ Design Principles
 - Status codes, content lengths and other discovery metadata are preserved.
 - The collector does not assign final severity or risk.
 - Collection failures do not destroy the original execution result.
+- Arbitrary tool diagnostics and local filesystem paths are not promoted to
+  API routes.
 
 v1.0.0
 """
@@ -71,6 +73,51 @@ TOOL_NAME = "kiterunner"
 OBSERVATION_API_ENDPOINT = "API_ENDPOINT"
 OBSERVATION_API_ROUTE = "API_ROUTE"
 
+_VALID_HTTP_METHODS = {
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "OPTIONS",
+    "HEAD",
+    "TRACE",
+}
+
+# Exit status 127 is a process/shell execution failure and must never be
+# interpreted as an HTTP status. This is intentionally kept explicit even
+# though _normalize_status_code already rejects values outside 100-599.
+_PROCESS_FAILURE_STATUS_CODES = {
+    126,
+    127,
+}
+
+# Kiterunner may emit diagnostic/table information containing local files.
+# Those values are not HTTP routes and must never become findings.
+_LOCAL_PATH_MARKERS = (
+    "/home/",
+    "/root/",
+    "/tmp/",
+    "/var/",
+    "/usr/",
+    "/opt/",
+    "/etc/",
+    "/mnt/",
+    "/workspace/",
+    "/workspaces/",
+)
+
+_DIAGNOSTIC_MARKERS = (
+    "kitebuilder-apis",
+    "kitebuilder",
+    "wordlist",
+    "wordlists",
+    "command:",
+    "usage:",
+    "options:",
+    "version:",
+)
+
 
 ###############################################################################
 # Collector
@@ -84,6 +131,10 @@ class KiterunnerCollector(CollectorBase):
     Kiterunner output can vary depending on the selected command and wordlist.
     The collector therefore accepts structured JSON records as well as common
     human-readable route output.
+
+    Human-readable parsing is intentionally conservative. A slash appearing
+    somewhere in arbitrary tool output is not sufficient evidence of an API
+    route.
     """
 
     name = "kiterunner"
@@ -221,6 +272,9 @@ class KiterunnerCollector(CollectorBase):
                         url
                         or route
                     )
+
+                    if not effective_value:
+                        continue
 
                     key = (
                         method or "",
@@ -576,6 +630,9 @@ class KiterunnerCollector(CollectorBase):
     ) -> dict[str, Any] | None:
         """
         Parse a structured Kiterunner result.
+
+        Structured records are trusted only after their URL/route fields pass
+        the same normalization rules used by text records.
         """
 
         url = self._extract_url(
@@ -616,7 +673,7 @@ class KiterunnerCollector(CollectorBase):
         """
         Parse common human-readable Kiterunner output.
 
-        The parser accepts lines containing either:
+        Accepted examples include:
 
             GET /api/users
 
@@ -624,12 +681,20 @@ class KiterunnerCollector(CollectorBase):
 
             GET https://example.com/api/users 200
 
-        or a bare URL/path containing an HTTP route.
+        or a bare absolute HTTP(S) URL.
+
+        Arbitrary slash-containing diagnostic text, Markdown/table rows,
+        filesystem paths and tool metadata are rejected.
         """
 
         value = record.strip()
 
         if not value:
+            return None
+
+        if self._is_non_route_text(
+            value
+        ):
             return None
 
         method_match = re.search(
@@ -667,9 +732,9 @@ class KiterunnerCollector(CollectorBase):
                 url
             )
 
-        else:
+        elif method:
             route_match = re.search(
-                r"(?<!\w)(/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%{}\-]+)",
+                r"(?<!\w)(/[A-Za-z0-9._~:/?#@!$&'()*+,;=%{}-]+)",
                 value,
             )
 
@@ -677,6 +742,22 @@ class KiterunnerCollector(CollectorBase):
                 route = route_match.group(
                     1
                 )
+
+        elif value.startswith(
+            "/"
+        ):
+            route = value
+
+        if not url and not route:
+            return None
+
+        route = self._normalize_route(
+            route
+        )
+
+        url = self._normalize_url(
+            url
+        )
 
         if not url and not route:
             return None
@@ -706,7 +787,7 @@ class KiterunnerCollector(CollectorBase):
         record: Mapping[str, Any],
     ) -> str | None:
         """
-        Extract an absolute URL from a structured record.
+        Extract an absolute HTTP(S) URL from a structured record.
         """
 
         for key in (
@@ -729,7 +810,7 @@ class KiterunnerCollector(CollectorBase):
                 candidate = value.strip()
 
                 match = re.search(
-                    r"https?://[^\s\"']+",
+                    r"https?://[^\s\]\[\"']+",
                     candidate,
                     re.IGNORECASE,
                 )
@@ -769,21 +850,64 @@ class KiterunnerCollector(CollectorBase):
 
             candidate = value.strip()
 
+            if KiterunnerCollector._looks_like_local_path(
+                candidate
+            ):
+                continue
+
+            if (
+                candidate.startswith(
+                    "["
+                )
+                and candidate.endswith(
+                    "]"
+                )
+            ):
+                candidate = candidate[1:-1].strip()
+
+                if KiterunnerCollector._looks_like_local_path(
+                    candidate
+                ):
+                    continue
+
+            if candidate.startswith(
+                "http://"
+            ) or candidate.startswith(
+                "https://"
+            ):
+                try:
+                    parsed = urlparse(
+                        candidate
+                    )
+
+                    return (
+                        parsed.path
+                        or "/"
+                    )
+
+                except ValueError:
+                    continue
+
             if candidate.startswith(
                 "/"
             ):
                 return candidate
 
             match = re.search(
-                r"https?://[^/\s]+(/[^\s\"']*)",
+                r"https?://[^/\s]+(/[^\s\]\[\"']*)",
                 candidate,
                 re.IGNORECASE,
             )
 
             if match:
-                return match.group(
+                route = match.group(
                     1
                 )
+
+                if not KiterunnerCollector._looks_like_local_path(
+                    route
+                ):
+                    return route
 
         return None
 
@@ -811,16 +935,7 @@ class KiterunnerCollector(CollectorBase):
             ):
                 method = value.strip().upper()
 
-                if method in {
-                    "GET",
-                    "POST",
-                    "PUT",
-                    "PATCH",
-                    "DELETE",
-                    "OPTIONS",
-                    "HEAD",
-                    "TRACE",
-                }:
+                if method in _VALID_HTTP_METHODS:
                     return method
 
         request = record.get(
@@ -908,6 +1023,8 @@ class KiterunnerCollector(CollectorBase):
     ) -> int | None:
         """
         Extract a plausible HTTP status code from text.
+
+        Process exit codes are not treated as HTTP status codes.
         """
 
         for match in re.finditer(
@@ -920,6 +1037,9 @@ class KiterunnerCollector(CollectorBase):
                     1
                 )
             )
+
+            if status in _PROCESS_FAILURE_STATUS_CODES:
+                continue
 
             if 100 <= status <= 599:
                 return status
@@ -1003,6 +1123,9 @@ class KiterunnerCollector(CollectorBase):
     ) -> str | None:
         """
         Normalize an API route.
+
+        Absolute local filesystem paths are explicitly rejected. This prevents
+        Kiterunner's wordlist/configuration paths from becoming API findings.
         """
 
         if not isinstance(
@@ -1014,6 +1137,21 @@ class KiterunnerCollector(CollectorBase):
         route = value.strip()
 
         if not route:
+            return None
+
+        if (
+            route.startswith(
+                "["
+            )
+            and route.endswith(
+                "]"
+            )
+        ):
+            route = route[1:-1].strip()
+
+        if KiterunnerCollector._looks_like_local_path(
+            route
+        ):
             return None
 
         if route.startswith(
@@ -1035,9 +1173,12 @@ class KiterunnerCollector(CollectorBase):
         if not route.startswith(
             "/"
         ):
-            route = (
-                f"/{route}"
-            )
+            route = f"/{route}"
+
+        if KiterunnerCollector._looks_like_local_path(
+            route
+        ):
+            return None
 
         return route
 
@@ -1057,16 +1198,7 @@ class KiterunnerCollector(CollectorBase):
 
         method = value.strip().upper()
 
-        if method in {
-            "GET",
-            "POST",
-            "PUT",
-            "PATCH",
-            "DELETE",
-            "OPTIONS",
-            "HEAD",
-            "TRACE",
-        }:
+        if method in _VALID_HTTP_METHODS:
             return method
 
         return None
@@ -1077,6 +1209,8 @@ class KiterunnerCollector(CollectorBase):
     ) -> int | None:
         """
         Normalize an HTTP status code.
+
+        Shell/process failure codes such as 127 are explicitly excluded.
         """
 
         if value is None:
@@ -1093,6 +1227,9 @@ class KiterunnerCollector(CollectorBase):
             TypeError,
             ValueError,
         ):
+            return None
+
+        if status in _PROCESS_FAILURE_STATUS_CODES:
             return None
 
         if 100 <= status <= 599:
@@ -1130,6 +1267,84 @@ class KiterunnerCollector(CollectorBase):
         return number
 
     ###########################################################################
+    # Text Validation Helpers
+    ###########################################################################
+
+    @staticmethod
+    def _looks_like_local_path(
+        value: str,
+    ) -> bool:
+        """
+        Determine whether a candidate is an obvious local filesystem path.
+
+        This intentionally targets unambiguous filesystem locations rather
+        than rejecting every route containing words such as "home" or "tmp".
+        """
+
+        candidate = value.strip()
+
+        if not candidate:
+            return False
+
+        normalized = candidate.replace(
+            "\\",
+            "/",
+        ).lower()
+
+        if normalized.startswith(
+            _LOCAL_PATH_MARKERS
+        ):
+            return True
+
+        if re.match(
+            r"^[a-zA-Z]:/",
+            normalized,
+        ):
+            return True
+
+        if ".kite]" in normalized:
+            return True
+
+        if normalized.endswith(
+            ".kite"
+        ):
+            return True
+
+        return False
+
+    @staticmethod
+    def _is_non_route_text(
+        value: str,
+    ) -> bool:
+        """
+        Reject obvious Kiterunner diagnostics and table metadata.
+
+        This prevents arbitrary slash-containing text from becoming an API
+        route simply because a slash appears somewhere in the line.
+        """
+
+        stripped = value.strip()
+
+        if not stripped:
+            return True
+
+        if "|" in stripped:
+            return True
+
+        if KiterunnerCollector._looks_like_local_path(
+            stripped
+        ):
+            return True
+
+        lowered = stripped.lower()
+
+        for marker in _DIAGNOSTIC_MARKERS:
+            if marker in lowered:
+                return True
+
+        return False
+
+    ###########################################################################
     # URL / Target Helpers
     ###########################################################################
 
@@ -1158,12 +1373,21 @@ class KiterunnerCollector(CollectorBase):
         ):
             return None
 
+        normalized_route = (
+            KiterunnerCollector._normalize_route(
+                route
+            )
+        )
+
+        if not normalized_route:
+            return None
+
         return (
             target.rstrip(
                 "/"
             )
             + "/"
-            + route.lstrip(
+            + normalized_route.lstrip(
                 "/"
             )
         )

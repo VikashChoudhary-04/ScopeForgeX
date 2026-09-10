@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import json
 from pathlib import Path
+from shlex import split as shlex_split
 
 from scopeforgex.analyzers import NativeAnalyzerEngine
 from scopeforgex.collectors.registry import (
@@ -69,17 +70,28 @@ EXPECTED_ANALYZERS = {
     "http_methods",
     "sensitive_information",
     "api",
+    "software_identity",
 }
 
 SMOKE_OUTPUTS = {
     "amass": "api.example.com\n",
-    "dalfox": "[POC] https://example.com/?q=test payload\n",
+    "dalfox": (
+        "[POC] [https://example.com/?q=test] payload\n"
+    ),
     "dig": "example.com. 300 IN A 93.184.216.34\n",
-    "ffuf": "http://example.com/admin [Status: 200]\n",
+    "ffuf": (
+        "[http://example.com/admin] [Status: 200]\n"
+    ),
     "hashcat": "hash:password\n",
-    "httpx": '{"url":"https://example.com","status_code":200}\n',
-    "hydra": "[443][https] host: example.com login: admin password: test\n",
-    "jsluice": '{"type":"url","url":"https://example.com/api"}\n',
+    "httpx": (
+        '{"url":"https://example.com","status_code":200}\n'
+    ),
+    "hydra": (
+        "[443][https] host: example.com login: admin password: test\n"
+    ),
+    "jsluice": (
+        '{"type":"url","url":"https://example.com/api"}\n'
+    ),
     "jwt_tool": "Vulnerability: algorithm confusion\n",
     "katana": "https://example.com/api\n",
     "kiterunner": "https://example.com/api [200]\n",
@@ -117,6 +129,135 @@ def _collector_context(
         "options": {},
         "command": [],
     }
+
+
+def _mock_run_command(
+    *args: object,
+    **kwargs: object,
+) -> ExecutionResult:
+    """
+    Return deterministic smoke output instead of launching an external tool.
+
+    The real workflow, ToolExecutor, collectors, native analyzers and
+    reporting layers remain active. Only the external process-execution
+    boundary is replaced for regression testing.
+    """
+
+    command = kwargs.get("cmd")
+
+    if command is None and args:
+        command = args[0]
+
+    if isinstance(command, (list, tuple)):
+        argv = [
+            str(value)
+            for value in command
+        ]
+
+    elif isinstance(command, str):
+        argv = shlex_split(command)
+
+    else:
+        argv = []
+
+    executable = (
+        Path(argv[0]).name.lower()
+        if argv
+        else ""
+    )
+
+    if executable == "httpx":
+        tool = "httpx"
+
+    elif executable == "nuclei":
+        tool = "nuclei"
+
+    elif executable == "subhunt":
+        tool = "subhunt"
+
+    else:
+        tool = executable
+
+    stdout = SMOKE_OUTPUTS.get(
+        tool,
+        "",
+    )
+
+    return _execution_result(
+        tool,
+        stdout,
+    )
+
+
+def _run_fast_workflow_without_external_tools(
+    monkeypatch,
+    tmp_path: Path,
+) -> dict[str, object]:
+    """
+    Execute the real fast workflow with all external process execution mocked.
+
+    Fast-profile adapters may either delegate through ToolExecutor or own a
+    custom ``run()`` implementation. Patch both execution boundaries so the
+    test cannot launch real external processes.
+    """
+
+    import scopeforgex.runner as runner
+    import scopeforgex.tools.stage1_recon_web as stage1_recon_web
+    import scopeforgex.tools.stage3_vuln as stage3_vuln
+
+    monkeypatch.setattr(
+        runner,
+        "run_command",
+        _mock_run_command,
+    )
+
+    monkeypatch.setattr(
+        stage1_recon_web,
+        "run_command",
+        _mock_run_command,
+    )
+
+    monkeypatch.setattr(
+        stage1_recon_web,
+        "is_tool_installed",
+        lambda *_args, **_kwargs: True,
+    )
+
+    monkeypatch.setattr(
+        stage3_vuln,
+        "run_command",
+        _mock_run_command,
+    )
+
+    monkeypatch.setattr(
+        stage3_vuln,
+        "is_tool_installed",
+        lambda *_args, **_kwargs: True,
+    )
+
+    engine = WorkflowEngine(
+        "fast"
+    )
+
+    engine.ctx.update(
+        {
+            "non_interactive": True,
+            "authorization_confirmed": True,
+            "target": "example.com",
+            "target_type": "web",
+            "outdir": str(tmp_path),
+        }
+    )
+
+    return engine.run()
+
+
+def test_tool_registry_places_katana_before_httpx() -> None:
+    names = list(
+        get_registered_tools()
+    )
+
+    assert names.index("katana") < names.index("httpx")
 
 
 def test_tool_registry_contains_expected_tools() -> None:
@@ -249,7 +390,6 @@ def test_all_collectors_parse_smoke_inputs() -> None:
     ] = []
 
     for name, stdout in SMOKE_OUTPUTS.items():
-
         try:
             collector = create_collector(
                 name
@@ -273,7 +413,6 @@ def test_all_collectors_parse_smoke_inputs() -> None:
             )
 
             for observation in observations:
-
                 assert hasattr(
                     observation,
                     "as_dict",
@@ -313,7 +452,7 @@ def test_all_collectors_parse_smoke_inputs() -> None:
     assert not failures, failures
 
 
-def test_native_analyzer_engine_contains_exactly_six_analyzers() -> None:
+def test_native_analyzer_engine_contains_exactly_seven_analyzers() -> None:
     engine = NativeAnalyzerEngine()
 
     names = set(
@@ -321,7 +460,7 @@ def test_native_analyzer_engine_contains_exactly_six_analyzers() -> None:
     )
 
     assert names == EXPECTED_ANALYZERS
-    assert len(names) == 6
+    assert len(names) == 7
 
 
 def test_native_analyzer_profile_selection() -> None:
@@ -350,10 +489,10 @@ def test_native_analyzer_profile_selection() -> None:
 
     assert len(
         filtered.analyzer_names()
-    ) == 6
+    ) == 7
 
 
-def test_all_profiles_enable_six_native_analyzers() -> None:
+def test_all_profiles_enable_seven_native_analyzers() -> None:
     for profile_name in (
         "fast",
         "standard",
@@ -372,7 +511,7 @@ def test_all_profiles_enable_six_native_analyzers() -> None:
             dict,
         )
 
-        assert len(native) == 6
+        assert len(native) == 7
 
         for name in (
             "security_headers",
@@ -381,6 +520,7 @@ def test_all_profiles_enable_six_native_analyzers() -> None:
             "http_methods",
             "sensitive_files",
             "api",
+            "software_identity",
         ):
             assert name in native
             assert isinstance(
@@ -431,7 +571,7 @@ def test_native_analyzer_smoke_produces_findings() -> None:
         evidence
     )
 
-    assert len(results) == 6
+    assert len(results) == 7
 
     assert all(
         result.success
@@ -446,21 +586,14 @@ def test_native_analyzer_smoke_produces_findings() -> None:
     assert finding_count > 0
 
 
-def test_workflow_native_state_for_fast_profile() -> None:
-    engine = WorkflowEngine(
-        "fast"
+def test_workflow_native_state_for_fast_profile(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    result = _run_fast_workflow_without_external_tools(
+        monkeypatch,
+        tmp_path,
     )
-
-    engine.ctx.update(
-        {
-            "non_interactive": True,
-            "authorization_confirmed": True,
-            "target": "example.com",
-            "target_type": "web",
-        }
-    )
-
-    result = engine.run()
 
     execution_results = result[
         "execution_results"
@@ -489,7 +622,7 @@ def test_workflow_native_state_for_fast_profile() -> None:
 
     assert len(
         native_results
-    ) == 18
+    ) == 21
 
     assert {
         item.tool
@@ -513,11 +646,11 @@ def test_workflow_native_state_for_fast_profile() -> None:
 
         assert native[
             "analyzer_count"
-        ] == 6
+        ] == 7
 
         assert len(
             native["results"]
-        ) == 6
+        ) == 7
 
         for analyzer_result in native[
             "results"
@@ -540,21 +673,14 @@ def test_workflow_native_state_for_fast_profile() -> None:
     } == EXPECTED_ANALYZERS
 
 
-def test_fast_workflow_generates_valid_reports() -> None:
-    engine = WorkflowEngine(
-        "fast"
+def test_fast_workflow_generates_valid_reports(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    result = _run_fast_workflow_without_external_tools(
+        monkeypatch,
+        tmp_path,
     )
-
-    engine.ctx.update(
-        {
-            "non_interactive": True,
-            "authorization_confirmed": True,
-            "target": "example.com",
-            "target_type": "web",
-        }
-    )
-
-    result = engine.run()
 
     report_paths = result[
         "report_paths"

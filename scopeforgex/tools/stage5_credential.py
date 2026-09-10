@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from scopeforgex.models.execution_result import ExecutionResult
 from scopeforgex.registry.tool_base import (
@@ -58,6 +59,128 @@ def _resolved_options(
     )
 
     return values
+
+
+def _normalize_hydra_target(
+    target: str,
+) -> str:
+    """
+    Normalize a workflow target into the host representation expected by
+    Hydra's classic TARGET SERVICE command form.
+
+    Supported forms include:
+
+        example.com
+        example.com:22
+        127.0.0.1
+        127.0.0.1:2222
+        http://example.com
+        https://example.com:443
+        [::1]:22
+
+    The workflow target itself is never modified.
+    """
+
+    value = str(
+        target
+    ).strip()
+
+    if not value:
+        raise ValueError(
+            "Hydra requires an authentication target."
+        )
+
+    parsed = urlparse(
+        value
+    )
+
+    if parsed.scheme and parsed.hostname:
+        return parsed.hostname
+
+    if value.startswith("["):
+        closing = value.find(
+            "]"
+        )
+
+        if closing != -1:
+            return value[
+                1:closing
+            ]
+
+    if value.count(":") == 1:
+        host, port = value.rsplit(
+            ":",
+            1,
+        )
+
+        if port.isdigit() and host.strip():
+            return host.strip()
+
+    return value
+
+
+def _hydra_target_port(
+    target: str,
+) -> int | None:
+    """
+    Return an explicit port from a Hydra workflow target.
+
+    Supported forms include:
+
+        example.com:22
+        127.0.0.1:2222
+        http://example.com:443
+        https://example.com:443
+        [::1]:22
+    """
+
+    value = str(
+        target
+    ).strip()
+
+    if not value:
+        return None
+
+    parsed = urlparse(
+        value
+    )
+
+    if parsed.port is not None:
+        return parsed.port
+
+    if value.startswith("["):
+        closing = value.find(
+            "]"
+        )
+
+        if (
+            closing != -1
+            and len(value) > closing + 1
+            and value[closing + 1] == ":"
+        ):
+            port = value[
+                closing + 2:
+            ]
+
+            if port.isdigit():
+                return int(
+                    port
+                )
+
+        return None
+
+    if value.count(":") == 1:
+        _, port = value.rsplit(
+            ":",
+            1,
+        )
+
+        if port.isdigit():
+            return int(
+                port
+            )
+
+    return None
 
 
 def _write_raw_output(
@@ -193,6 +316,16 @@ class HydraTool(
                 "Hydra cannot use both username and username_file."
             )
 
+        if not username and not username_file:
+            raise ValueError(
+                "Hydra requires either username or username_file."
+            )
+
+        if not password_file:
+            raise ValueError(
+                "Hydra requires password_file."
+            )
+
         if username is not None:
             username = str(
                 username
@@ -204,22 +337,25 @@ class HydraTool(
                 )
 
         if username_file:
-            if not Path(
+            username_path = Path(
                 str(username_file)
-            ).is_file():
+            ).expanduser()
+
+            if not username_path.is_file():
                 raise ValueError(
                     f"Hydra username_file not found: "
-                    f"{username_file}"
+                    f"{username_path}"
                 )
 
-        if password_file:
-            if not Path(
-                str(password_file)
-            ).is_file():
-                raise ValueError(
-                    f"Hydra password_file not found: "
-                    f"{password_file}"
-                )
+        password_path = Path(
+            str(password_file)
+        ).expanduser()
+
+        if not password_path.is_file():
+            raise ValueError(
+                f"Hydra password_file not found: "
+                f"{password_path}"
+            )
 
         threads = options.get(
             "threads",
@@ -243,13 +379,38 @@ class HydraTool(
                 "Hydra threads must be greater than zero."
             )
 
+        target = str(
+            self.context.target
+        ).strip()
+
+        if not target:
+            raise ValueError(
+                "Hydra requires an authentication target."
+            )
+
+        service_values = [
+            str(value).strip()
+            for value in self.context.input_data
+            if value is not None
+            and str(value).strip()
+        ]
+
+        if not service_values:
+            raise ValueError(
+                "Hydra requires an authentication service in "
+                "ToolContext.input_data."
+            )
+
     def build_arguments(self) -> list[str]:
         """
         Build Hydra command arguments.
 
         Hydra requires a target and authentication service. The service is
-        supplied through ToolContext.input_data when available, otherwise the
-        first input element is interpreted as the service.
+        supplied through ToolContext.input_data.
+
+        When the workflow target contains an explicit port, the port is
+        supplied through Hydra's -s option while the target itself is
+        normalized to its host representation.
         """
 
         self.validate_options()
@@ -258,10 +419,9 @@ class HydraTool(
             self
         )
 
-        if not self.context.target:
-            raise ValueError(
-                "Hydra requires an authentication target."
-            )
+        target = _normalize_hydra_target(
+            self.context.target
+        )
 
         if not self.context.input_data:
             raise ValueError(
@@ -315,19 +475,30 @@ class HydraTool(
                 ]
             )
 
-        if password_file:
+        arguments.extend(
+            [
+                "-P",
+                str(password_file),
+                "-t",
+                str(threads),
+            ]
+        )
+
+        target_port = _hydra_target_port(
+            self.context.target
+        )
+
+        if target_port is not None:
             arguments.extend(
                 [
-                    "-P",
-                    str(password_file),
+                    "-s",
+                    str(target_port),
                 ]
             )
 
         arguments.extend(
             [
-                "-t",
-                str(threads),
-                self.context.target,
+                target,
                 service,
             ]
         )
@@ -372,12 +543,32 @@ class HydraTool(
 
         command = self.build_command()
 
+        configured_timeout = self.context.options.get(
+            "tool_timeout"
+        )
+
+        if configured_timeout is None:
+            configured_timeout = 900
+
+        try:
+            execution_timeout = int(
+                configured_timeout
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            execution_timeout = 900
+
+        if execution_timeout <= 0:
+            execution_timeout = 900
+
         result = run_command(
             tool=self.name,
             capability=self.capability,
             cmd=command,
             outfile=str(log_file),
-            timeout=900,
+            timeout=execution_timeout,
         )
 
         _write_raw_output(
@@ -421,6 +612,12 @@ class HydraTool(
         result.metadata.update(
             {
                 "target": self.context.target,
+                "network_target": _normalize_hydra_target(
+                    self.context.target
+                ),
+                "target_port": _hydra_target_port(
+                    self.context.target
+                ),
                 "command_executed": True,
                 "output_file": str(
                     output_file
@@ -441,6 +638,10 @@ class HashcatTool(
 ):
     """
     Authorized offline password/hash assessment adapter.
+
+    ScopeForgeX deliberately uses Hashcat's dictionary attack mode here so
+    command construction remains deterministic and the required attack input
+    is unambiguous.
 
     Hashcat output is parsed by HashcatCollector.
     """
@@ -470,6 +671,15 @@ class HashcatTool(
                 safe=True,
                 aggressive=True,
             ),
+            ToolOption(
+                name="wordlist",
+                flag=None,
+                description="Dictionary wordlist used for the attack.",
+                option_type="path",
+                default=None,
+                safe=True,
+                aggressive=True,
+            ),
         ),
         safe=True,
         aggressive=True,
@@ -484,29 +694,55 @@ class HashcatTool(
             "hash_type"
         )
 
-        if hash_type is not None:
-            try:
-                hash_type = int(
-                    hash_type
-                )
-            except (
-                TypeError,
-                ValueError,
-            ) as exc:
-                raise ValueError(
-                    "Hashcat hash_type must be an integer."
-                ) from exc
+        if hash_type is None:
+            raise ValueError(
+                "Hashcat requires a hash_type option."
+            )
 
-            if hash_type < 0:
-                raise ValueError(
-                    "Hashcat hash_type cannot be negative."
-                )
+        try:
+            hash_type = int(
+                hash_type
+            )
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise ValueError(
+                "Hashcat hash_type must be an integer."
+            ) from exc
+
+        if hash_type < 0:
+            raise ValueError(
+                "Hashcat hash_type cannot be negative."
+            )
+
+        wordlist = self.get_option(
+            "wordlist"
+        )
+
+        if not wordlist:
+            raise ValueError(
+                "Hashcat requires a wordlist."
+            )
+
+        wordlist_path = Path(
+            str(wordlist)
+        ).expanduser()
+
+        if not wordlist_path.is_file():
+            raise ValueError(
+                f"Hashcat wordlist not found: {wordlist_path}"
+            )
 
     def build_arguments(self) -> list[str]:
         """
-        Build Hashcat command arguments.
+        Build a deterministic Hashcat dictionary-attack command.
 
         The hash file is the first ToolContext.input_data item.
+        The wordlist is supplied through the ``wordlist`` option.
+
+        Hashcat attack mode 0 is used explicitly because it accepts a
+        dictionary input and provides a deterministic command shape.
         """
 
         self.validate_options()
@@ -520,7 +756,7 @@ class HashcatTool(
             str(
                 self.context.input_data[0]
             )
-        )
+        ).expanduser()
 
         if not hash_file.is_file():
             raise ValueError(
@@ -536,13 +772,18 @@ class HashcatTool(
                 "Hashcat requires a hash_type option."
             )
 
-        arguments = [
+        wordlist = self.get_option(
+            "wordlist"
+        )
+
+        return [
             "-m",
             str(hash_type),
+            "-a",
+            "0",
             str(hash_file),
+            str(wordlist),
         ]
-
-        return arguments
 
     def run(self) -> ExecutionResult:
         """Execute Hashcat and parse the resulting output."""
@@ -582,12 +823,32 @@ class HashcatTool(
 
         command = self.build_command()
 
+        configured_timeout = self.context.options.get(
+            "tool_timeout"
+        )
+
+        if configured_timeout is None:
+            configured_timeout = 1800
+
+        try:
+            execution_timeout = int(
+                configured_timeout
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            execution_timeout = 1800
+
+        if execution_timeout <= 0:
+            execution_timeout = 1800
+
         result = run_command(
             tool=self.name,
             capability=self.capability,
             cmd=command,
             outfile=str(log_file),
-            timeout=1800,
+            timeout=execution_timeout,
         )
 
         _write_raw_output(

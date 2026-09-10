@@ -19,9 +19,6 @@ Architecture
 Workflow Engine
     |
     v
-Tool Registry
-    |
-    v
 ToolAdapter
     |
     +-- ToolDefinition
@@ -209,6 +206,119 @@ def _resolve_option_values(
     return values
 
 
+def _remove_stale_artifact(
+    path: Path,
+) -> None:
+    """
+    Remove an artifact from a previous execution.
+
+    This prevents failed or timed-out executions from exposing stale
+    assessment data as though it belonged to the current run.
+    """
+
+    try:
+        if path.exists():
+            path.unlink()
+    except OSError:
+        # Artifact cleanup must never prevent the actual tool execution.
+        pass
+
+
+def _execution_timeout(
+    context: ToolContext,
+    default: int,
+) -> int:
+    """
+    Resolve the process execution timeout for a custom adapter run.
+
+    Tool-specific timeout options remain responsible for the underlying
+    tool's own request/operation timeouts. This value controls the outer
+    ScopeForgeX process timeout.
+
+    The value is read from the ToolContext options when supplied so custom
+    adapter implementations do not silently ignore workflow-level timeout
+    configuration.
+    """
+
+    configured = context.options.get(
+        "tool_timeout"
+    )
+
+    if configured is None:
+        configured = context.options.get(
+            "process_timeout"
+        )
+
+    if configured is None:
+        return default
+
+    try:
+        timeout = int(
+            configured
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return default
+
+    if timeout <= 0:
+        return default
+
+    return timeout
+
+
+def _is_tls_target(
+    target: str,
+) -> bool:
+    """
+    Determine whether a target is applicable to TLS/SSL assessment.
+
+    Explicit HTTP URLs are not TLS targets and must be skipped rather than
+    passed to testssl.sh as failed TLS assessments.
+
+    Explicit HTTPS URLs are TLS targets.
+
+    Bare host and host:port values remain eligible because testssl.sh accepts
+    host-oriented targets and those values may represent TLS services without
+    an explicit URL scheme.
+
+    Args:
+        target:
+            Target value supplied through ToolContext.
+
+    Returns:
+        True when testssl.sh should be executed.
+    """
+
+    value = str(
+        target or ""
+    ).strip()
+
+    if not value:
+        return False
+
+    normalized = value.lower()
+
+    if normalized.startswith(
+        "https://"
+    ):
+        return True
+
+    if normalized.startswith(
+        "http://"
+    ):
+        return False
+
+    # A non-HTTP scheme is not a web URL that this adapter can safely
+    # interpret as a TLS target. Bare host and host:port values are retained
+    # as valid testssl.sh inputs.
+    if "://" in normalized:
+        return False
+
+    return True
+
+
 def _build_nuclei_flags(
     options: Mapping[str, Any],
 ) -> list[str]:
@@ -392,17 +502,20 @@ def _build_testssl_flags(
     Build testssl.sh command-line arguments.
     """
 
-    flags: list[str] = []
+    flags: list[str] = [
+        "--warnings",
+        "batch",
+    ]
 
-    connect_timeout = options.get(
-        "connect_timeout"
+    socket_timeout = options.get(
+        "socket_timeout"
     )
 
-    if connect_timeout is not None:
+    if socket_timeout is not None:
         flags.extend(
             [
-                "--connect-timeout",
-                str(connect_timeout),
+                "--socket-timeout",
+                str(socket_timeout),
             ]
         )
 
@@ -580,7 +693,9 @@ class NucleiTool(
                     f"Nuclei {option_name} must be greater than zero."
                 )
 
-    def build_arguments(self) -> list[str]:
+    def build_arguments(
+        self,
+    ) -> list[str]:
         """
         Build Nuclei command-line arguments.
 
@@ -693,6 +808,13 @@ class NucleiTool(
             / "nuclei.log"
         )
 
+        _remove_stale_artifact(
+            output_file
+        )
+        _remove_stale_artifact(
+            log_file
+        )
+
         try:
             command = self.build_command()
 
@@ -709,9 +831,12 @@ class NucleiTool(
         result = run_command(
             tool=self.name,
             capability=self.capability,
-            cmd=shlex.join(command),
+            cmd=command,
             outfile=str(log_file),
-            timeout=600,
+            timeout=_execution_timeout(
+                self.context,
+                600,
+            ),
         )
 
         if output_file.exists():
@@ -836,7 +961,9 @@ class NiktoTool(
                     "Nikto timeout must be greater than zero."
                 )
 
-    def build_arguments(self) -> list[str]:
+    def build_arguments(
+        self,
+    ) -> list[str]:
         """Build Nikto command-line arguments."""
 
         if not self.context.target:
@@ -897,6 +1024,13 @@ class NiktoTool(
             / "nikto.log"
         )
 
+        _remove_stale_artifact(
+            output_file
+        )
+        _remove_stale_artifact(
+            log_file
+        )
+
         try:
             command = self.build_command()
 
@@ -913,9 +1047,12 @@ class NiktoTool(
         result = run_command(
             tool=self.name,
             capability=self.capability,
-            cmd=shlex.join(command),
+            cmd=command,
             outfile=str(log_file),
-            timeout=600,
+            timeout=_execution_timeout(
+                self.context,
+                600,
+            ),
         )
 
         if log_file.exists():
@@ -1000,9 +1137,9 @@ class TestSSLTool(
         ),
         options=(
             ToolOption(
-                name="connect_timeout",
-                flag="--connect-timeout",
-                description="TCP connection timeout in seconds.",
+                name="socket_timeout",
+                flag="--socket-timeout",
+                description="TCP socket connection timeout in seconds.",
                 option_type="integer",
                 default=10,
                 safe=True,
@@ -1034,7 +1171,7 @@ class TestSSLTool(
         )
 
         for option_name in (
-            "connect_timeout",
+            "socket_timeout",
             "openssl_timeout",
         ):
             value = options.get(
@@ -1061,8 +1198,10 @@ class TestSSLTool(
                     f"testssl.sh {option_name} must be greater than zero."
                 )
 
-    def build_arguments(self) -> list[str]:
-        """Build testssl.sh command arguments."""
+    def build_arguments(
+        self,
+    ) -> list[str]:
+        """Build testssl.sh command-line arguments."""
 
         if not self.context.target:
             raise ValueError(
@@ -1094,9 +1233,28 @@ class TestSSLTool(
         Structured parsing remains the responsibility of TestSSLCollector.
         """
 
-        from scopeforgex.collectors.testssl import (
-            TestSSLCollector,
-        )
+        target = str(
+            self.context.target or ""
+        ).strip()
+
+        if not target:
+            return ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error="testssl.sh requires a target.",
+            )
+
+        if not _is_tls_target(
+            target
+        ):
+            return ExecutionResult.skipped(
+                tool=self.name,
+                capability=self.capability,
+                reason=(
+                    "TLS assessment not applicable: "
+                    f"target '{target}' is an HTTP target."
+                ),
+            )
 
         if not is_tool_installed(
             self.executable
@@ -1127,6 +1285,13 @@ class TestSSLTool(
             / "testssl.log"
         )
 
+        _remove_stale_artifact(
+            output_file
+        )
+        _remove_stale_artifact(
+            log_file
+        )
+
         try:
             command = self.build_command()
 
@@ -1140,14 +1305,15 @@ class TestSSLTool(
                 error=str(exc),
             )
 
-        # run_command() expects the command in its shell-string form.
-        # Command construction remains argv-oriented at the adapter boundary.
         result = run_command(
             tool=self.name,
             capability=self.capability,
-            cmd=shlex.join(command),
+            cmd=command,
             outfile=str(log_file),
-            timeout=900,
+            timeout=_execution_timeout(
+                self.context,
+                900,
+            ),
         )
 
         stdout = getattr(
@@ -1167,8 +1333,6 @@ class TestSSLTool(
                 stdout or ""
             )
 
-        # The runner's outfile contains the combined preserved process output
-        # used as the canonical raw testssl.sh artifact when available.
         if log_file.exists() and log_file.stat().st_size > 0:
             output_file.write_text(
                 log_file.read_text(
@@ -1191,30 +1355,6 @@ class TestSSLTool(
         if log_file.exists():
             result.add_artifact(
                 log_file
-            )
-
-        try:
-            collector = TestSSLCollector()
-
-            observations = collector.parse(
-                result,
-                {
-                    "target": self.context.target,
-                },
-            )
-
-            result.metadata.update(
-                {
-                    "collector": "TestSSLCollector",
-                    "observation_count": len(
-                        observations
-                    ),
-                }
-            )
-
-        except Exception as exc:
-            result.add_warning(
-                f"testssl.sh collection failed: {exc}"
             )
 
         result.metadata.update(

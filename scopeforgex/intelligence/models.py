@@ -59,6 +59,70 @@ class SoftwareObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class SoftwareAssessment:
+    """
+    NVD/CISA vulnerability-intelligence assessment for one
+    observed software asset.
+
+    A SoftwareAssessment records that vulnerability intelligence was
+    evaluated for the software identity, including the valid case where
+    zero applicable CVEs are found.
+    """
+
+    product: str
+
+    version: str | None = None
+
+    vendor: str | None = None
+
+    cpe: str | None = None
+
+    target: str | None = None
+
+    host: str | None = None
+
+    port: int | None = None
+
+    url: str | None = None
+
+    source_tool: str = ""
+
+    detection_method: str = ""
+
+    confidence: str = "Medium"
+
+    nvd_checked: bool = False
+
+    applicable_cve_count: int = 0
+
+    kev_count: int = 0
+
+    def as_dict(
+        self,
+    ) -> dict[str, Any]:
+        """
+        Return a JSON-compatible representation.
+        """
+
+        return {
+            "product": self.product,
+            "version": self.version,
+            "vendor": self.vendor,
+            "cpe": self.cpe,
+            "target": self.target,
+            "host": self.host,
+            "port": self.port,
+            "url": self.url,
+            "source_tool": self.source_tool,
+            "detection_method": self.detection_method,
+            "confidence": self.confidence,
+            "nvd_checked": self.nvd_checked,
+            "applicable_cve_count": self.applicable_cve_count,
+            "kev_count": self.kev_count,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class VulnerabilityMatch:
     """
     NVD/CISA intelligence associated with one observed software asset.

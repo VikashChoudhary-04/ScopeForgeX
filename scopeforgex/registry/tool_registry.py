@@ -36,6 +36,7 @@ from typing import Any, Mapping
 from scopeforgex.registry.tool_base import (
     ToolAdapter,
     ToolContext,
+    ToolDefinition as ToolDefinitionBaseAdapter,
     ToolOption,
 )
 
@@ -369,18 +370,6 @@ def register_tool(
 
 
 ###############################################################################
-# Registry Definition Type Alias
-###############################################################################
-
-
-# Avoid shadowing the public registry ToolDefinition above while still
-# allowing us to validate the metadata class imported from tool_base.py.
-from scopeforgex.registry.tool_base import (
-    ToolDefinition as ToolDefinitionBaseAdapter,
-)
-
-
-###############################################################################
 # Lookup
 ###############################################################################
 
@@ -584,21 +573,20 @@ def build_registry() -> dict[str, ToolDefinition]:
         supported_options=(
             "passive",
             "active",
-            "brute",
-            "timeout",
+            "bruteforce",
         ),
         default_options={
-            "passive": True,
+            "passive": False,
         },
         safe_options={
             "passive": True,
             "active": False,
-            "brute": False,
+            "bruteforce": False,
         },
         aggressive_options={
-            "passive": True,
+            "passive": False,
             "active": True,
-            "brute": True,
+            "bruteforce": True,
         },
     )
 
@@ -634,13 +622,18 @@ def build_registry() -> dict[str, ToolDefinition]:
     # ========================================================================
 
     register_tool(
-        HttpxTool,
-        parser="HTTPX Collector",
+        KatanaTool,
+        parser="Katana Collector",
     )
 
     register_tool(
-        KatanaTool,
-        parser="Katana Collector",
+        JSLuiceTool,
+        parser="JSLuice Collector",
+    )
+
+    register_tool(
+        HttpxTool,
+        parser="HTTPX Collector",
     )
 
     register_tool(
@@ -656,11 +649,6 @@ def build_registry() -> dict[str, ToolDefinition]:
     register_tool(
         KiterunnerTool,
         parser="Kiterunner Collector",
-    )
-
-    register_tool(
-        JSLuiceTool,
-        parser="JSLuice Collector",
     )
 
     # ========================================================================

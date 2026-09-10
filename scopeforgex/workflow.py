@@ -16,6 +16,7 @@ The workflow engine is responsible for:
 - Preserving structured execution results
 - Maintaining shared runtime context
 - Maintaining assessment-wide collector and finding state
+- Persisting assessment evidence references
 - Running final reporting
 - Building and storing the canonical workflow result
 - Persisting workflow state
@@ -66,6 +67,10 @@ NORMALIZED / DEDUPLICATED FINDINGS
   ↓
 CORRELATION
   ↓
+EVIDENCE MANAGER
+  ↓
+EVIDENCE STORE
+  ↓
 WORKFLOW CONTEXT
   ↓
 REPORTING
@@ -77,10 +82,12 @@ ScopeForgeX 3.0.0
 
 from __future__ import annotations
 
+import json
 import time
 from importlib.resources import as_file, files
+from urllib.parse import urlparse
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from rich.progress import (
     BarColumn,
@@ -90,6 +97,10 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 
+from scopeforgex.evidence.manager import (
+    EvidenceManager,
+)
+from scopeforgex.findings.model import Finding
 from scopeforgex.models.execution_result import ExecutionResult
 from scopeforgex.registry.tool_base import ToolContext
 from scopeforgex.registry.tool_registry import (
@@ -106,11 +117,14 @@ from scopeforgex.runtime.state import RuntimeState
 from scopeforgex.runtime.tool_executor import ToolExecutor
 from scopeforgex.state import save_last_run
 from scopeforgex.ui import (
+    assessment_context,
     assessment_summary,
     info,
     ok,
     stage,
     warn,
+    workflow_tool_result,
+    workflow_tool_start,
 )
 from scopeforgex.utils import load_yaml
 
@@ -304,6 +318,7 @@ def _tool_requires_confirmation(
     ):
 
         try:
+
             return bool(
                 value()
             )
@@ -613,6 +628,253 @@ def _tool_profile_options(
             )
 
     return options
+
+
+###############################################################################
+# Observation Input Projection
+###############################################################################
+
+
+def _mapping_value(
+    value: Any,
+    key: str,
+) -> Any:
+    """Return a value from either a mapping or an object."""
+    if isinstance(value, dict):
+        return value.get(key)
+
+    return getattr(
+        value,
+        key,
+        None,
+    )
+
+
+def _absolute_http_url(
+    value: Any,
+) -> str | None:
+    """
+    Return an absolute HTTP(S) URL or None.
+
+    Input projection is intentionally conservative. A downstream URL-based
+    tool must never receive arbitrary observation values such as parameters,
+    route fragments, severity labels or finding titles.
+    """
+
+    if value is None:
+        return None
+
+    candidate = str(
+        value
+    ).strip()
+
+    if not candidate:
+        return None
+
+    try:
+        parsed = urlparse(
+            candidate
+        )
+    except ValueError:
+        return None
+
+    if parsed.scheme.lower() not in {
+        "http",
+        "https",
+    }:
+        return None
+
+    if not parsed.netloc:
+        return None
+
+    return candidate
+
+
+def _project_observation_inputs(
+    tool: Any,
+    observations: Any,
+) -> tuple[str, ...]:
+    """
+    Project previously collected observations into the receiving tool's
+    declared input type.
+
+    This function is deliberately source-tool agnostic. It does not know
+    whether an observation originated from Katana, JSLuice, Kiterunner,
+    FFUF, Nmap or another collector.
+
+    The receiving tool's canonical ``input_type`` determines what can be
+    projected.
+    """
+
+    input_type = str(
+        getattr(
+            tool,
+            "input_type",
+            "",
+        )
+        or ""
+    ).strip().lower()
+
+    capability = str(
+        getattr(
+            tool,
+            "capability",
+            "",
+        )
+        or ""
+    ).strip().lower()
+
+    if input_type not in {
+        "url",
+        "host",
+        "host_or_url_list",
+    }:
+        return ()
+
+    if observations is None:
+        return ()
+
+    if isinstance(
+        observations,
+        (str, bytes),
+    ):
+        observations = (
+            observations,
+        )
+
+    projected: list[str] = []
+    seen: set[str] = set()
+
+    url_observation_types = {
+        "URL",
+        "ENDPOINT",
+        "JS_URL",
+        "JS_ENDPOINT",
+        "API_ENDPOINT",
+        "API_REFERENCE",
+        "HIDDEN_ENDPOINT",
+    }
+
+    javascript_capability = (
+        capability
+        == "javascript_attack_surface_analysis"
+    )
+
+    javascript_observation_types = {
+        "JS_URL",
+        "JS_ENDPOINT",
+    }
+
+    for observation in observations:
+        candidate: str | None = None
+
+        if input_type in {
+            "url",
+            "host_or_url_list",
+        }:
+            observation_type = str(
+                _mapping_value(
+                    observation,
+                    "observation_type",
+                )
+                or ""
+            ).strip().upper()
+
+            if javascript_capability:
+                if observation_type in javascript_observation_types:
+                    pass
+                elif observation_type == "RESOURCE":
+                    metadata = _mapping_value(
+                        observation,
+                        "metadata",
+                    )
+
+                    if not isinstance(
+                        metadata,
+                        Mapping,
+                    ):
+                        continue
+
+                    resource_type = str(
+                        metadata.get(
+                            "resource_type",
+                            "",
+                        )
+                        or ""
+                    ).strip().lower()
+
+                    if resource_type != "javascript":
+                        continue
+                else:
+                    continue
+            elif observation_type not in url_observation_types:
+                continue
+
+            candidate = _absolute_http_url(
+                _mapping_value(
+                    observation,
+                    "url",
+                )
+            )
+
+            if candidate is None:
+                candidate = _absolute_http_url(
+                    _mapping_value(
+                        observation,
+                        "value",
+                    )
+                )
+
+        elif input_type == "host":
+            value = _mapping_value(
+                observation,
+                "host",
+            )
+
+            if value is not None:
+                candidate = str(
+                    value
+                ).strip() or None
+
+        if not candidate:
+            continue
+
+        if candidate in seen:
+            continue
+
+        seen.add(candidate)
+        projected.append(candidate)
+
+    return tuple(
+        projected
+    )
+
+
+def _prepare_tool_input_data(
+    ctx: dict[str, Any],
+    tool: Any,
+    executor: ToolExecutor,
+) -> None:
+    """
+    Prepare canonical input_data for the next tool.
+
+    Previously collected normalized observations are projected according to
+    the receiving tool's declared input type.
+
+    If no compatible discovered inputs exist, the existing workflow input is
+    preserved. This guarantees that the original assessment target remains
+    the fallback and that observation projection never silently changes the
+    target of an otherwise independent tool.
+    """
+
+    projected = _project_observation_inputs(
+        tool,
+        executor.last_collector_observations,
+    )
+
+    if projected:
+        ctx["input_data"] = projected
+
 
 
 ###############################################################################
@@ -980,14 +1242,38 @@ def _sync_executor_state(
         vulnerability_intelligence_results,
         list,
     ):
+
         vulnerability_intelligence_results = []
+
         ctx[
             "vulnerability_intelligence_results"
         ] = vulnerability_intelligence_results
 
     vulnerability_intelligence_results.clear()
+
     vulnerability_intelligence_results.extend(
         executor.vulnerability_intelligence_results
+    )
+
+    software_assessments = ctx.get(
+        "software_assessments"
+    )
+
+    if not isinstance(
+        software_assessments,
+        list,
+    ):
+
+        software_assessments = []
+
+        ctx[
+            "software_assessments"
+        ] = software_assessments
+
+    software_assessments.clear()
+
+    software_assessments.extend(
+        executor.software_assessments
     )
 
     findings = ctx.get(
@@ -1032,9 +1318,6 @@ def _sync_executor_state(
         executor.correlation_groups
     )
 
-    # ``correlated_findings`` is intentionally the same final Finding set.
-    # Correlation creates relationships between findings; it does not replace
-    # or merge the distinct Finding objects.
     correlated_findings = ctx.get(
         "correlated_findings"
     )
@@ -1153,6 +1436,812 @@ def _sync_executor_state(
     ] = analysis_context
 
 
+###############################################################################
+# Evidence Handling
+###############################################################################
+
+
+def _reference_dict(
+    reference: Any,
+) -> dict[str, Any] | None:
+    """
+    Convert an EvidenceReference-like object into a report-safe dictionary.
+    """
+
+    if reference is None:
+        return None
+
+    as_dict = getattr(
+        reference,
+        "as_dict",
+        None,
+    )
+
+    if callable(
+        as_dict
+    ):
+
+        try:
+
+            serialized = as_dict()
+
+            if isinstance(
+                serialized,
+                dict,
+            ):
+                return serialized
+
+        except Exception:
+            return None
+
+    if isinstance(
+        reference,
+        dict,
+    ):
+        return dict(
+            reference
+        )
+
+    return None
+
+
+def _append_unique_reference(
+    references: list[dict[str, Any]],
+    reference: Any,
+) -> None:
+    """
+    Append an evidence reference once.
+    """
+
+    serialized = _reference_dict(
+        reference
+    )
+
+    if not serialized:
+        return
+
+    evidence_id = str(
+        serialized.get(
+            "evidence_id",
+            "",
+        )
+    ).strip()
+
+    if not evidence_id:
+        return
+
+    existing = {
+        str(
+            item.get(
+                "evidence_id",
+                "",
+            )
+        ).strip()
+        for item in references
+        if isinstance(
+            item,
+            dict,
+        )
+    }
+
+    if evidence_id not in existing:
+        references.append(
+            serialized
+        )
+
+
+def _evidence_raw_filename(
+    result: ExecutionResult,
+    stream: str,
+) -> str:
+    """
+    Return a deterministic raw-evidence filename for one execution stream.
+    """
+
+    tool = _tool_name(
+        result
+    ) or "tool"
+
+    return (
+        f"{tool}_{stream}.txt"
+    )
+
+
+def _serialize_raw_execution(
+    result: ExecutionResult,
+) -> str:
+    """
+    Serialize execution metadata without embedding raw stdout/stderr.
+
+    This helper is retained for metadata associated with raw evidence.
+    """
+
+    payload = {
+        "tool": result.tool,
+        "capability": result.capability,
+        "status": result.status,
+        "success": result.success,
+        "artifacts": list(
+            result.artifacts
+        ),
+        "warnings": list(
+            result.warnings
+        ),
+        "errors": list(
+            result.errors
+        ),
+        "started_at": result.started_at.isoformat(),
+        "finished_at": (
+            result.finished_at.isoformat()
+            if result.finished_at is not None
+            else None
+        ),
+        "duration": result.duration,
+    }
+
+    return json.dumps(
+        payload,
+        indent=2,
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+
+
+def _persist_execution_evidence(
+    ctx: dict[str, Any],
+    result: ExecutionResult,
+) -> None:
+    """
+    Persist raw execution evidence through the canonical EvidenceManager.
+
+    stdout and stderr are stored separately so their original contents remain
+    intact. Only lightweight EvidenceReference dictionaries are placed into
+    the workflow context.
+    """
+
+    manager = ctx.get(
+        "evidence_manager"
+    )
+
+    if not isinstance(
+        manager,
+        EvidenceManager,
+    ):
+        return
+
+    references = ctx.get(
+        "raw_evidence_references"
+    )
+
+    if not isinstance(
+        references,
+        list,
+    ):
+
+        references = []
+
+        ctx[
+            "raw_evidence_references"
+        ] = references
+
+    target = str(
+        ctx.get(
+            "target",
+            "",
+        )
+    ).strip() or None
+
+    metadata = {
+        "run_id": str(
+            ctx.get(
+                "run_id",
+                "",
+            )
+        ).strip(),
+        "capability": result.capability,
+        "execution_status": result.status,
+        "success": result.success,
+    }
+
+    if result.artifacts:
+        metadata[
+            "execution_artifacts"
+        ] = list(
+            result.artifacts
+        )
+
+    streams = (
+        (
+            "stdout",
+            result.stdout,
+        ),
+        (
+            "stderr",
+            result.stderr,
+        ),
+    )
+
+    for stream_name, content in streams:
+
+        if not content:
+            continue
+
+        try:
+
+            reference = manager.store_raw(
+                result.tool,
+                content,
+                target=target,
+                filename=_evidence_raw_filename(
+                    result,
+                    stream_name,
+                ),
+                metadata={
+                    **metadata,
+                    "stream": stream_name,
+                },
+            )
+
+            _append_unique_reference(
+                references,
+                reference,
+            )
+
+        except Exception as exc:
+
+            warnings = ctx.get(
+                "warnings"
+            )
+
+            if not isinstance(
+                warnings,
+                list,
+            ):
+
+                warnings = []
+
+                ctx[
+                    "warnings"
+                ] = warnings
+
+            warnings.append(
+                (
+                    "Could not persist raw evidence for "
+                    f"{result.tool} ({stream_name}): "
+                    f"{type(exc).__name__}: {exc}"
+                )
+            )
+
+
+def _persist_finding_evidence(
+    ctx: dict[str, Any],
+    findings: list[Any],
+) -> None:
+    """
+    Persist actual Finding objects as normalized evidence.
+
+    Observations and arbitrary collector objects are intentionally ignored.
+    """
+
+    manager = ctx.get(
+        "evidence_manager"
+    )
+
+    if not isinstance(
+        manager,
+        EvidenceManager,
+    ):
+        return
+
+    references = ctx.get(
+        "finding_evidence_references"
+    )
+
+    if not isinstance(
+        references,
+        list,
+    ):
+
+        references = []
+
+        ctx[
+            "finding_evidence_references"
+        ] = references
+
+    persisted_ids = ctx.get(
+        "_persisted_finding_evidence_ids"
+    )
+
+    if not isinstance(
+        persisted_ids,
+        set,
+    ):
+
+        persisted_ids = set()
+
+        ctx[
+            "_persisted_finding_evidence_ids"
+        ] = persisted_ids
+
+    raw_references = ctx.get(
+        "raw_evidence_references",
+        [],
+    )
+
+    raw_by_tool: dict[str, list[str]] = {}
+
+    if isinstance(
+        raw_references,
+        list,
+    ):
+
+        for reference in raw_references:
+
+            if not isinstance(
+                reference,
+                dict,
+            ):
+                continue
+
+            evidence_id = str(
+                reference.get(
+                    "evidence_id",
+                    "",
+                )
+            ).strip()
+
+            source_tool = str(
+                reference.get(
+                    "source_tool",
+                    "",
+                )
+            ).strip().lower()
+
+            if (
+                evidence_id
+                and source_tool
+            ):
+                raw_by_tool.setdefault(
+                    source_tool,
+                    [],
+                ).append(
+                    evidence_id
+                )
+
+    for finding in findings:
+
+        if not isinstance(
+            finding,
+            Finding,
+        ):
+            continue
+
+        finding_id = str(
+            finding.finding_id
+        ).strip()
+
+        if not finding_id:
+            continue
+
+        if finding_id in persisted_ids:
+            continue
+
+        raw_ids = raw_by_tool.get(
+            str(
+                finding.source_tool or ""
+            ).strip().lower(),
+            [],
+        )
+
+        try:
+
+            reference = manager.store_finding(
+                finding,
+                raw_evidence_id=(
+                    raw_ids[0]
+                    if raw_ids
+                    else None
+                ),
+                metadata={
+                    "run_id": str(
+                        ctx.get(
+                            "run_id",
+                            "",
+                        )
+                    ).strip(),
+                },
+            )
+
+            _append_unique_reference(
+                references,
+                reference,
+            )
+
+            persisted_ids.add(
+                finding_id
+            )
+
+        except Exception as exc:
+
+            warnings = ctx.get(
+                "warnings"
+            )
+
+            if not isinstance(
+                warnings,
+                list,
+            ):
+
+                warnings = []
+
+                ctx[
+                    "warnings"
+                ] = warnings
+
+            warnings.append(
+                (
+                    "Could not persist finding evidence for "
+                    f"{finding_id}: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+            )
+
+
+def _persist_correlated_evidence(
+    ctx: dict[str, Any],
+    groups: list[Any],
+) -> None:
+    """
+    Persist correlation groups as correlated evidence.
+
+    Correlation objects are never converted into Findings.
+    """
+
+    manager = ctx.get(
+        "evidence_manager"
+    )
+
+    if not isinstance(
+        manager,
+        EvidenceManager,
+    ):
+        return
+
+    references = ctx.get(
+        "correlated_evidence_references"
+    )
+
+    if not isinstance(
+        references,
+        list,
+    ):
+
+        references = []
+
+        ctx[
+            "correlated_evidence_references"
+        ] = references
+
+    persisted_ids = ctx.get(
+        "_persisted_correlated_evidence_ids"
+    )
+
+    if not isinstance(
+        persisted_ids,
+        set,
+    ):
+
+        persisted_ids = set()
+
+        ctx[
+            "_persisted_correlated_evidence_ids"
+        ] = persisted_ids
+
+    pending: list[Any] = []
+
+    for group in groups:
+
+        if isinstance(
+            group,
+            dict,
+        ):
+
+            identifier = str(
+                group.get(
+                    "group_id",
+                    "",
+                )
+            ).strip()
+
+        else:
+
+            identifier = str(
+                getattr(
+                    group,
+                    "group_id",
+                    "",
+                )
+                or ""
+            ).strip()
+
+        if identifier and identifier in persisted_ids:
+            continue
+
+        pending.append(
+            group
+        )
+
+    if not pending:
+        return
+
+    try:
+
+        stored = manager.store_correlated(
+            pending,
+            metadata={
+                "run_id": str(
+                    ctx.get(
+                        "run_id",
+                        "",
+                    )
+                ).strip(),
+            },
+        )
+
+        for group, reference in zip(
+            pending,
+            stored,
+        ):
+
+            _append_unique_reference(
+                references,
+                reference,
+            )
+
+            if isinstance(
+                group,
+                dict,
+            ):
+
+                identifier = str(
+                    group.get(
+                        "group_id",
+                        "",
+                    )
+                ).strip()
+
+            else:
+
+                identifier = str(
+                    getattr(
+                        group,
+                        "group_id",
+                        "",
+                    )
+                    or ""
+                ).strip()
+
+            if identifier:
+                persisted_ids.add(
+                    identifier
+                )
+
+    except Exception as exc:
+
+        warnings = ctx.get(
+            "warnings"
+        )
+
+        if not isinstance(
+            warnings,
+            list,
+        ):
+
+            warnings = []
+
+            ctx[
+                "warnings"
+            ] = warnings
+
+        warnings.append(
+            (
+                "Could not persist correlated evidence: "
+                f"{type(exc).__name__}: {exc}"
+            )
+        )
+
+
+def _persist_assessment_evidence(
+    ctx: dict[str, Any],
+    result: ExecutionResult | None = None,
+) -> None:
+    """
+    Persist the current assessment evidence state.
+
+    Raw execution evidence is persisted for the supplied result. Normalized
+    findings and correlated groups are persisted from the executor state
+    already synchronized into ``ctx``.
+    """
+
+    if result is not None:
+        _persist_execution_evidence(
+            ctx,
+            result,
+        )
+
+    findings = ctx.get(
+        "findings",
+        [],
+    )
+
+    if isinstance(
+        findings,
+        list,
+    ):
+        _persist_finding_evidence(
+            ctx,
+            findings,
+        )
+
+    groups = ctx.get(
+        "correlation_groups",
+        [],
+    )
+
+    if isinstance(
+        groups,
+        list,
+    ):
+        _persist_correlated_evidence(
+            ctx,
+            groups,
+        )
+
+    raw_references = ctx.get(
+        "raw_evidence_references"
+    )
+
+    if not isinstance(
+        raw_references,
+        list,
+    ):
+        raw_references = []
+
+        ctx[
+            "raw_evidence_references"
+        ] = raw_references
+
+    finding_references = ctx.get(
+        "finding_evidence_references"
+    )
+
+    if not isinstance(
+        finding_references,
+        list,
+    ):
+        finding_references = []
+
+        ctx[
+            "finding_evidence_references"
+        ] = finding_references
+
+    correlated_references = ctx.get(
+        "correlated_evidence_references"
+    )
+
+    if not isinstance(
+        correlated_references,
+        list,
+    ):
+        correlated_references = []
+
+        ctx[
+            "correlated_evidence_references"
+        ] = correlated_references
+
+    all_references: list[dict[str, Any]] = []
+
+    for collection in (
+        raw_references,
+        finding_references,
+        correlated_references,
+    ):
+
+        for reference in collection:
+
+            if isinstance(
+                reference,
+                dict,
+            ):
+                _append_unique_reference(
+                    all_references,
+                    reference,
+                )
+
+    ctx[
+        "evidence_references"
+    ] = all_references
+
+
+def _initialize_evidence_manager(
+    ctx: dict[str, Any],
+) -> None:
+    """
+    Initialize the canonical evidence manager for the current assessment run.
+
+    EvidenceStore receives its own ``evidence/`` namespace so it does not
+    collide with the existing workflow ``raw/`` execution-output directory.
+    """
+
+    outdir = str(
+        ctx.get(
+            "outdir",
+            "",
+        )
+    ).strip()
+
+    if not outdir:
+        raise ValueError(
+            "Cannot initialize evidence storage without workflow output directory."
+        )
+
+    evidence_root = (
+        Path(
+            outdir
+        )
+        / "evidence"
+    )
+
+    evidence_root.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    manager = EvidenceManager(
+        root=evidence_root
+    )
+
+    ctx[
+        "evidence_manager"
+    ] = manager
+
+    ctx[
+        "evidence_root"
+    ] = str(
+        evidence_root.resolve()
+    )
+
+    ctx.setdefault(
+        "evidence_references",
+        [],
+    )
+
+    ctx.setdefault(
+        "raw_evidence_references",
+        [],
+    )
+
+    ctx.setdefault(
+        "finding_evidence_references",
+        [],
+    )
+
+    ctx.setdefault(
+        "correlated_evidence_references",
+        [],
+    )
+
+    ctx.setdefault(
+        "_persisted_finding_evidence_ids",
+        set(),
+    )
+
+    ctx.setdefault(
+        "_persisted_correlated_evidence_ids",
+        set(),
+    )
+
+
 def _record_phase_result(
     runtime: RuntimeState,
     phase: AssessmentPhase,
@@ -1230,6 +2319,12 @@ class WorkflowEngine:
     - deduplication
     - correlation
 
+    EvidenceManager remains responsible for:
+
+    - evidence persistence
+    - evidence references
+    - evidence provenance
+
     The workflow exposes the resulting assessment state to reporting and
     downstream consumers through ``ctx``.
     """
@@ -1261,10 +2356,6 @@ class WorkflowEngine:
             runtime_state=self.runtime,
         )
 
-        # These containers belong to the workflow assessment state.
-        #
-        # ToolExecutor receives shallow copies of ctx and therefore keeps
-        # references to these lists while processing collector output.
         self.ctx: dict[str, Any] = {
             "profile": profile_name,
 
@@ -1293,6 +2384,22 @@ class WorkflowEngine:
             "analysis_result": {},
 
             "analysis": {},
+
+            "evidence_manager": None,
+
+            "evidence_root": "",
+
+            "evidence_references": [],
+
+            "raw_evidence_references": [],
+
+            "finding_evidence_references": [],
+
+            "correlated_evidence_references": [],
+
+            "_persisted_finding_evidence_ids": set(),
+
+            "_persisted_correlated_evidence_ids": set(),
         }
 
     def _build_tool_context(
@@ -1350,7 +2457,6 @@ class WorkflowEngine:
             "runtime"
         ] = self.runtime
 
-        # Ensure all downstream assessment containers are concrete lists.
         list_keys = (
             "execution_results",
             "stage_results",
@@ -1360,6 +2466,10 @@ class WorkflowEngine:
             "findings",
             "correlation_groups",
             "correlated_findings",
+            "evidence_references",
+            "raw_evidence_references",
+            "finding_evidence_references",
+            "correlated_evidence_references",
         )
 
         for key in list_keys:
@@ -1424,6 +2534,29 @@ class WorkflowEngine:
 
         self._sync_runtime_identity()
 
+        _initialize_evidence_manager(
+            self.ctx
+        )
+
+        assessment_context(
+            target=str(
+                self.ctx.get(
+                    "target",
+                    "",
+                )
+            ).strip(),
+            profile=self.profile_name,
+            authorized=bool(
+                self.ctx.get(
+                    "authorized",
+                    False,
+                )
+            ),
+            tool_count=len(
+                self.selected_tools
+            ),
+        )
+
     def _execute_tool(
         self,
         tool: Any,
@@ -1452,6 +2585,12 @@ class WorkflowEngine:
 
         capability = _tool_capability(
             tool
+        )
+
+        _prepare_tool_input_data(
+            ctx,
+            tool,
+            self.executor,
         )
 
         if not name:
@@ -1488,9 +2627,6 @@ class WorkflowEngine:
             execution_context,
         )
 
-        # Synchronize executor-owned assessment state immediately after the
-        # tool completes. This makes findings from the current and all prior
-        # tools available to downstream workflow stages.
         _sync_executor_state(
             ctx,
             self.executor,
@@ -1544,16 +2680,19 @@ class WorkflowEngine:
         with Progress(
             SpinnerColumn(),
             TextColumn(
-                "[progress.description]{task.description}"
+                "[bold cyan]{task.description}"
             ),
             BarColumn(),
+            TextColumn(
+                "[bold]{task.completed}/{task.total}"
+            ),
             TimeElapsedColumn(),
         ) as progress:
 
             task = progress.add_task(
                 (
-                    f"Running profile: "
-                    f"{self.profile_name}"
+                    f"  {self.profile_name.upper()} "
+                    "│ INITIALIZING"
                 ),
                 total=total_tools,
             )
@@ -1595,12 +2734,19 @@ class WorkflowEngine:
                         tool
                     )
 
-                    info(
-                        (
-                            f"Executing "
-                            f"{name} "
-                            f"({capability or 'unknown'})"
-                        )
+                    progress.update(
+                        task,
+                        description=(
+                            f"  {phase.value.upper()} "
+                            f"│ {name} "
+                            f"│ {capability or 'unknown'}"
+                        ),
+                    )
+
+                    workflow_tool_start(
+                        phase.value,
+                        name,
+                        capability,
                     )
 
                     if _tool_requires_confirmation(
@@ -1661,11 +2807,46 @@ class WorkflowEngine:
                         "last_result"
                     ] = result
 
-                    # A failure generated before reaching _execute_tool() does
-                    # not pass through executor state synchronization.
                     _sync_executor_state(
                         self.ctx,
                         self.executor,
+                    )
+
+                    _persist_assessment_evidence(
+                        self.ctx,
+                        result,
+                    )
+
+                    result_status = str(
+                        getattr(
+                            result,
+                            "status",
+                            "failed",
+                        )
+                        or "failed"
+                    ).strip().lower()
+
+                    if result_status == "skipped":
+                        display_status = "SKIPPED"
+                    elif result_status == "success":
+                        display_status = "SUCCESS"
+                    else:
+                        display_status = "FAILED"
+
+                    workflow_tool_result(
+                        phase.value,
+                        name,
+                        capability,
+                        result_status,
+                    )
+
+                    progress.update(
+                        task,
+                        description=(
+                            f"  {phase.value.upper()} "
+                            f"│ {name} "
+                            f"│ {display_status}"
+                        ),
                     )
 
                     progress.advance(
@@ -1709,11 +2890,13 @@ class WorkflowEngine:
         self,
     ) -> None:
 
-        # Synchronize one final time immediately before reporting so Stage 6
-        # always receives the complete assessment-wide state.
         _sync_executor_state(
             self.ctx,
             self.executor,
+        )
+
+        _persist_assessment_evidence(
+            self.ctx
         )
 
         stage(
@@ -1751,6 +2934,10 @@ class WorkflowEngine:
         _sync_executor_state(
             self.ctx,
             self.executor,
+        )
+
+        _persist_assessment_evidence(
+            self.ctx
         )
 
         self._sync_runtime_identity()

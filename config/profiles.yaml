@@ -11,12 +11,11 @@
 #
 # Tool metadata and supported option contracts are defined separately in:
 #
-#     config/tools.yaml
+# config/tools.yaml
 #
 # Command construction remains owned by the corresponding ToolAdapter.
 #
 # v1.2.0
-
 
 profiles:
 
@@ -130,6 +129,8 @@ profiles:
       api:
         enabled: true
 
+      software_identity:
+        enabled: true
 
   ###########################################################################
   # STANDARD
@@ -152,7 +153,7 @@ profiles:
         options:
           passive: true
           active: false
-          brute: false
+          bruteforce: false
 
       subhunt:
         enabled: true
@@ -250,7 +251,7 @@ profiles:
       testssl:
         enabled: true
         options:
-          connect_timeout: 10
+          socket_timeout: 10
           openssl_timeout: 10
 
     validation:
@@ -295,6 +296,8 @@ profiles:
       api:
         enabled: true
 
+      software_identity:
+        enabled: true
 
   ###########################################################################
   # FULL
@@ -317,7 +320,7 @@ profiles:
         options:
           passive: false
           active: true
-          brute: true
+          bruteforce: true
 
       subhunt:
         enabled: true
@@ -415,7 +418,7 @@ profiles:
       testssl:
         enabled: true
         options:
-          connect_timeout: 10
+          socket_timeout: 10
           openssl_timeout: 10
 
     validation:
@@ -466,4 +469,7 @@ profiles:
         enabled: true
 
       api:
+        enabled: true
+
+      software_identity:
         enabled: true

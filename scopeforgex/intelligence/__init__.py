@@ -13,6 +13,7 @@ from .kev import (
     KEV_URL,
 )
 from .models import (
+    SoftwareAssessment,
     SoftwareObservation,
     VulnerabilityMatch,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "KEV_URL",
     "NVDClient",
     "NVD_BASE_URL",
+    "SoftwareAssessment",
     "SoftwareObservation",
     "VulnerabilityIntelligenceEngine",
     "VulnerabilityMatch",

@@ -75,6 +75,12 @@ def _normalize_text(
 ) -> str:
     """
     Normalize a value into stripped text.
+
+    This helper is intended for metadata-like values such as tool names,
+    capabilities, warnings, errors, and artifact paths.
+
+    Raw stdout/stderr must not use this helper because execution output
+    should be preserved exactly.
     """
 
     if value is None:
@@ -83,6 +89,39 @@ def _normalize_text(
     return str(
         value
     ).strip()
+
+
+def _preserve_output(
+    value: Any,
+) -> str:
+    """
+    Normalize process output into text without modifying its contents.
+
+    stdout and stderr are evidence-bearing execution data. Leading/trailing
+    whitespace and newlines are therefore preserved exactly.
+    """
+
+    if value is None:
+        return ""
+
+    if isinstance(
+        value,
+        str,
+    ):
+        return value
+
+    if isinstance(
+        value,
+        bytes,
+    ):
+        return value.decode(
+            "utf-8",
+            errors="replace",
+        )
+
+    return str(
+        value
+    )
 
 
 def _normalize_timestamp(
@@ -221,11 +260,12 @@ class ExecutionResult:
             self.success
         )
 
-        self.stdout = _normalize_text(
+        # Preserve raw process output exactly.
+        self.stdout = _preserve_output(
             self.stdout
         )
 
-        self.stderr = _normalize_text(
+        self.stderr = _preserve_output(
             self.stderr
         )
 

@@ -494,7 +494,15 @@ class HTTPXCollector(CollectorBase):
             record,
             str,
         ):
-            url = record.strip()
+            stripped = record.strip()
+
+            if not stripped:
+                return None
+
+            url = stripped.split(
+                None,
+                1,
+            )[0]
 
             if not self._looks_like_url(
                 url

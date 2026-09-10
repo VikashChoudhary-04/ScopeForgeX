@@ -75,6 +75,11 @@ class ToolDefinition:
 class ToolContext:
     """
     Runtime information supplied to a ToolAdapter.
+
+    ``options`` contains the effective options for the current workflow
+    profile. Profile options may include settings belonging to multiple
+    tools, so individual adapters must scope validation and consumption to
+    their own declared options.
     """
 
     target: str
@@ -201,7 +206,12 @@ class ToolAdapter(ABC):
         name: str,
         default: Any = None,
     ) -> Any:
-        """Return a configured option value."""
+        """
+        Return a configured option value.
+
+        Only the current adapter's option namespace is consulted by callers.
+        The context itself may contain options for other registered tools.
+        """
 
         return self.context.options.get(
             name,
@@ -212,44 +222,41 @@ class ToolAdapter(ABC):
         self,
         name: str,
     ) -> bool:
-        """Return whether an option was explicitly configured."""
+        """
+        Return whether an option was explicitly configured.
+
+        The method reflects the shared profile option mapping. Callers should
+        normally request names declared by this adapter.
+        """
 
         return name in self.context.options
 
     def validate_options(self) -> None:
         """
-        Validate configured options against the tool definition.
+        Validate options declared by this adapter.
+
+        ``ToolContext.options`` represents the effective workflow-profile
+        configuration and may therefore contain options belonging to other
+        tools. Validation is intentionally scoped to this adapter's declared
+        options.
+
+        This preserves strict validation of values that belong to the current
+        tool without incorrectly rejecting valid options configured for another
+        tool in the same profile.
         """
 
-        supported = {
-            option.name
+        configured_options = self.context.options or {}
+
+        supported_options = {
+            option.name: option
             for option in self.options
         }
 
-        unknown = (
-            set(self.context.options)
-            - supported
-        )
-
-        if unknown:
-            names = ", ".join(
-                sorted(
-                    str(name)
-                    for name in unknown
-                )
-            )
-
-            raise ValueError(
-                f"Unsupported option(s) for {self.name}: {names}"
-            )
-
-        for option in self.options:
-            if option.name not in self.context.options:
+        for name, option in supported_options.items():
+            if name not in configured_options:
                 continue
 
-            value = self.context.options[
-                option.name
-            ]
+            value = configured_options[name]
 
             if (
                 option.choices

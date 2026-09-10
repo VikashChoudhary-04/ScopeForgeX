@@ -160,7 +160,8 @@ class JSLuiceCollector(CollectorBase):
                 content
             ):
                 parsed = self._parse_record(
-                    record
+                    record,
+                    target=target,
                 )
 
                 if parsed is None:
@@ -372,6 +373,8 @@ class JSLuiceCollector(CollectorBase):
     def _parse_record(
         self,
         record: str | dict[str, Any],
+        *,
+        target: str | None = None,
     ) -> dict[str, Any] | None:
         """
         Normalize a raw JSLuice record into an internal representation.
@@ -410,6 +413,7 @@ class JSLuiceCollector(CollectorBase):
                     )
                     else None
                 ),
+                "source_url": target,
                 "metadata": {},
             }
 
@@ -435,6 +439,57 @@ class JSLuiceCollector(CollectorBase):
             )
         )
 
+        # JSLuice uses its "url" field for both absolute URLs and relative
+        # JavaScript references. For records such as:
+        #
+        #   "url": "/api/Products"
+        #
+        # the value is an endpoint/reference, not a source URL.
+        raw_url = normalized.get(
+            "url"
+        )
+
+        if (
+            endpoint is None
+            and isinstance(
+                raw_url,
+                str,
+            )
+            and raw_url.strip()
+            and not self._looks_like_url(
+                raw_url.strip()
+            )
+        ):
+            endpoint = raw_url.strip()
+
+        # The workflow target is the authoritative resolution base.
+        source_url = target
+
+        # If a caller did not provide a workflow target, use a valid
+        # HTTP(S) source URL supplied by the JSLuice record when available.
+        if not source_url:
+            for key in (
+                "filename",
+                "source_url",
+                "script_url",
+                "page",
+            ):
+                candidate = normalized.get(
+                    key
+                )
+
+                if (
+                    isinstance(
+                        candidate,
+                        str,
+                    )
+                    and self._looks_like_url(
+                        candidate.strip()
+                    )
+                ):
+                    source_url = candidate.strip()
+                    break
+
         if (
             url is None
             and endpoint is None
@@ -449,6 +504,7 @@ class JSLuiceCollector(CollectorBase):
             "endpoint": endpoint,
             "secret": secret,
             "api_reference": api_reference,
+            "source_url": source_url,
             "metadata": normalized,
         }
 
@@ -480,6 +536,10 @@ class JSLuiceCollector(CollectorBase):
 
         api_reference = parsed.get(
             "api_reference"
+        )
+
+        source_url = parsed.get(
+            "source_url"
         )
 
         if isinstance(
@@ -557,19 +617,30 @@ class JSLuiceCollector(CollectorBase):
             )
 
             if normalized_endpoint:
+                observation_type = (
+                    OBSERVATION_API_REFERENCE
+                    if self._looks_like_api_reference(
+                        normalized_endpoint
+                    )
+                    else OBSERVATION_JS_ENDPOINT
+                )
+
                 observations.append(
                     {
                         "observation_type": (
-                            OBSERVATION_JS_ENDPOINT
+                            observation_type
                         ),
                         "value": normalized_endpoint,
                         "url": self._related_url(
                             normalized_endpoint,
-                            url,
+                            source_url or url,
                         ),
                         "metadata": {
                             "classification": (
-                                "endpoint"
+                                "api"
+                                if observation_type
+                                == OBSERVATION_API_REFERENCE
+                                else "endpoint"
                             ),
                         },
                     }
@@ -1084,11 +1155,36 @@ class JSLuiceCollector(CollectorBase):
         source_url: Any,
     ) -> str | None:
         """
-        Associate a relative JavaScript reference with its source URL when the
-        source URL is available.
+        Resolve a JavaScript reference against its source URL.
 
-        The collector deliberately does not perform network requests.
+        This performs only local URL parsing/joining. It never performs
+        network access.
         """
+
+        if not isinstance(
+            reference,
+            str,
+        ):
+            return None
+
+        reference = reference.strip()
+
+        if not reference:
+            return None
+
+        if JSLuiceCollector._looks_like_url(
+            reference
+        ):
+            normalized_reference = (
+                JSLuiceCollector._normalize_url(
+                    reference
+                )
+            )
+
+            return (
+                normalized_reference
+                or None
+            )
 
         if not isinstance(
             source_url,
@@ -1102,7 +1198,26 @@ class JSLuiceCollector(CollectorBase):
             )
         )
 
-        return normalized_source or None
+        if not normalized_source:
+            return None
+
+        from urllib.parse import urljoin
+
+        resolved = urljoin(
+            normalized_source,
+            reference,
+        )
+
+        normalized_resolved = (
+            JSLuiceCollector._normalize_url(
+                resolved
+            )
+        )
+
+        return (
+            normalized_resolved
+            or None
+        )
 
     ###########################################################################
     # Target / Host Helpers

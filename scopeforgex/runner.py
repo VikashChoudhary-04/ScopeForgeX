@@ -30,6 +30,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from scopeforgex.executable import resolve_executable
 from scopeforgex.models.execution_result import ExecutionResult
 from scopeforgex.ui import info, warn
 
@@ -43,7 +44,7 @@ def run_command(
     *,
     tool: str,
     capability: str,
-    cmd: str,
+    cmd: str | list[str],
     outfile: str | None = None,
     timeout: int = 900,
     cwd: str | None = None,
@@ -60,7 +61,7 @@ def run_command(
             Capability being exercised by the command.
 
         cmd:
-            Fully constructed shell command.
+            Fully constructed shell command as a string or argument list.
 
         outfile:
             Optional file receiving combined stdout/stderr.
@@ -78,8 +79,131 @@ def run_command(
         ExecutionResult describing the execution.
     """
 
+    ###########################################################################
+    # Timeout Validation
+    ###########################################################################
+
+    try:
+        timeout_value = int(
+            timeout
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        timeout_value = 900
+
+    ###########################################################################
+    # Command Validation
+    ###########################################################################
+
+    if isinstance(cmd, list):
+        if not cmd:
+            command = ""
+            resolved_command: list[str] = []
+        else:
+            normalized_cmd = [
+                str(argument)
+                for argument in cmd
+            ]
+
+            if not normalized_cmd[0].strip():
+                command = ""
+                resolved_command = []
+            else:
+                command = shlex.join(
+                    normalized_cmd
+                )
+
+                resolved_command = _resolve_argv(
+                    normalized_cmd,
+                    env=env,
+                )
+
+    else:
+        command = str(cmd).strip()
+
+        resolved_command = _resolve_command(
+            command,
+            env=env,
+        )
+
+    if not command:
+        result = ExecutionResult(
+            tool=tool,
+            capability=capability,
+            success=False,
+        )
+
+        message = "Execution failed: empty command."
+
+        warn(
+            f"{tool}: {message}"
+        )
+
+        result.add_error(
+            message
+        )
+
+        result.metadata.update(
+            {
+                "exit_code": None,
+                "timed_out": False,
+                "timeout": timeout_value,
+                "command": "",
+                "resolved_command": "",
+            }
+        )
+
+        return result
+
+    ###########################################################################
+    # Timeout Range Validation
+    ###########################################################################
+
+    if timeout_value <= 0:
+        result = ExecutionResult(
+            tool=tool,
+            capability=capability,
+            success=False,
+        )
+
+        message = (
+            "Execution failed: timeout must be "
+            "greater than zero."
+        )
+
+        warn(
+            f"{tool}: {message}"
+        )
+
+        result.add_error(
+            message
+        )
+
+        result.metadata.update(
+            {
+                "exit_code": None,
+                "timed_out": False,
+                "timeout": timeout_value,
+                "command": command,
+                "resolved_command": (
+                    shlex.join(
+                        resolved_command
+                    )
+                    if isinstance(
+                        resolved_command,
+                        list,
+                    )
+                    else resolved_command
+                ),
+            }
+        )
+
+        return result
+
     info(
-        f"Running {tool}: {cmd}"
+        f"Running {tool}: {command}"
     )
 
     started_at = time.monotonic()
@@ -111,35 +235,50 @@ def run_command(
     if env is not None:
         merged_env = os.environ.copy()
         merged_env.update(
-            env
+            {
+                str(key): str(value)
+                for key, value in env.items()
+            }
         )
     else:
         merged_env = os.environ.copy()
-
-    ###########################################################################
-    # Executable Resolution
-    ###########################################################################
-
-    resolved_command = _resolve_command(
-        cmd,
-        env=merged_env,
-    )
 
     ###########################################################################
     # Execute
     ###########################################################################
 
     try:
-        completed = subprocess.run(
-            resolved_command,
-            shell=True,
-            cwd=cwd,
-            env=merged_env,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout,
-        )
+        if isinstance(
+            cmd,
+            list,
+        ):
+            if not resolved_command:
+                raise FileNotFoundError(
+                    "Empty command."
+                )
+
+            completed = subprocess.run(
+                resolved_command,
+                shell=False,
+                cwd=cwd,
+                env=merged_env,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout_value,
+            )
+
+        else:
+            completed = subprocess.run(
+                resolved_command,
+                shell=True,
+                cwd=cwd,
+                env=merged_env,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout_value,
+            )
 
     except subprocess.TimeoutExpired as exc:
         duration = (
@@ -156,7 +295,8 @@ def run_command(
         )
 
         message = (
-            f"Command timed out after {timeout}s."
+            f"Command timed out after "
+            f"{timeout_value}s."
         )
 
         warn(
@@ -185,9 +325,18 @@ def run_command(
             {
                 "exit_code": None,
                 "timed_out": True,
-                "timeout": timeout,
-                "command": cmd,
-                "resolved_command": resolved_command,
+                "timeout": timeout_value,
+                "command": command,
+                "resolved_command": (
+                    shlex.join(
+                        resolved_command
+                    )
+                    if isinstance(
+                        resolved_command,
+                        list,
+                    )
+                    else resolved_command
+                ),
             }
         )
 
@@ -232,9 +381,18 @@ def run_command(
             {
                 "exit_code": None,
                 "timed_out": False,
-                "timeout": timeout,
-                "command": cmd,
-                "resolved_command": resolved_command,
+                "timeout": timeout_value,
+                "command": command,
+                "resolved_command": (
+                    shlex.join(
+                        resolved_command
+                    )
+                    if isinstance(
+                        resolved_command,
+                        list,
+                    )
+                    else resolved_command
+                ),
             }
         )
 
@@ -279,9 +437,18 @@ def run_command(
             {
                 "exit_code": None,
                 "timed_out": False,
-                "timeout": timeout,
-                "command": cmd,
-                "resolved_command": resolved_command,
+                "timeout": timeout_value,
+                "command": command,
+                "resolved_command": (
+                    shlex.join(
+                        resolved_command
+                    )
+                    if isinstance(
+                        resolved_command,
+                        list,
+                    )
+                    else resolved_command
+                ),
             }
         )
 
@@ -344,9 +511,18 @@ def run_command(
         {
             "exit_code": completed.returncode,
             "timed_out": False,
-            "timeout": timeout,
-            "command": cmd,
-            "resolved_command": resolved_command,
+            "timeout": timeout_value,
+            "command": command,
+            "resolved_command": (
+                shlex.join(
+                    resolved_command
+                )
+                if isinstance(
+                    resolved_command,
+                    list,
+                )
+                else resolved_command
+            ),
         }
     )
 
@@ -490,11 +666,19 @@ def is_command_available(
     """
 
     try:
-        executable = shlex.split(
+        parts = shlex.split(
             command
-        )[0]
+        )
 
-    except (IndexError, ValueError):
+        if not parts:
+            return False
+
+        executable = parts[0]
+
+    except (
+        IndexError,
+        ValueError,
+    ):
         return False
 
     return (
@@ -508,6 +692,52 @@ def is_command_available(
 ###############################################################################
 # Command Resolution
 ###############################################################################
+
+
+def _resolve_argv(
+    cmd: list[str],
+    env: dict[str, str] | None = None,
+) -> list[str]:
+    """
+    Resolve the executable of an argument-vector command.
+
+    The argument list is preserved exactly; only argv[0] is replaced
+    when a preferred executable path is available.
+
+    When an environment mapping is supplied, its PATH is used for
+    PATH-based executable resolution.
+    """
+
+    if not cmd:
+        return []
+
+    executable = str(
+        cmd[0]
+    )
+
+    if not executable.strip():
+        return []
+
+    if (
+        os.path.isabs(
+            executable
+        )
+        or "/" in executable
+    ):
+        return cmd
+
+    resolved = resolve_executable(
+        executable,
+        env=env,
+    )
+
+    if resolved is None:
+        return cmd
+
+    return [
+        resolved,
+        *cmd[1:],
+    ]
 
 
 def _resolve_command(
@@ -557,69 +787,13 @@ def _resolve_command(
         return cmd
 
     ###########################################################################
-    # Build Candidate Paths
+    # Resolve Executable
     ###########################################################################
 
-    candidates: list[str] = []
-
-    home = os.path.expanduser(
-        "~"
-    )
-
-    go_binary = os.path.join(
-        home,
-        "go",
-        "bin",
+    resolved = resolve_executable(
         executable,
+        env=env,
     )
-
-    candidates.append(
-        go_binary
-    )
-
-    ###########################################################################
-    # PATH Resolution
-    ###########################################################################
-
-    path = None
-
-    if env is not None:
-        path = env.get(
-            "PATH"
-        )
-
-    if path is None:
-        path = os.environ.get(
-            "PATH"
-        )
-
-    resolved_from_path = shutil.which(
-        executable,
-        path=path,
-    )
-
-    if resolved_from_path:
-        candidates.append(
-            resolved_from_path
-        )
-
-    ###########################################################################
-    # Select First Valid Executable
-    ###########################################################################
-
-    resolved: str | None = None
-
-    for candidate in candidates:
-
-        if (
-            os.path.isfile(candidate)
-            and os.access(
-                candidate,
-                os.X_OK,
-            )
-        ):
-            resolved = candidate
-            break
 
     if resolved is None:
         return cmd

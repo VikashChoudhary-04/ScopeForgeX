@@ -48,7 +48,7 @@ from scopeforgex.collectors.base import (
 )
 
 from .kev import KEVClient
-from .models import SoftwareObservation
+from .models import SoftwareAssessment, SoftwareObservation
 from .nvd import NVDClient
 
 
@@ -61,6 +61,10 @@ _CVE_RE = re.compile(
     r"\bCVE-[A-Z0-9]+-\d{1,}\b",
     re.IGNORECASE,
 )
+
+_CPE_23_FIELD_COUNT = 13
+
+_CPE_VERSION_INDEX = 5
 
 
 class VulnerabilityIntelligenceEngine:
@@ -94,7 +98,7 @@ class VulnerabilityIntelligenceEngine:
             ".cache/scopeforgex"
         ),
     ) -> None:
-        self.allow_network = bool(
+        self._allow_network = bool(
             allow_network
         )
 
@@ -106,7 +110,7 @@ class VulnerabilityIntelligenceEngine:
                     f"{cache_dir}/nvd"
                 ),
                 allow_network=(
-                    self.allow_network
+                    self._allow_network
                 ),
             )
         )
@@ -120,10 +124,46 @@ class VulnerabilityIntelligenceEngine:
                     "known_exploited_vulnerabilities.json"
                 ),
                 allow_network=(
-                    self.allow_network
+                    self._allow_network
                 ),
             )
         )
+
+        # Keep the engine-owned intelligence clients synchronized with the
+        # engine's authoritative network-access setting, including when
+        # clients are explicitly injected.
+        self.allow_network = self._allow_network
+
+        # Retain one assessment record for every successful NVD
+        # software lookup, including zero-CVE results.
+        self._software_assessments: list[
+            SoftwareAssessment
+        ] = []
+
+    @property
+    def software_assessments(
+        self,
+    ) -> tuple[SoftwareAssessment, ...]:
+        """Return software vulnerability-intelligence assessments."""
+        return tuple(
+            self._software_assessments
+        )
+
+    @property
+    def allow_network(self) -> bool:
+        """Whether external vulnerability-intelligence network access is allowed."""
+        return self._allow_network
+
+    @allow_network.setter
+    def allow_network(self, value: bool) -> None:
+        """Synchronize network access across all intelligence clients."""
+        self._allow_network = bool(value)
+
+        if hasattr(self, "nvd"):
+            self.nvd.allow_network = self._allow_network
+
+        if hasattr(self, "kev"):
+            self.kev.allow_network = self._allow_network
 
     ###########################################################################
     # Public API
@@ -137,8 +177,9 @@ class VulnerabilityIntelligenceEngine:
         Analyze software observations and return vulnerability-intelligence
         observations.
 
-        The method only considers observations containing software identity
-        and an exact version or explicit CPE.
+        The method considers observations containing software identity
+        and a version, resolving exact CPE identities or unambiguous CPE
+        families before evaluating NVD applicability.
         """
 
         software = self.extract_software(
@@ -148,6 +189,8 @@ class VulnerabilityIntelligenceEngine:
         results: list[
             CollectorObservation
         ] = []
+
+        self._software_assessments.clear()
 
         seen: set[
             tuple[
@@ -170,18 +213,18 @@ class VulnerabilityIntelligenceEngine:
             if not cpe:
                 continue
 
-            query_cpe = (
-                self._materialize_version(
-                    cpe,
-                    item.version,
+            if not item.version:
+                continue
+
+            cve_records = (
+                self.nvd.cves_for_software(
+                    cpe=cpe,
+                    version=item.version,
                 )
             )
 
-            cve_records = (
-                self.nvd.cves_for_cpe(
-                    query_cpe
-                )
-            )
+            applicable_cve_count = 0
+            kev_count = 0
 
             for record in cve_records:
                 vulnerability = (
@@ -195,7 +238,7 @@ class VulnerabilityIntelligenceEngine:
 
                 key = (
                     vulnerability["cve"],
-                    query_cpe,
+                    cpe,
                     item.host,
                     item.port,
                     item.url,
@@ -212,14 +255,38 @@ class VulnerabilityIntelligenceEngine:
                     vulnerability["cve"]
                 )
 
+                applicable_cve_count += 1
+
+                if kev is not None:
+                    kev_count += 1
+
                 results.append(
                     self._to_observation(
                         software=item,
-                        cpe=query_cpe,
+                        cpe=cpe,
                         vulnerability=vulnerability,
                         kev=kev,
                     )
                 )
+
+            self._software_assessments.append(
+                SoftwareAssessment(
+                    product=item.product,
+                    version=item.version,
+                    vendor=item.vendor,
+                    cpe=cpe,
+                    target=item.target,
+                    host=item.host,
+                    port=item.port,
+                    url=item.url,
+                    source_tool=item.source_tool,
+                    detection_method=item.detection_method,
+                    confidence=item.confidence,
+                    nvd_checked=True,
+                    applicable_cve_count=applicable_cve_count,
+                    kev_count=kev_count,
+                )
+            )
 
         return results
 
@@ -333,6 +400,24 @@ class VulnerabilityIntelligenceEngine:
                 )
                 or None
             )
+
+            if not version:
+                raw_version = self._first_text(
+                    metadata.get(
+                        "version_raw"
+                    ),
+                    evidence.get(
+                        "raw_version"
+                    ),
+                )
+
+                if raw_version:
+                    _, inferred_version = (
+                        self._split_product_version(
+                            raw_version
+                        )
+                    )
+                    version = inferred_version
 
             cpe = self._first_cpe(
                 metadata.get(
@@ -500,12 +585,23 @@ class VulnerabilityIntelligenceEngine:
         # Never guess between ambiguous CPE identities.
         return None
 
-    @staticmethod
+    @classmethod
     def _materialize_version(
+        cls,
         cpe: str,
         version: str | None,
     ) -> str:
-        """Materialize an observed version into canonical CPE 2.3 form."""
+        """
+        Materialize an observed version into a valid CPE 2.3 formatted string.
+
+        CPE 2.3 formatted strings contain exactly eleven CPE attributes after
+        the `cpe:2.3` prefix, producing thirteen colon-separated fields when
+        split as a Python string.
+
+        An observed version is applied only when the CPE currently represents
+        the version as ANY (`*`) or NOT APPLICABLE (`-`). An already specific
+        CPE version is preserved because an explicit CPE is authoritative.
+        """
 
         text = str(
             cpe or ""
@@ -518,34 +614,136 @@ class VulnerabilityIntelligenceEngine:
             ":"
         )
 
-        if len(parts) < 6:
+        if (
+            len(parts)
+            != _CPE_23_FIELD_COUNT
+        ):
             return text
 
-        # Canonical CPE 2.3 has 14 colon-separated components:
-        # cpe:2.3:part:vendor:product:version:update:edition:language:
-        # sw_edition:target_sw:target_hw:other
-        while len(parts) < 14:
-            parts.append(
-                "*"
-            )
-
-        if len(parts) > 14:
+        if (
+            parts[0].lower()
+            != "cpe"
+            or parts[1] != "2.3"
+        ):
             return text
 
         version_value = str(
             version or ""
         ).strip()
 
-        if version_value:
-            parts[5] = (
-                version_value.replace(
-                    " ",
-                    "_",
-                )
+        if not version_value:
+            return text
+
+        current_version = parts[
+            _CPE_VERSION_INDEX
+        ]
+
+        if current_version not in {
+            "*",
+            "-",
+        }:
+            return text
+
+        escaped_version = (
+            cls._escape_cpe_component(
+                version_value
             )
+        )
+
+        if not escaped_version:
+            return text
+
+        parts[
+            _CPE_VERSION_INDEX
+        ] = escaped_version
 
         return ":".join(
             parts
+        )
+
+    @staticmethod
+    def _escape_cpe_component(
+        value: str,
+    ) -> str:
+        """
+        Escape a value for a CPE 2.3 formatted-string component.
+
+        Alphanumeric characters, hyphen, period, and underscore are emitted
+        directly. Other characters are escaped with a CPE backslash binding.
+        Literal backslashes are escaped first.
+
+        The CPE wildcard characters `*` and `?` are escaped when supplied as
+        part of an observed version so they remain literal version content
+        rather than becoming wildcard expressions.
+        """
+
+        text = str(
+            value
+        ).strip()
+
+        if not text:
+            return ""
+
+        escaped: list[str] = []
+
+        for character in text:
+            if (
+                character.isalnum()
+                or character in {
+                    "-",
+                    ".",
+                    "_",
+                }
+            ):
+                escaped.append(
+                    character
+                )
+                continue
+
+            if character == "\\":
+                escaped.append(
+                    "\\\\"
+                )
+                continue
+
+            escaped.append(
+                "\\"
+            )
+            escaped.append(
+                character
+            )
+
+        return "".join(
+            escaped
+        )
+
+    # Backward-compatible helper name for callers/tests that may reference
+    # the original validation intent.
+    @staticmethod
+    def _is_formatted_cpe_23(
+        value: str,
+    ) -> bool:
+        """
+        Return True when value has the expected CPE 2.3 formatted structure.
+        """
+
+        text = str(
+            value or ""
+        ).strip()
+
+        if not text:
+            return False
+
+        parts = text.split(
+            ":"
+        )
+
+        return (
+            len(parts)
+            == _CPE_23_FIELD_COUNT
+            and parts[0].lower()
+            == "cpe"
+            and parts[1] == "2.3"
         )
 
     ###########################################################################
@@ -1070,6 +1268,57 @@ class VulnerabilityIntelligenceEngine:
 
         if isinstance(
             value,
+            SoftwareObservation,
+        ):
+            metadata = dict(
+                value.metadata
+            )
+
+            if value.product:
+                metadata.setdefault(
+                    "product",
+                    value.product,
+                )
+
+            if value.version:
+                metadata.setdefault(
+                    "version",
+                    value.version,
+                )
+
+            if value.vendor:
+                metadata.setdefault(
+                    "vendor",
+                    value.vendor,
+                )
+
+            if value.cpe:
+                metadata.setdefault(
+                    "cpe",
+                    value.cpe,
+                )
+
+            return {
+                "target": value.target,
+                "host": value.host,
+                "port": value.port,
+                "url": value.url,
+                "source_tool": value.source_tool,
+                "detection_method": value.detection_method,
+                "evidence": value.evidence,
+                "confidence": value.confidence,
+                "metadata": metadata,
+                "observation_type": "TECHNOLOGY",
+                "value": (
+                    f"{value.product} "
+                    f"{value.version}"
+                    if value.version
+                    else value.product
+                ),
+            }
+
+        if isinstance(
+            value,
             Mapping,
         ):
             return dict(
@@ -1160,7 +1409,7 @@ class VulnerabilityIntelligenceEngine:
         ).strip()
 
         match = re.match(
-            r"^(.*?)(?:\s+v?([0-9][A-Za-z0-9._+-]*))$",
+            r"^(.*?)(?:\s+[v^~]?([0-9][A-Za-z0-9._+-]*))$",
             text,
         )
 

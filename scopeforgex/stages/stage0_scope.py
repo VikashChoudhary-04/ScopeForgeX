@@ -4,16 +4,16 @@ ScopeForgeX Stage 0 — Scope Validation
 
 Responsible for:
 
-- Authorization confirmation
-- Target collection
-- Target classification
-- Pipeline initialization
-- Immutable assessment-run creation
+* Authorization confirmation
+* Target collection
+* Target classification
+* Pipeline initialization
+* Immutable assessment-run creation
 
 Stage 0 supports both:
 
-- Interactive dashboard execution
-- Explicitly authorized non-interactive CLI execution
+* Interactive dashboard execution
+* Explicitly authorized non-interactive CLI execution
 
 Non-interactive execution requires the caller to provide an explicit
 authorization confirmation in the workflow context.
@@ -39,9 +39,10 @@ from scopeforgex.ui import (
     warn,
 )
 
-
 ###############################################################################
+
 # Target Detection
+
 ###############################################################################
 
 
@@ -144,7 +145,9 @@ def classify_target(
 
 
 ###############################################################################
+
 # Output Directory
+
 ###############################################################################
 
 
@@ -246,7 +249,9 @@ def _set_target_context(
 
 
 ###############################################################################
+
 # Authorization / Target Collection
+
 ###############################################################################
 
 
@@ -268,6 +273,14 @@ def _collect_interactive_scope(
         raise RuntimeError(
             "Authorization not confirmed."
         )
+
+    ctx[
+        "authorized"
+    ] = True
+
+    ctx[
+        "authorization_confirmed"
+    ] = True
 
     target = input(
         "Enter target: "
@@ -302,6 +315,10 @@ def _collect_noninteractive_scope(
             "confirmation."
         )
 
+    ctx[
+        "authorized"
+    ] = True
+
     target = str(
         ctx.get(
             "target",
@@ -318,7 +335,9 @@ def _collect_noninteractive_scope(
 
 
 ###############################################################################
+
 # Stage Entry
+
 ###############################################################################
 
 
@@ -384,6 +403,7 @@ def stage0_scope(
         info_message = (
             f"Assessment run: {run_id}"
         )
+
         ok(
             info_message
         )
@@ -398,7 +418,9 @@ def stage0_scope(
 
 
 ###############################################################################
+
 # Public API
+
 ###############################################################################
 
 

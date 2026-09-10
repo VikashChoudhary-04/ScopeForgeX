@@ -61,6 +61,8 @@ from dataclasses import (
 from datetime import datetime
 from typing import Any
 
+from scopeforgex.intelligence.models import SoftwareAssessment
+
 from scopeforgex.runtime import AssessmentPhase
 
 
@@ -99,13 +101,10 @@ class FindingEvidence:
         default_factory=dict,
     )
 
-    # Compatibility alias used by existing collectors.
     @property
-    def metadata(
-        self,
-    ) -> dict[str, Any]:
+    def metadata(self) -> dict[str, Any]:
         """
-        Backward-compatible alias for details.
+        Compatibility alias for older callers.
         """
 
         return self.details
@@ -115,15 +114,13 @@ class FindingEvidence:
         self,
         value: dict[str, Any],
     ) -> None:
-        self.details = dict(
-            value or {}
-        )
+        self.details = value
 
     def as_dict(
         self,
     ) -> dict[str, Any]:
         """
-        Serialize evidence into a JSON-compatible dictionary.
+        Serialize finding evidence.
         """
 
         return asdict(
@@ -139,24 +136,12 @@ class FindingEvidence:
 @dataclass
 class Finding:
     """
-    Universal ScopeForgeX finding representation.
+    Universal normalized ScopeForgeX finding.
 
-    Every automated or manual finding should ultimately be represented by
-    this model.
-
-    Severity
-        How serious the issue is.
-
-    Confidence
-        How strongly the available evidence supports the detection.
-
-    Status
-        Whether the finding has been validated or remains pending.
+    A Finding represents an assessment observation that has been normalized
+    into the canonical reporting model. Detection and validation remain
+    separate concepts.
     """
-
-    # ========================================================================
-    # Identity
-    # ========================================================================
 
     finding_id: str
 
@@ -164,19 +149,11 @@ class Finding:
 
     category: str = "security_issue"
 
-    # ========================================================================
-    # Risk / Validation
-    # ========================================================================
-
     severity: str = "Informational"
 
     confidence: str = "Medium"
 
     status: str = "Pending"
-
-    # ========================================================================
-    # Affected Asset
-    # ========================================================================
 
     target: str = ""
 
@@ -188,27 +165,15 @@ class Finding:
 
     parameter: str | None = None
 
-    # ========================================================================
-    # Finding Description
-    # ========================================================================
-
     description: str = ""
 
     impact: str = ""
 
     remediation: str = ""
 
-    # ========================================================================
-    # Evidence
-    # ========================================================================
-
     evidence: FindingEvidence = field(
         default_factory=FindingEvidence,
     )
-
-    # ========================================================================
-    # Detection Metadata
-    # ========================================================================
 
     source_tool: str = ""
 
@@ -220,10 +185,6 @@ class Finding:
         default_factory=dict,
     )
 
-    # ========================================================================
-    # Security References
-    # ========================================================================
-
     cwe: str | None = None
 
     cve: str | None = None
@@ -232,16 +193,10 @@ class Finding:
         default_factory=list,
     )
 
-    # ========================================================================
-    # Compatibility
-    # ========================================================================
-
     @property
-    def source(
-        self,
-    ) -> str:
+    def source(self) -> str:
         """
-        Backward-compatible alias for source_tool.
+        Compatibility alias for source_tool.
         """
 
         return self.source_tool
@@ -488,9 +443,13 @@ class ReportData:
     """
     Complete ScopeForgeX assessment report object.
 
-    The report contains normalized findings rather than raw scanner output as
-    its primary result. Raw output remains available through finding evidence
-    and generated assessment artifacts.
+    ReportData is the canonical structured state consumed by all report
+    presentation and export layers.
+
+    The object retains both normalized findings and the assessment-wide
+    state required to reproduce the professional report, findings-oriented
+    report and machine-readable JSON report without maintaining a second
+    independent report representation.
     """
 
     target: str
@@ -535,27 +494,73 @@ class ReportData:
 
     duration_seconds: float = 0.0
 
-    # Assessment-wide state retained for the canonical report contract.
+    # Assessment identity.
     run_id: str = ""
+
     schema_version: str = "4.0"
+
+    # Correlation and normalized assessment state.
     correlation_groups: list[Any] = field(
         default_factory=list,
     )
+
+    correlated_findings: list[Any] = field(
+        default_factory=list,
+    )
+
+    # Collection and execution state.
+    collector_results: list[Any] = field(
+        default_factory=list,
+    )
+
+    execution_results: list[Any] = field(
+        default_factory=list,
+    )
+
+    # Native and external vulnerability intelligence.
     native_analyzer_results: list[Any] = field(
         default_factory=list,
     )
+
     vulnerability_intelligence_results: list[Any] = field(
         default_factory=list,
     )
+
+    software_assessments: list[SoftwareAssessment] = field(
+        default_factory=list,
+    )
+
+    # Evidence state.
     evidence_references: list[Any] = field(
         default_factory=list,
     )
+
+    raw_evidence_references: list[Any] = field(
+        default_factory=list,
+    )
+
     finding_evidence_references: list[Any] = field(
         default_factory=list,
     )
+
     correlated_evidence_references: list[Any] = field(
         default_factory=list,
     )
+
+    # Canonical report-level derived state.
+    summary: dict[str, Any] = field(
+        default_factory=dict,
+    )
+
+    vulnerability_intelligence: dict[str, Any] = field(
+        default_factory=dict,
+    )
+
+    analysis_metadata: dict[str, Any] = field(
+        default_factory=dict,
+    )
+
+    # Presentation metadata.
     report_views: dict[str, Any] = field(
         default_factory=dict,
     )
@@ -565,6 +570,10 @@ class ReportData:
     ) -> dict[str, Any]:
         """
         Serialize the complete report into JSON-compatible data.
+
+        The field names intentionally preserve the canonical Stage 6 JSON
+        contract so existing consumers continue to receive the same
+        assessment-wide information.
         """
 
         return {
@@ -580,10 +589,20 @@ class ReportData:
 
             "start_time": (
                 self.start_time.isoformat()
+                if isinstance(
+                    self.start_time,
+                    datetime,
+                )
+                else self.start_time
             ),
 
             "end_time": (
                 self.end_time.isoformat()
+                if isinstance(
+                    self.end_time,
+                    datetime,
+                )
+                else self.end_time
             ),
 
             "duration_seconds": (
@@ -592,6 +611,11 @@ class ReportData:
 
             "statistics": (
                 self.statistics.as_dict()
+                if hasattr(
+                    self.statistics,
+                    "as_dict",
+                )
+                else self.statistics
             ),
 
             "generated_files": list(
@@ -599,56 +623,146 @@ class ReportData:
             ),
 
             "stages": [
-                stage.as_dict()
-                for stage in self.stages
+                item.as_dict()
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
+                else item
+                for item in self.stages
             ],
 
             "findings": [
-                finding.as_dict()
-                for finding in self.findings
+                item.as_dict()
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
+                else item
+                for item in self.findings
             ],
 
             "correlation_groups": [
                 item.as_dict()
-                if hasattr(item, "as_dict")
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
                 else item
                 for item in self.correlation_groups
             ],
 
+            "correlated_findings": [
+                item.as_dict()
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
+                else item
+                for item in self.correlated_findings
+            ],
+
+            "collector_results": [
+                item.as_dict()
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
+                else item
+                for item in self.collector_results
+            ],
+
+            "execution_results": [
+                item.as_dict()
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
+                else item
+                for item in self.execution_results
+            ],
+
             "native_analyzer_results": [
                 item.as_dict()
-                if hasattr(item, "as_dict")
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
                 else item
                 for item in self.native_analyzer_results
             ],
 
             "vulnerability_intelligence_results": [
                 item.as_dict()
-                if hasattr(item, "as_dict")
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
                 else item
                 for item in self.vulnerability_intelligence_results
             ],
 
+            "software_assessments": [
+                item.as_dict()
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
+                else item
+                for item in self.software_assessments
+            ],
+
             "evidence_references": [
                 item.as_dict()
-                if hasattr(item, "as_dict")
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
                 else item
                 for item in self.evidence_references
             ],
 
+            "raw_evidence_references": [
+                item.as_dict()
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
+                else item
+                for item in self.raw_evidence_references
+            ],
+
             "finding_evidence_references": [
                 item.as_dict()
-                if hasattr(item, "as_dict")
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
                 else item
                 for item in self.finding_evidence_references
             ],
 
             "correlated_evidence_references": [
                 item.as_dict()
-                if hasattr(item, "as_dict")
+                if hasattr(
+                    item,
+                    "as_dict",
+                )
                 else item
                 for item in self.correlated_evidence_references
             ],
+
+            "summary": dict(
+                self.summary
+            ),
+
+            "vulnerability_intelligence": dict(
+                self.vulnerability_intelligence
+            ),
+
+            "analysis_metadata": dict(
+                self.analysis_metadata
+            ),
 
             "report_views": dict(
                 self.report_views

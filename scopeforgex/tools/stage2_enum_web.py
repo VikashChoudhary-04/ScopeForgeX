@@ -49,9 +49,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from scopeforgex.registry.tool_base import (
     ToolAdapter,
+    ToolContext,
     ToolDefinition,
     ToolOption,
 )
@@ -124,6 +126,17 @@ class HttpxTool(ToolAdapter):
                 aggressive=False,
             ),
             ToolOption(
+                name="include_response",
+                flag="-include-response",
+                description=(
+                    "Include HTTP response headers, request and response body."
+                ),
+                option_type="boolean",
+                default=True,
+                safe=True,
+                aggressive=False,
+            ),
+            ToolOption(
                 name="follow_redirects",
                 flag="-follow-redirects",
                 description="Follow HTTP redirects.",
@@ -147,6 +160,7 @@ class HttpxTool(ToolAdapter):
             "title",
             "server",
             "technology",
+            "include_response",
             "follow_redirects",
         ):
             if not self.has_option(name):
@@ -199,6 +213,14 @@ class HttpxTool(ToolAdapter):
             )
 
         if self.get_option(
+            "include_response",
+            True,
+        ):
+            arguments.append(
+                "-include-response"
+            )
+
+        if self.get_option(
             "follow_redirects",
             False,
         ):
@@ -208,11 +230,33 @@ class HttpxTool(ToolAdapter):
 
         arguments.extend(
             [
+                "-json",
                 "-silent",
-                "-u",
-                self.context.target,
             ]
         )
+
+        input_data = tuple(
+            str(value).strip()
+            for value in self.context.input_data
+            if value is not None
+            and str(value).strip()
+        )
+
+        if input_data:
+            for value in input_data:
+                arguments.extend(
+                    [
+                        "-u",
+                        value,
+                    ]
+                )
+        else:
+            arguments.extend(
+                [
+                    "-u",
+                    self.context.target,
+                ]
+            )
 
         return arguments
 
@@ -220,6 +264,52 @@ class HttpxTool(ToolAdapter):
 ###############################################################################
 # KATANA
 ###############################################################################
+
+
+def _normalize_web_url(
+    target: str,
+    tool_name: str,
+) -> str:
+    """
+    Normalize a workflow target into an HTTP(S) URL.
+
+    Web enumeration tools require URL-oriented input. Bare hostnames and
+    host:port values are normalized to HTTP URLs while explicit HTTP(S)
+    schemes are preserved.
+    """
+
+    value = str(
+        target
+    ).strip()
+
+    if not value:
+        raise ValueError(
+            f"{tool_name} target cannot be empty."
+        )
+
+    lowered = value.lower()
+
+    if lowered.startswith(
+        (
+            "http://",
+            "https://",
+        )
+    ):
+        parsed = urlparse(
+            value
+        )
+
+        if not parsed.hostname:
+            raise ValueError(
+                f"Invalid {tool_name} URL target: {target!r}"
+            )
+
+        return value
+
+    return (
+        "http://"
+        + value
+    )
 
 
 class KatanaTool(ToolAdapter):
@@ -253,7 +343,7 @@ class KatanaTool(ToolAdapter):
                 flag="-d",
                 description="Maximum crawl depth.",
                 option_type="integer",
-                default=2,
+                default=3,
                 safe=True,
                 aggressive=True,
             ),
@@ -287,7 +377,7 @@ class KatanaTool(ToolAdapter):
 
         depth = self.get_option(
             "depth",
-            2,
+            3,
         )
 
         if (
@@ -317,19 +407,35 @@ class KatanaTool(ToolAdapter):
                     f"Katana {name} must be boolean."
                 )
 
+        if (
+            self.get_option(
+                "known_files",
+                False,
+            )
+            and depth < 3
+        ):
+            raise ValueError(
+                "Katana known_files requires a crawl depth of at least 3."
+            )
+
     def build_arguments(self) -> list[str]:
         """Build Katana-specific command-line arguments."""
 
         self.validate_options()
 
+        target = _normalize_web_url(
+            self.context.target,
+            "Katana",
+        )
+
         arguments = [
             "-u",
-            self.context.target,
+            target,
             "-d",
             str(
                 self.get_option(
                     "depth",
-                    2,
+                    3,
                 )
             ),
             "-silent",
@@ -460,6 +566,17 @@ class FfufTool(ToolAdapter):
                 safe=True,
                 aggressive=True,
             ),
+            ToolOption(
+                name="maxtime",
+                flag="-maxtime",
+                description=(
+                    "Maximum total FFUF execution time in seconds."
+                ),
+                option_type="integer",
+                default=540,
+                safe=True,
+                aggressive=True,
+            ),
         ),
         safe=True,
         aggressive=True,
@@ -505,6 +622,24 @@ class FfufTool(ToolAdapter):
                 raise ValueError(
                     "FFUF rate cannot be negative."
                 )
+
+        maxtime = self.get_option(
+            "maxtime",
+            540,
+        )
+
+        if (
+            not isinstance(maxtime, int)
+            or isinstance(maxtime, bool)
+        ):
+            raise TypeError(
+                "FFUF maxtime must be an integer."
+            )
+
+        if maxtime <= 0:
+            raise ValueError(
+                "FFUF maxtime must be greater than zero."
+            )
 
         for name in (
             "wordlist",
@@ -562,7 +697,10 @@ class FfufTool(ToolAdapter):
 
         self.validate_options()
 
-        target = self.context.target
+        target = _normalize_web_url(
+            self.context.target,
+            "FFUF",
+        )
 
         if "FUZZ" not in target:
             if target.endswith("/"):
@@ -576,6 +714,13 @@ class FfufTool(ToolAdapter):
             "-w",
             self._resolve_wordlist(),
             "-noninteractive",
+            "-maxtime",
+            str(
+                self.get_option(
+                    "maxtime",
+                    540,
+                )
+            ),
         ]
 
         threads = self.get_option(
@@ -884,6 +1029,11 @@ class KiterunnerTool(
 
         self.validate_options()
 
+        target = _normalize_web_url(
+            self.context.target,
+            "Kiterunner",
+        )
+
         wordlist = self.get_option(
             "wordlist",
             (
@@ -894,7 +1044,7 @@ class KiterunnerTool(
 
         arguments = [
             "scan",
-            self.context.target,
+            target,
             "-w",
             str(wordlist),
         ]
@@ -942,7 +1092,10 @@ def _normalize_javascript_http_target(
     Normalize a workflow target into an HTTP(S) URL.
 
     JSLuice treats a bare hostname as a local filename. ScopeForgeX uses an
-    HTTPS URL for bare web targets so JSLuice receives an HTTP-based input.
+    HTTP URL for bare web targets so JSLuice receives an HTTP-based input
+    without assuming that the target requires TLS.
+
+    Explicit HTTP(S) URLs are preserved unchanged.
     """
 
     value = str(
@@ -965,7 +1118,7 @@ def _normalize_javascript_http_target(
         return value
 
     return (
-        "https://"
+        "http://"
         + value
     )
 

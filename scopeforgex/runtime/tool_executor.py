@@ -252,6 +252,7 @@ class ToolExecutor:
         )
 
         self._observations: list[Any] = []
+        self._last_collector_observations: list[Any] = []
 
         self._collector_results: list[Any] = []
 
@@ -266,6 +267,8 @@ class ToolExecutor:
         )
 
         self._vulnerability_intelligence_results: list[Any] = []
+
+        self._software_assessments: list[Any] = []
 
         self._analysis_result: Any | None = None
 
@@ -1544,10 +1547,55 @@ class ToolExecutor:
         ):
             return []
 
+        has_context_evidence = any(
+            key in context
+            for key in (
+                "headers",
+                "response_headers",
+                "http_headers",
+                "request_headers",
+                "set_cookie",
+                "cookies",
+                "methods",
+                "allowed_methods",
+                "http_methods",
+                "request_origin",
+                "http_response",
+                "http_responses",
+            )
+        )
+
+        # We still execute the native engine when a collector produced
+        # observations or when raw execution output/artifacts are available.
+        # This ensures every real tool execution gets a deterministic native
+        # analyzer result set.
+        has_execution_evidence = bool(
+            observations
+            or result.stdout
+            or result.stderr
+            or result.artifacts
+            or has_context_evidence
+        )
+
         engine = self._native_analyzer_engine(
             self.native_analyzer_engine,
             context,
         )
+
+        # Always initialize native analyzer state when the execution reached
+        # this boundary. The only reason to bypass analysis is the complete
+        # absence of execution/collector/context evidence.
+        if not has_execution_evidence:
+            metadata[
+                "native_analyzers"
+            ] = {
+                "results": [],
+                "finding_count": 0,
+                "enabled": [],
+                "analyzer_count": 0,
+            }
+
+            return []
 
         if not engine.analyzers:
             metadata[
@@ -1707,6 +1755,11 @@ class ToolExecutor:
 
         results = list(results or [])
         self._vulnerability_intelligence_results.extend(results)
+
+        self._software_assessments = list(
+            self.vulnerability_intelligence.software_assessments
+        )
+
         return results
 
     # ------------------------------------------------------------------
@@ -2216,6 +2269,10 @@ class ToolExecutor:
             )
         )
 
+        self._last_collector_observations = list(
+            observations
+        )
+
         if isinstance(
             collected,
             CollectorResult,
@@ -2395,14 +2452,10 @@ class ToolExecutor:
             "env"
         )
 
-        command_text = _command_to_string(
-            command
-        )
-
         return run_command(
             tool=tool,
             capability=capability,
-            cmd=command_text,
+            cmd=command,
             outfile=(
                 str(outfile)
                 if outfile is not None
@@ -2465,16 +2518,7 @@ class ToolExecutor:
 
         try:
 
-            if self._is_new_adapter(
-                adapter
-            ):
-
-                result = self._execute_command(
-                    adapter,
-                    context,
-                )
-
-            elif self._has_custom_run(
+            if self._has_custom_run(
                 adapter
             ):
 
@@ -2484,6 +2528,15 @@ class ToolExecutor:
                 )
 
                 result = run()
+
+            elif self._is_new_adapter(
+                adapter
+            ):
+
+                result = self._execute_command(
+                    adapter,
+                    context,
+                )
 
             else:
 
@@ -2613,6 +2666,18 @@ class ToolExecutor:
         )
 
     @property
+    def last_collector_observations(
+        self,
+    ) -> list[Any]:
+        """
+        Return collector observations produced by the latest execution.
+        """
+
+        return list(
+            self._last_collector_observations
+        )
+
+    @property
     def collector_results(
         self,
     ) -> list[Any]:
@@ -2644,6 +2709,16 @@ class ToolExecutor:
 
         return list(
             self._vulnerability_intelligence_results
+        )
+
+    @property
+    def software_assessments(
+        self,
+    ) -> list[Any]:
+        """Return software vulnerability-intelligence assessments accumulated by this executor."""
+
+        return list(
+            self._software_assessments
         )
 
     @property

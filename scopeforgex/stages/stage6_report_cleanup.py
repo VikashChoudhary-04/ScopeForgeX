@@ -31,6 +31,16 @@ from html import escape
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from reporting import (
+    Finding,
+    JSONReportExporter,
+    ReportData,
+    ReportGenerator,
+    ScanStatistics,
+    StageResult as ReportingStageResult,
+)
+from scopeforgex.runtime import AssessmentPhase
+from scopeforgex.models.adapters import mapping_to_finding
 from scopeforgex.ui import err, info, ok, stage, warn
 
 
@@ -485,6 +495,280 @@ def _intelligence_summary(
     }
 
 
+
+def _intelligence_item(
+    record: Any,
+) -> dict[str, Any]:
+    """
+    Normalize a vulnerability-intelligence CollectorObservation for reports.
+
+    Intelligence-specific fields are stored partly on the observation itself
+    and partly in its metadata. Keep this normalization local to reporting so
+    the canonical runtime/intelligence models remain unchanged.
+    """
+
+    item = _mapping(
+        record
+    )
+
+    if not item:
+        return {}
+
+    metadata = item.get(
+        "metadata",
+        {},
+    )
+
+    if not isinstance(
+        metadata,
+        Mapping,
+    ):
+        metadata = {}
+
+    cwes = metadata.get(
+        "cwes"
+    )
+
+    if not cwes:
+        cwe = item.get(
+            "cwe"
+        )
+
+        cwes = (
+            [cwe]
+            if cwe
+            else []
+        )
+
+    cve = (
+        item.get("cve")
+        or item.get("value")
+        or "-"
+    )
+
+    title = str(
+        item.get("title")
+        or "-"
+    ).strip()
+
+    if (
+        cve != "-"
+        and title.startswith(f"{cve}:")
+    ):
+        title = title[len(cve) + 1:].strip()
+
+    return {
+        "cve": str(cve).strip(),
+        "title": title,
+        "description": str(
+            item.get("description")
+            or ""
+        ).strip(),
+        "product": str(
+            metadata.get("product")
+            or "-"
+        ).strip(),
+        "version": str(
+            metadata.get("version")
+            or "-"
+        ).strip(),
+        "cpe": str(
+            metadata.get("cpe")
+            or "-"
+        ).strip(),
+        "severity": str(
+            item.get("severity")
+            or "Informational"
+        ).strip(),
+        "cvss_score": metadata.get(
+            "cvss_score"
+        ),
+        "cvss_version": str(
+            metadata.get("cvss_version")
+            or "-"
+        ).strip(),
+        "target": str(
+            item.get("target")
+            or ""
+        ).strip(),
+        "host": str(
+            item.get("host")
+            or ""
+        ).strip(),
+        "port": item.get(
+            "port"
+        ),
+        "url": str(
+            item.get("url")
+            or ""
+        ).strip(),
+        "kev": (
+            metadata.get("kev")
+            is True
+        ),
+        "kev_date_added": str(
+            metadata.get(
+                "kev_date_added"
+            )
+            or "-"
+        ).strip(),
+        "kev_due_date": str(
+            metadata.get(
+                "kev_due_date"
+            )
+            or "-"
+        ).strip(),
+        "kev_ransomware_use": metadata.get(
+            "kev_ransomware_use"
+        ),
+        "cwes": cwes,
+        "references": item.get(
+            "references"
+        ) or [],
+        "validation_status": str(
+            metadata.get(
+                "validation_status"
+            )
+            or item.get("status")
+            or "Pending"
+        ).strip(),
+        "source_tool": str(
+            item.get("source_tool")
+            or metadata.get("source_tool")
+            or "NVD"
+        ).strip(),
+        "detection_method": str(
+            item.get("detection_method")
+            or metadata.get(
+                "source_detection_method"
+            )
+            or "-"
+        ).strip(),
+    }
+
+
+def _intelligence_markdown(
+    records: Iterable[Any],
+) -> list[str]:
+    """Render detailed NVD/CVE/KEV intelligence records."""
+
+    rows: list[str] = []
+
+    for record in records:
+        item = _intelligence_item(
+            record
+        )
+
+        if not item:
+            continue
+
+        product = item["product"]
+        version = item["version"]
+        cpe = item["cpe"]
+        cve = item["cve"]
+        title = item["title"]
+        severity = item["severity"]
+
+        cvss_score = item["cvss_score"]
+        cvss_version = item["cvss_version"]
+
+        if cvss_score is None:
+            cvss = "-"
+        else:
+            cvss = (
+                f"{cvss_score} "
+                f"({cvss_version})"
+            )
+
+        target = (
+            item["target"]
+            or item["host"]
+            or "-"
+        )
+
+        port = item["port"]
+
+        if port is not None:
+            target = f"{target}:{port}"
+
+        url = item["url"]
+
+        if url:
+            target = (
+                f"{target} — {url}"
+            )
+
+        kev = (
+            "Yes"
+            if item["kev"]
+            else "No"
+        )
+
+        kev_added = item[
+            "kev_date_added"
+        ]
+
+        kev_due = item[
+            "kev_due_date"
+        ]
+
+        ransomware = item[
+            "kev_ransomware_use"
+        ]
+
+        if ransomware is True:
+            ransomware_text = "Yes"
+        elif ransomware is False:
+            ransomware_text = "No"
+        else:
+            ransomware_text = "-"
+
+        cwes = item["cwes"]
+
+        if isinstance(
+            cwes,
+            (list, tuple, set),
+        ):
+            cwe_text = ", ".join(
+                str(value).strip()
+                for value in cwes
+                if str(value).strip()
+            ) or "-"
+        else:
+            cwe_text = (
+                str(cwes).strip()
+                or "-"
+            )
+
+        rows.append(
+            "| "
+            f"{product} {version} | "
+            f"{cpe} | "
+            f"{cve} — {title} | "
+            f"{severity} | "
+            f"{cvss} | "
+            f"{target} | "
+            f"{kev} | "
+            f"{kev_added} | "
+            f"{kev_due} | "
+            f"{ransomware_text} | "
+            f"{cwe_text} |"
+        )
+
+    if not rows:
+        return []
+
+    return [
+        "### Intelligence Matches",
+        "",
+        "| Product / Version | CPE | CVE / Title | Severity | CVSS | Asset | KEV | KEV Added | KEV Due | Ransomware | CWE |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
+        *rows,
+        "",
+    ]
+
+
+
 def _highest_severity(
     findings: Iterable[Any],
 ) -> str:
@@ -535,6 +819,255 @@ def _duration_seconds(
         )
 
     return 0.0
+
+
+def _format_timestamp(value: Any) -> str:
+    """Return a human-readable UTC timestamp while preserving raw values."""
+
+    if value is None or value == "":
+        return "-"
+
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(
+                float(value),
+                tz=timezone.utc,
+            ).strftime("%Y-%m-%d %H:%M:%S UTC")
+        except (OverflowError, OSError, ValueError):
+            return str(value)
+
+    text = str(value).strip()
+    if not text:
+        return "-"
+
+    try:
+        parsed = datetime.fromisoformat(
+            text.replace("Z", "+00:00")
+        )
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        return parsed.strftime("%Y-%m-%d %H:%M:%S UTC")
+    except ValueError:
+        return text
+
+
+def _iter_mappings(value: Any) -> Iterable[Mapping[str, Any]]:
+    """Yield nested mappings from report/runtime data."""
+
+    if isinstance(value, Mapping):
+        yield value
+        for item in value.values():
+            yield from _iter_mappings(item)
+        return
+
+    if isinstance(value, (list, tuple, set, frozenset)):
+        for item in value:
+            yield from _iter_mappings(item)
+
+
+def _observation_records(ctx: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Collect serialized observation mappings from collector/analyzer data."""
+
+    records: list[Mapping[str, Any]] = []
+    seen: set[int] = set()
+
+    sources = (
+        ctx.get("collector_results", []),
+        ctx.get("native_analyzer_results", []),
+    )
+
+    for source in sources:
+        for item in _iter_mappings(_serialize(source)):
+            if "observation_type" in item or "observations" in item:
+                marker = id(item)
+                if marker not in seen:
+                    seen.add(marker)
+                    records.append(item)
+
+            observations = item.get("observations")
+            if isinstance(observations, list):
+                for observation in observations:
+                    if isinstance(observation, Mapping):
+                        records.append(observation)
+
+    return records
+
+
+def _observation_type_value(item: Mapping[str, Any]) -> str:
+    """Return a normalized observation type from a serialized record."""
+
+    return str(
+        item.get(
+            "observation_type",
+            item.get("type", ""),
+        )
+        or ""
+    ).strip().upper()
+
+
+def _observation_host(item: Mapping[str, Any]) -> str:
+    """Return a normalized host-like value from an observation."""
+
+    for key in ("host", "hostname", "ip", "target"):
+        value = item.get(key)
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def _observation_url(item: Mapping[str, Any]) -> str:
+    """Return a normalized URL-like value from an observation."""
+
+    for key in ("url", "endpoint", "route"):
+        value = item.get(key)
+        if value and str(value).startswith(("http://", "https://")):
+            return str(value).strip()
+    return ""
+
+
+def _attack_surface_statistics(ctx: Mapping[str, Any]) -> dict[str, int]:
+    """Derive attack-surface counts from retained collector observations."""
+
+    records = _observation_records(ctx)
+
+    subdomains: set[str] = set()
+    alive_hosts: set[str] = set()
+    final_hosts: set[str] = set()
+    urls: set[str] = set()
+
+    for item in records:
+        observation_type = _observation_type_value(item)
+        host = _observation_host(item)
+        url = _observation_url(item)
+
+        if observation_type in {"SUBDOMAIN", "SUBDOMAIN_DISCOVERY"}:
+            if host:
+                subdomains.add(host)
+
+        if observation_type in {
+            "HOST_UP",
+            "HTTP_SERVICE",
+            "HTTP_STATUS",
+        }:
+            if host:
+                alive_hosts.add(host)
+
+        if host and observation_type in {
+            "HOST",
+            "HOST_UP",
+            "HOST_DISCOVERY",
+            "HTTP_SERVICE",
+            "HTTP_STATUS",
+            "OPEN_PORT",
+            "SERVICE",
+            "SERVICE_VERSION",
+        }:
+            final_hosts.add(host)
+
+        if observation_type in {
+            "URL",
+            "ENDPOINT",
+            "API_ENDPOINT",
+            "API_ROUTE",
+            "ROUTE",
+        } and url:
+            urls.add(url)
+
+    return {
+        "subdomains_found": len(subdomains),
+        "alive_hosts": len(alive_hosts),
+        "final_hosts": len(final_hosts),
+        "urls_discovered": len(urls),
+        "attack_surface_observations": len(records),
+    }
+
+
+def _evidence_reference_entries(
+    ctx: Mapping[str, Any],
+    findings: Iterable[Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build report evidence references from evidence already attached to data."""
+
+    finding_refs: list[dict[str, Any]] = []
+    raw_refs: list[dict[str, Any]] = []
+    general_refs: list[dict[str, Any]] = []
+
+    for finding in findings:
+        evidence = _field(finding, "evidence", None)
+        if evidence in (None, "", [], {}, (), set(), frozenset()):
+            continue
+
+        entry = {
+            "finding_id": _finding_id(finding),
+            "source_tool": _source(finding),
+            "evidence": _serialize(evidence),
+        }
+        finding_refs.append(entry)
+        general_refs.append(entry)
+
+    def walk_raw(value: Any, source: str = "") -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                key_text = str(key).lower()
+                if any(
+                    marker in key_text
+                    for marker in (
+                        "raw_evidence",
+                        "evidence_path",
+                        "raw_output_path",
+                        "output_path",
+                        "artifact_path",
+                    )
+                ) and item not in (None, "", [], {}, (), set(), frozenset()):
+                    raw_refs.append(
+                        {
+                            "source": source or "assessment",
+                            "field": str(key),
+                            "reference": _serialize(item),
+                        }
+                    )
+                walk_raw(item, source)
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            for item in value:
+                walk_raw(item, source)
+
+    for key in ("collector_results", "execution_results"):
+        walk_raw(
+            ctx.get(key, []),
+            key,
+        )
+
+    # Deduplicate references by their serialized representation without
+    # changing the evidence payload supplied by the runtime.
+    def unique(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for entry in entries:
+            marker = json.dumps(
+                _serialize(entry),
+                sort_keys=True,
+                ensure_ascii=False,
+            )
+            if marker not in seen:
+                seen.add(marker)
+                result.append(entry)
+        return result
+
+    finding_refs = unique(finding_refs)
+    raw_refs = unique(raw_refs)
+    general_refs = unique([*general_refs, *raw_refs])
+
+    return general_refs, raw_refs, finding_refs
 
 
 def _generated_paths(
@@ -591,6 +1124,126 @@ def _report_state(
     ):
         statistics = {}
 
+    statistics = dict(statistics)
+
+    # Derive report-level execution and finding statistics from the structured
+    # workflow state retained in the context. Runtime statistics may contain
+    # stale zero values, so these canonical report metrics must be derived from
+    # the actual execution/stage/finding collections rather than preserved via
+    # setdefault().
+    derived_statistics = _attack_surface_statistics(ctx)
+    statistics.update(derived_statistics)
+
+    execution_results = _as_list(
+        ctx.get(
+            "execution_results",
+            [],
+        )
+    )
+
+    stage_results = _as_list(
+        ctx.get(
+            "stage_results",
+            [],
+        )
+    )
+
+    statistics["tools_executed"] = len(
+        execution_results
+    )
+
+    stages_executed = 0
+    stages_skipped = 0
+
+    for stage_result in stage_results:
+        status = str(
+            _field(
+                stage_result,
+                "status",
+                "",
+            )
+            or ""
+        ).strip().lower()
+
+        if status == "skipped":
+            stages_skipped += 1
+            continue
+
+        if status:
+            stages_executed += 1
+
+    statistics["stages_executed"] = stages_executed
+    statistics["stages_skipped"] = stages_skipped
+
+    statistics["findings_total"] = len(
+        findings
+    )
+
+    severity_counts = _severity_counts(
+        findings
+    )
+
+    statistics["findings_critical"] = severity_counts.get(
+        "Critical",
+        0,
+    )
+    statistics["findings_high"] = severity_counts.get(
+        "High",
+        0,
+    )
+    statistics["findings_medium"] = severity_counts.get(
+        "Medium",
+        0,
+    )
+    statistics["findings_low"] = severity_counts.get(
+        "Low",
+        0,
+    )
+    statistics["findings_informational"] = severity_counts.get(
+        "Informational",
+        0,
+    )
+
+    status_counts = Counter(
+        _status(finding).strip().lower()
+        for finding in findings
+    )
+
+    statistics["findings_confirmed"] = status_counts.get(
+        "confirmed",
+        0,
+    )
+    statistics["findings_pending"] = status_counts.get(
+        "pending",
+        0,
+    )
+    statistics["findings_false_positive"] = status_counts.get(
+        "false positive",
+        0,
+    ) + status_counts.get(
+        "false_positive",
+        0,
+    )
+
+    pipeline_metadata = _mapping(
+        ctx.get("analysis_metadata", {})
+    )
+    for key in (
+        "input_observation_count",
+        "attack_surface_observation_count",
+        "final_finding_count",
+        "duplicate_count",
+        "processing_error_count",
+        "correlation_group_count",
+        "evidence_bearing_finding_count",
+        "findings_without_evidence_count",
+    ):
+        if key in pipeline_metadata:
+            statistics.setdefault(
+                key,
+                pipeline_metadata[key],
+            )
+
     start_time = ctx.get(
         "workflow_start_time"
     )
@@ -629,6 +1282,74 @@ def _report_state(
         )
     )
 
+    statistics["files_generated"] = len(
+        generated_files
+    )
+
+    existing_evidence = _as_list(
+        ctx.get("evidence_references", [])
+    )
+    existing_raw_evidence = _as_list(
+        ctx.get("raw_evidence_references", [])
+    )
+    existing_finding_evidence = _as_list(
+        ctx.get("finding_evidence_references", [])
+    )
+
+    derived_evidence, derived_raw_evidence, derived_finding_evidence = (
+        _evidence_reference_entries(
+            ctx,
+            findings,
+        )
+    )
+
+    def unique_serialized_entries(values: Iterable[Any]) -> list[Any]:
+        """Deduplicate JSON-compatible entries without hashing mappings."""
+
+        result: list[Any] = []
+        seen: set[str] = set()
+
+        for value in values:
+            serialized = _serialize(value)
+            marker = json.dumps(
+                serialized,
+                sort_keys=True,
+                ensure_ascii=False,
+                default=str,
+            )
+            if marker in seen:
+                continue
+            seen.add(marker)
+            result.append(serialized)
+
+        return result
+
+    evidence_references = unique_serialized_entries(
+        [
+            *existing_evidence,
+            *derived_evidence,
+        ]
+    )
+    raw_evidence_references = unique_serialized_entries(
+        [
+            *existing_raw_evidence,
+            *derived_raw_evidence,
+        ]
+    )
+    finding_evidence_references = unique_serialized_entries(
+        [
+            *existing_finding_evidence,
+            *derived_finding_evidence,
+        ]
+    )
+
+    existing_correlated_evidence = _as_list(
+        ctx.get("correlated_evidence_references", [])
+    )
+
+    start_time_display = _format_timestamp(start_time)
+    end_time_display = _format_timestamp(end_time)
+
     return {
         "schema_version": "4.0",
         "generator": "ScopeForgeX",
@@ -666,6 +1387,8 @@ def _report_state(
         ),
         "start_time": start_time,
         "end_time": end_time,
+        "start_time_display": start_time_display,
+        "end_time_display": end_time_display,
         "duration": duration,
         "workflow_start_time": start_time,
         "workflow_end_time": end_time,
@@ -728,6 +1451,15 @@ def _report_state(
                 )
             )
         ],
+        "software_assessments": [
+            _serialize(item)
+            for item in _as_list(
+                ctx.get(
+                    "software_assessments",
+                    [],
+                )
+            )
+        ],
         "stage_results": [
             _serialize(item)
             for item in _as_list(
@@ -737,41 +1469,12 @@ def _report_state(
                 )
             )
         ],
-        "evidence_references": [
-            _serialize(item)
-            for item in _as_list(
-                ctx.get(
-                    "evidence_references",
-                    [],
-                )
-            )
-        ],
-        "raw_evidence_references": [
-            _serialize(item)
-            for item in _as_list(
-                ctx.get(
-                    "raw_evidence_references",
-                    [],
-                )
-            )
-        ],
-        "finding_evidence_references": [
-            _serialize(item)
-            for item in _as_list(
-                ctx.get(
-                    "finding_evidence_references",
-                    [],
-                )
-            )
-        ],
+        "evidence_references": evidence_references,
+        "raw_evidence_references": raw_evidence_references,
+        "finding_evidence_references": finding_evidence_references,
         "correlated_evidence_references": [
             _serialize(item)
-            for item in _as_list(
-                ctx.get(
-                    "correlated_evidence_references",
-                    [],
-                )
-            )
+            for item in existing_correlated_evidence
         ],
         "warnings": [
             str(item)
@@ -811,6 +1514,16 @@ def _report_state(
                 _assets(findings)
             ),
             "affected_assets": _assets(findings),
+            "attack_surface_observation_count": statistics.get(
+                "attack_surface_observations",
+                statistics.get(
+                    "attack_surface_observation_count",
+                    0,
+                ),
+            ),
+            "evidence_bearing_finding_count": len(
+                finding_evidence_references
+            ),
         },
         "vulnerability_intelligence": _intelligence_summary(
             _as_list(
@@ -819,6 +1532,9 @@ def _report_state(
                     [],
                 )
             )
+        ),
+        "analysis_metadata": _mapping(
+            ctx.get("analysis_metadata", {})
         ),
         "report_views": {
             "professional": {
@@ -1091,13 +1807,29 @@ def _professional_markdown(
             f"- **Version-based matches:** {data.get('vulnerability_intelligence', {}).get('version_matches', 0)}",
             f"- **CISA KEV matches:** {data.get('vulnerability_intelligence', {}).get('kev', 0)}",
             "",
+        ]
+    )
+
+    intelligence_records = data.get(
+        "vulnerability_intelligence_results",
+        [],
+    )
+
+    lines.extend(
+        _intelligence_markdown(
+            intelligence_records,
+        )
+    )
+
+    lines.extend(
+        [
             "## 2. Assessment Scope",
             "",
             f"- Target: `{data.get('target', '-')}`",
             f"- Target type: `{data.get('target_type', '-')}`",
             f"- Profile: `{data.get('profile', '-')}`",
-            f"- Start time: `{data.get('start_time', '-')}`",
-            f"- End time: `{data.get('end_time', '-')}`",
+            f"- Start time: `{data.get('start_time_display', data.get('start_time', '-'))}`",
+            f"- End time: `{data.get('end_time_display', data.get('end_time', '-'))}`",
             "",
             "## 3. Rules of Engagement / Limitations",
             "",
@@ -1374,6 +2106,7 @@ def _findings_markdown(
         f"| Informational | **{counts.get('Informational', 0)}** |",
         f"| CVEs | **{len(cves)}** |",
         f"| Affected assets | **{len(assets)}** |",
+        f"| Evidence-backed findings | **{len(data.get('finding_evidence_references', []))}** |",
         f"| NVD matches | **{data.get('vulnerability_intelligence', {}).get('nvd', 0)}** |",
         f"| CISA KEV matches | **{data.get('vulnerability_intelligence', {}).get('kev', 0)}** |",
         "",
@@ -1386,9 +2119,25 @@ def _findings_markdown(
         f"- **Version-based matches:** {data.get('vulnerability_intelligence', {}).get('version_matches', 0)}",
         f"- **CISA KEV matches:** {data.get('vulnerability_intelligence', {}).get('kev', 0)}",
         "",
-        "## Findings",
-        "",
     ]
+
+    intelligence_records = data.get(
+        "vulnerability_intelligence_results",
+        [],
+    )
+
+    lines.extend(
+        _intelligence_markdown(
+            intelligence_records,
+        )
+    )
+
+    lines.extend(
+        [
+            "## Findings",
+            "",
+        ]
+    )
 
     if findings:
         for index, finding in enumerate(
@@ -1715,6 +2464,165 @@ def _html_finding(
     return "".join(parts)
 
 
+def _html_intelligence(
+    records: Iterable[Any],
+) -> str:
+    """
+    Render NVD/CPE/CVE/KEV intelligence records.
+
+    Vulnerability-intelligence matches represent potential exposure from
+    observed software identity. They do not by themselves confirm
+    exploitability, successful exploitation, or compromise.
+    """
+
+    rows: list[str] = []
+
+    for record in records:
+        item = _intelligence_item(
+            record
+        )
+
+        if not item:
+            continue
+
+        product = item["product"]
+        version = item["version"]
+        cpe = item["cpe"]
+        cve = item["cve"]
+        title = item["title"]
+        severity = item["severity"]
+
+        cvss_score = item["cvss_score"]
+        cvss_version = item["cvss_version"]
+
+        if cvss_score is None:
+            cvss = "-"
+        else:
+            cvss = (
+                f"{cvss_score} "
+                f"({cvss_version})"
+            )
+
+        target = (
+            item["target"]
+            or item["host"]
+            or "-"
+        )
+
+        port = item["port"]
+
+        if port is not None:
+            target = f"{target}:{port}"
+
+        url = item["url"]
+
+        if url:
+            target = (
+                f"{target} — {url}"
+            )
+
+        kev = (
+            "Yes"
+            if item["kev"]
+            else "No"
+        )
+
+        kev_added = item[
+            "kev_date_added"
+        ]
+
+        kev_due = item[
+            "kev_due_date"
+        ]
+
+        ransomware = item[
+            "kev_ransomware_use"
+        ]
+
+        if ransomware is True:
+            ransomware_text = "Yes"
+        elif ransomware is False:
+            ransomware_text = "No"
+        else:
+            ransomware_text = "-"
+
+        cwes = item["cwes"]
+
+        if isinstance(
+            cwes,
+            (list, tuple, set),
+        ):
+            cwe_text = ", ".join(
+                str(value).strip()
+                for value in cwes
+                if str(value).strip()
+            ) or "-"
+        else:
+            cwe_text = (
+                str(cwes).strip()
+                or "-"
+            )
+
+        rows.append(
+            "<tr>"
+            f"<td><strong>{escape(product)}</strong>"
+            f"<br><span class=\"small\">"
+            f"{escape(version)}</span></td>"
+            f"<td><code>{escape(cpe)}</code></td>"
+            f"<td><code>{escape(cve)}</code>"
+            f"<br>{escape(title)}</td>"
+            f"<td>{escape(severity)}</td>"
+            f"<td>{escape(cvss)}</td>"
+            f"<td>{escape(target)}</td>"
+            f"<td>{escape(kev)}</td>"
+            f"<td>{escape(kev_added)}</td>"
+            f"<td>{escape(kev_due)}</td>"
+            f"<td>{escape(ransomware_text)}</td>"
+            f"<td>{escape(cwe_text)}</td>"
+            "</tr>"
+        )
+
+    if not rows:
+        return ""
+
+    return (
+        "<h2>Vulnerability Intelligence</h2>"
+        '<div class="card">'
+        "<p>"
+        "<strong>Potential exposure:</strong> "
+        "NVD/CPE/CVE intelligence correlates observed "
+        "software identity with vulnerability records. "
+        "These matches require target-specific validation "
+        "and do not by themselves confirm exploitability, "
+        "successful exploitation, or compromise."
+        "</p>"
+        "</div>"
+        '<div style="overflow-x:auto">'
+        "<table>"
+        "<thead>"
+        "<tr>"
+        "<th>Product / Version</th>"
+        "<th>CPE</th>"
+        "<th>CVE / Title</th>"
+        "<th>Severity</th>"
+        "<th>CVSS</th>"
+        "<th>Asset</th>"
+        "<th>KEV</th>"
+        "<th>KEV Added</th>"
+        "<th>KEV Due</th>"
+        "<th>Ransomware</th>"
+        "<th>CWE</th>"
+        "</tr>"
+        "</thead>"
+        "<tbody>"
+        + "".join(rows)
+        + "</tbody>"
+        "</table>"
+        "</div>"
+    )
+
+
+
 def _html_document(
     title: str,
     subtitle: str,
@@ -1763,6 +2671,18 @@ def _professional_html(
         findings
     )
 
+    intelligence = list(
+        data.get(
+            "vulnerability_intelligence_results",
+            [],
+        )
+    )
+
+    intelligence_summary = data.get(
+        "vulnerability_intelligence",
+        {},
+    )
+
     metrics = "".join(
         (
             f'<div class="card"><div class="label">{severity}</div>'
@@ -1784,10 +2704,17 @@ def _professional_html(
         )
         if findings
         else (
-            '<div class="card"><strong>No security findings '
-            "were identified.</strong><p class=\"small\">"
-            "This is not proof that the target is secure.</p></div>"
+            '<div class="card"><strong>'
+            "No security findings were identified."
+            "</strong>"
+            '<p class="small">'
+            "This is not proof that the target is secure."
+            "</p></div>"
         )
+    )
+
+    intelligence_html = _html_intelligence(
+        intelligence
     )
 
     body = (
@@ -1796,12 +2723,21 @@ def _professional_html(
         f'<div class="metric">{len(findings)}</div></div>'
         f'<div class="card"><div class="label">CVEs</div>'
         f'<div class="metric">{len(cves)}</div></div>'
+        f'<div class="card"><div class="label">NVD Matches</div>'
+        f'<div class="metric">'
+        f'{intelligence_summary.get("nvd", 0)}'
+        f'</div></div>'
+        f'<div class="card"><div class="label">CISA KEV</div>'
+        f'<div class="metric">'
+        f'{intelligence_summary.get("kev", 0)}'
+        f'</div></div>'
         + metrics
         + "</section>"
         "<h2>Executive Summary</h2>"
         f"<p>Highest observed severity: "
         f"<strong>{escape(_highest_severity(findings))}</strong>.</p>"
-        "<h2>Findings</h2>"
+        + intelligence_html
+        + "<h2>Findings</h2>"
         + findings_html
     )
 
@@ -1837,6 +2773,22 @@ def _findings_html(
         findings
     )
 
+    intelligence = list(
+        data.get(
+            "vulnerability_intelligence_results",
+            [],
+        )
+    )
+
+    intelligence_summary = data.get(
+        "vulnerability_intelligence",
+        {},
+    )
+
+    intelligence_html = _html_intelligence(
+        intelligence
+    )
+
     body = (
         '<section class="grid">'
         f'<div class="card"><div class="label">Findings</div>'
@@ -1849,8 +2801,17 @@ def _findings_html(
         f'<div class="metric">{counts.get("Medium", 0)}</div></div>'
         f'<div class="card"><div class="label">CVEs</div>'
         f'<div class="metric">{len(cves)}</div></div>'
+        f'<div class="card"><div class="label">NVD Matches</div>'
+        f'<div class="metric">'
+        f'{intelligence_summary.get("nvd", 0)}'
+        f'</div></div>'
+        f'<div class="card"><div class="label">CISA KEV</div>'
+        f'<div class="metric">'
+        f'{intelligence_summary.get("kev", 0)}'
+        f'</div></div>'
         "</section>"
-        "<h2>Security Findings</h2>"
+        + intelligence_html
+        + "<h2>Security Findings</h2>"
     )
 
     if findings:
@@ -1867,13 +2828,19 @@ def _findings_html(
     else:
         body += (
             '<div class="card"><strong>'
-            "No vulnerabilities or security findings were recorded."
-            "</strong></div>"
+            "No normalized security findings were recorded."
+            '<p class="small">'
+            "This does not exclude potential exposure identified "
+            "through vulnerability intelligence."
+            "</p></div>"
         )
 
     return _html_document(
         "ScopeForgeX Findings Report",
-        f"{data.get('target', '-')} · findings-oriented view",
+        (
+            f"{data.get('target', '-')}"
+            " · findings-oriented view"
+        ),
         body,
     )
 
@@ -1912,6 +2879,504 @@ def _write_json(
     )
 
 
+def _report_data_from_state(
+    data: Mapping[str, Any],
+) -> ReportData:
+    """
+    Convert assembled Stage 6 state into the canonical ReportData model.
+
+    Stage 6 remains responsible for collecting and deriving assessment state.
+    ReportData is the structured representation consumed by the presentation
+    and JSON export layers.
+    """
+
+    raw_statistics = data.get(
+        "statistics",
+        {},
+    )
+
+    if not isinstance(
+        raw_statistics,
+        Mapping,
+    ):
+        raw_statistics = {}
+
+    statistics_fields = {
+        "subdomains_found",
+        "alive_hosts",
+        "final_hosts",
+        "urls_discovered",
+        "nuclei_findings",
+        "files_generated",
+        "tools_executed",
+        "stages_executed",
+        "stages_skipped",
+        "findings_total",
+        "findings_critical",
+        "findings_high",
+        "findings_medium",
+        "findings_low",
+        "findings_informational",
+        "findings_confirmed",
+        "findings_pending",
+        "findings_false_positive",
+    }
+
+    statistics = ScanStatistics(
+        **{
+            key: raw_statistics[key]
+            for key in statistics_fields
+            if key in raw_statistics
+        }
+    )
+
+    canonical_findings: list[Finding] = []
+
+    for item in _as_list(
+        data.get(
+            "findings",
+            [],
+        )
+    ):
+        if isinstance(
+            item,
+            Finding,
+        ):
+            canonical_findings.append(
+                item
+            )
+            continue
+
+        if isinstance(
+            item,
+            Mapping,
+        ):
+            normalized = mapping_to_finding(
+                item
+            )
+
+            canonical_findings.append(
+                Finding(
+                    finding_id=str(
+                        getattr(
+                            normalized,
+                            "finding_id",
+                            "",
+                        )
+                        or ""
+                    ),
+                    title=str(
+                        getattr(
+                            normalized,
+                            "title",
+                            "Assessment Observation",
+                        )
+                        or "Assessment Observation"
+                    ),
+                    category=str(
+                        getattr(
+                            normalized,
+                            "category",
+                            "security_issue",
+                        )
+                        or "security_issue"
+                    ),
+                    severity=str(
+                        getattr(
+                            normalized,
+                            "severity",
+                            "Informational",
+                        )
+                        or "Informational"
+                    ),
+                    confidence=str(
+                        getattr(
+                            normalized,
+                            "confidence",
+                            "Medium",
+                        )
+                        or "Medium"
+                    ),
+                    status=str(
+                        getattr(
+                            normalized,
+                            "status",
+                            "Pending",
+                        )
+                        or "Pending"
+                    ),
+                    target=str(
+                        getattr(
+                            normalized,
+                            "target",
+                            "",
+                        )
+                        or ""
+                    ),
+                    host=getattr(
+                        normalized,
+                        "host",
+                        None,
+                    ),
+                    port=getattr(
+                        normalized,
+                        "port",
+                        None,
+                    ),
+                    url=getattr(
+                        normalized,
+                        "url",
+                        None,
+                    ),
+                    parameter=getattr(
+                        normalized,
+                        "parameter",
+                        None,
+                    ),
+                    description=str(
+                        getattr(
+                            normalized,
+                            "description",
+                            "",
+                        )
+                        or ""
+                    ),
+                    impact=str(
+                        getattr(
+                            normalized,
+                            "impact",
+                            "",
+                        )
+                        or ""
+                    ),
+                    remediation=str(
+                        getattr(
+                            normalized,
+                            "remediation",
+                            "",
+                        )
+                        or ""
+                    ),
+                    evidence=_serialize(
+                        getattr(
+                            normalized,
+                            "evidence",
+                            None,
+                        )
+                    ),
+                    source_tool=str(
+                        getattr(
+                            normalized,
+                            "source_tool",
+                            "",
+                        )
+                        or ""
+                    ),
+                    detection_method=str(
+                        getattr(
+                            normalized,
+                            "detection_method",
+                            "",
+                        )
+                        or ""
+                    ),
+                    timestamp=getattr(
+                        normalized,
+                        "timestamp",
+                        None,
+                    ),
+                    metadata=dict(
+                        getattr(
+                            normalized,
+                            "metadata",
+                            {},
+                        )
+                        or {}
+                    ),
+                    cwe=getattr(
+                        normalized,
+                        "cwe",
+                        None,
+                    ),
+                    cve=getattr(
+                        normalized,
+                        "cve",
+                        None,
+                    ),
+                    references=list(
+                        getattr(
+                            normalized,
+                            "references",
+                            [],
+                        )
+                        or []
+                    ),
+                )
+            )
+
+    reporting_stages: list[ReportingStageResult] = []
+
+    for item in _as_list(
+        data.get(
+            "stage_results",
+            [],
+        )
+    ):
+        if isinstance(
+            item,
+            ReportingStageResult,
+        ):
+            reporting_stages.append(
+                item
+            )
+            continue
+
+        if not isinstance(
+            item,
+            Mapping,
+        ):
+            continue
+
+        phase = item.get(
+            "phase",
+            "",
+        )
+
+        if isinstance(
+            phase,
+            AssessmentPhase,
+        ):
+            reporting_phase = phase
+        else:
+            try:
+                reporting_phase = AssessmentPhase(
+                    str(
+                        phase
+                    )
+                )
+            except ValueError:
+                reporting_phase = str(
+                    phase
+                )
+
+        reporting_stages.append(
+            ReportingStageResult(
+                phase=reporting_phase,
+                status=str(
+                    item.get(
+                        "status",
+                        "",
+                    )
+                ),
+            )
+        )
+
+    return ReportData(
+        target=str(
+            data.get(
+                "target",
+                "",
+            )
+            or ""
+        ),
+        profile=str(
+            data.get(
+                "profile",
+                "",
+            )
+            or ""
+        ),
+        target_type=str(
+            data.get(
+                "target_type",
+                "",
+            )
+            or ""
+        ),
+        start_time=data.get(
+            "start_time"
+        ),
+        end_time=data.get(
+            "end_time"
+        ),
+        statistics=statistics,
+        generated_files=[
+            str(item)
+            for item in _as_list(
+                data.get(
+                    "generated_files",
+                    [],
+                )
+            )
+            if str(item)
+        ],
+        stages=reporting_stages,
+        findings=canonical_findings,
+        warnings=[
+            str(item)
+            for item in _as_list(
+                data.get(
+                    "warnings",
+                    [],
+                )
+            )
+        ],
+        errors=[
+            str(item)
+            for item in _as_list(
+                data.get(
+                    "errors",
+                    [],
+                )
+            )
+        ],
+        duration_seconds=float(
+            data.get(
+                "duration",
+                0.0,
+            )
+            or 0.0
+        ),
+        run_id=str(
+            data.get(
+                "run_id",
+                "",
+            )
+            or ""
+        ),
+        schema_version=str(
+            data.get(
+                "schema_version",
+                "4.0",
+            )
+            or "4.0"
+        ),
+        correlation_groups=[
+            _serialize(item)
+            for item in _as_list(
+                data.get(
+                    "correlation_groups",
+                    [],
+                )
+            )
+        ],
+        correlated_findings=[
+            _serialize(item)
+            for item in _as_list(
+                data.get(
+                    "correlated_findings",
+                    [],
+                )
+            )
+        ],
+        collector_results=[
+            _serialize(item)
+            for item in _as_list(
+                data.get(
+                    "collector_results",
+                    [],
+                )
+            )
+        ],
+        execution_results=[
+            _serialize(item)
+            for item in _as_list(
+                data.get(
+                    "execution_results",
+                    [],
+                )
+            )
+        ],
+        native_analyzer_results=[
+            _serialize(item)
+            for item in _as_list(
+                data.get(
+                    "native_analyzer_results",
+                    [],
+                )
+            )
+        ],
+        vulnerability_intelligence_results=[
+            _serialize(item)
+            for item in _as_list(
+                data.get(
+                    "vulnerability_intelligence_results",
+                    [],
+                )
+            )
+        ],
+        software_assessments=[
+            _serialize(item)
+            for item in _as_list(
+                data.get(
+                    "software_assessments",
+                    [],
+                )
+            )
+        ],
+        evidence_references=[
+            _serialize(item)
+            for item in _as_list(
+                data.get(
+                    "evidence_references",
+                    [],
+                )
+            )
+        ],
+        raw_evidence_references=[
+            _serialize(item)
+            for item in _as_list(
+                data.get(
+                    "raw_evidence_references",
+                    [],
+                )
+            )
+        ],
+        finding_evidence_references=[
+            _serialize(item)
+            for item in _as_list(
+                data.get(
+                    "finding_evidence_references",
+                    [],
+                )
+            )
+        ],
+        correlated_evidence_references=[
+            _serialize(item)
+            for item in _as_list(
+                data.get(
+                    "correlated_evidence_references",
+                    [],
+                )
+            )
+        ],
+        summary=_mapping(
+            data.get(
+                "summary",
+                {},
+            )
+        ),
+        vulnerability_intelligence=_mapping(
+            data.get(
+                "vulnerability_intelligence",
+                {},
+            )
+        ),
+        analysis_metadata=_mapping(
+            data.get(
+                "analysis_metadata",
+                {},
+            )
+        ),
+        report_views=_mapping(
+            data.get(
+                "report_views",
+                {},
+            )
+        ),
+    )
+
+
 def stage6_report_cleanup(
     ctx: dict[str, Any],
 ) -> None:
@@ -1942,45 +3407,79 @@ def stage6_report_cleanup(
                 exist_ok=True,
             )
 
+        # AnalysisPipeline exposes processing metadata through AnalysisResult.
+        # Copy it into the reporting context when available without requiring
+        # Stage 6 to depend on the pipeline implementation.
+        analysis_result = ctx.get("analysis_result")
+        if analysis_result is not None:
+            analysis_metadata = getattr(
+                analysis_result,
+                "metadata",
+                None,
+            )
+            if isinstance(analysis_metadata, Mapping):
+                ctx["analysis_metadata"] = dict(
+                    analysis_metadata
+                )
+
         data = _report_state(
             ctx,
             paths,
         )
 
-        professional_md = _professional_markdown(
+        report = _report_data_from_state(
             data
         )
 
-        findings_md = _findings_markdown(
-            data
+        generator = ReportGenerator(
+            report
         )
 
-        _write_text(
-            paths["professional_markdown"],
-            professional_md,
+        generator.generate_professional_markdown(
+            str(
+                paths["professional_markdown"]
+            )
         )
 
-        _write_text(
-            paths["findings_markdown"],
-            findings_md,
+        generator.generate_findings_markdown(
+            str(
+                paths["findings_markdown"]
+            )
         )
 
-        _write_text(
-            paths["professional_html"],
-            _professional_html(data),
+        generator.generate_professional_html(
+            str(
+                paths["professional_html"]
+            )
         )
 
-        _write_text(
-            paths["findings_html"],
-            _findings_html(data),
+        generator.generate_findings_html(
+            str(
+                paths["findings_html"]
+            )
         )
 
-        _write_json(
-            paths["canonical_json"],
-            data,
+        JSONReportExporter(
+            report
+        ).export(
+            str(
+                paths["canonical_json"]
+            )
         )
 
-        # Compatibility files preserve the old root-level entry points.
+        # Compatibility files preserve the existing root-level entry points.
+        professional_md = paths[
+            "professional_markdown"
+        ].read_text(
+            encoding="utf-8"
+        )
+
+        findings_md = paths[
+            "findings_markdown"
+        ].read_text(
+            encoding="utf-8"
+        )
+
         _write_text(
             paths["markdown"],
             professional_md,
@@ -1991,9 +3490,12 @@ def stage6_report_cleanup(
             findings_md,
         )
 
-        _write_json(
-            paths["json"],
-            data,
+        JSONReportExporter(
+            report
+        ).export(
+            str(
+                paths["json"]
+            )
         )
 
         # Record exact report paths after successful creation.
@@ -2006,7 +3508,7 @@ def stage6_report_cleanup(
 
         ctx[
             "report_data"
-        ] = data
+        ] = report
 
         generated_files = ctx.setdefault(
             "generated_files",

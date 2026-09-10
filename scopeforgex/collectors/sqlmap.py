@@ -45,8 +45,10 @@ Design Principles
 - The collector does not assign final severity or risk.
 - Duplicate observations are removed deterministically.
 - Collection failures do not destroy the original execution result.
+- Generic descriptions, tool names, prepared commands, technique labels,
+  payload labels, and finding titles do not independently prove SQL injection.
 
-v1.0.0
+v1.0.1
 """
 
 from __future__ import annotations
@@ -55,7 +57,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any, Iterable, Mapping
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import urlparse
 
 from scopeforgex.collectors.base import (
     CollectorBase,
@@ -680,9 +682,10 @@ class SQLMapCollector(CollectorBase):
         """
         Parse a single SQLMap text line.
 
-        SQLMap's most useful findings are normally expressed across multiple
-        lines. This parser therefore extracts only information that can be
-        safely associated with the current line.
+        SQL injection observations require explicit vulnerability or
+        injectability language. Generic references to SQL injection,
+        technique names, payload labels, titles, or prepared commands are
+        intentionally insufficient on their own.
         """
 
         text = line.strip()
@@ -795,6 +798,13 @@ class SQLMapCollector(CollectorBase):
         """
         Determine whether structured evidence explicitly represents SQL
         injection.
+
+        Explicit structured vulnerability flags take precedence. Otherwise
+        the combined text must contain strong SQLMap vulnerability language.
+
+        Generic phrases such as "SQL injection", "payload", "type", or
+        "title" are intentionally insufficient because they can describe a
+        prepared assessment rather than an actual finding.
         """
 
         for key in (
@@ -836,34 +846,51 @@ class SQLMapCollector(CollectorBase):
         """
         Return whether a text line contains strong SQLMap SQL-injection
         indicators.
+
+        The detector deliberately requires explicit vulnerability language.
+        A generic mention of SQL injection is not sufficient evidence.
+
+        Examples that qualify:
+
+            Parameter 'id' is vulnerable
+            parameter 'id' is injectable
+            GET parameter 'id' is vulnerable
+            injectable parameter: id
+
+        Examples that do not qualify by themselves:
+
+            SQL injection
+            SQL injection validation
+            Type: boolean-based blind
+            Title: AND boolean-based blind
+            Payload: ...
         """
 
-        normalized = text.lower()
+        normalized = text.lower().strip()
 
-        indicators = (
-            "is vulnerable",
-            "is injectable",
-            "parameter is vulnerable",
-            "parameter is injectable",
-            "sql injection",
-            "injectable parameter",
-            "payload:",
-            "type:",
-            "title:",
+        if not normalized:
+            return False
+
+        strong_patterns = (
+            r"\bis\s+vulnerable\b",
+            r"\bis\s+injectable\b",
+            r"\bwas\s+found\s+to\s+be\s+vulnerable\b",
+            r"\bwas\s+found\s+to\s+be\s+injectable\b",
+            r"\bparameter\s+is\s+vulnerable\b",
+            r"\bparameter\s+is\s+injectable\b",
+            r"\binjectable\s+parameter\s*[:=]",
+            r"\bvulnerable\s+parameter\s*[:=]",
+            r"\bparameter\s+.*\bappears\s+to\s+be\s+vulnerable\b",
+            r"\bparameter\s+.*\bappears\s+to\s+be\s+injectable\b",
         )
 
-        if (
-            "parameter" in normalized
-            and (
-                "vulnerable" in normalized
-                or "injectable" in normalized
-            )
-        ):
-            return True
-
         return any(
-            indicator in normalized
-            for indicator in indicators[:5]
+            re.search(
+                pattern,
+                normalized,
+                flags=re.IGNORECASE,
+            )
+            for pattern in strong_patterns
         )
 
     ###########################################################################

@@ -52,12 +52,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Iterable, Mapping
 
+from reporting.models import Finding
+
 from scopeforgex.models.finding import (
     DEFAULT_CATEGORY,
     DEFAULT_CONFIDENCE,
     DEFAULT_SEVERITY,
     DEFAULT_STATUS,
-    Finding,
 )
 from scopeforgex.runtime.enums import Confidence, Severity
 
@@ -669,7 +670,7 @@ def mapping_to_finding(
     observation through a dictionary rather than a CollectorObservation
     instance.
 
-    The mapping is normalized through Finding.from_mapping().
+    The mapping is normalized into the canonical Finding model.
     """
 
     if not isinstance(
@@ -755,8 +756,135 @@ def mapping_to_finding(
             ]
         )
 
-    return Finding.from_mapping(
-        normalized
+    return Finding(
+        finding_id=str(
+            normalized.get(
+                "finding_id",
+                "",
+            )
+            or ""
+        ),
+        title=str(
+            normalized.get(
+                "title",
+                "Assessment Observation",
+            )
+            or "Assessment Observation"
+        ),
+        category=str(
+            normalized.get(
+                "category",
+                DEFAULT_CATEGORY,
+            )
+            or DEFAULT_CATEGORY
+        ),
+        severity=_severity(
+            normalized.get(
+                "severity",
+                DEFAULT_SEVERITY,
+            )
+        ),
+        confidence=_confidence(
+            normalized.get(
+                "confidence",
+                DEFAULT_CONFIDENCE,
+            )
+        ),
+        status=str(
+            normalized.get(
+                "status",
+                DEFAULT_STATUS,
+            )
+            or DEFAULT_STATUS
+        ),
+        target=_text(
+            normalized.get(
+                "target",
+                "",
+            )
+        ),
+        host=_optional_text(
+            normalized.get(
+                "host"
+            )
+        ),
+        port=normalized.get(
+            "port"
+        ),
+        url=_optional_text(
+            normalized.get(
+                "url"
+            )
+        ),
+        parameter=_optional_text(
+            normalized.get(
+                "parameter"
+            )
+        ),
+        description=_text(
+            normalized.get(
+                "description",
+                "",
+            )
+        ),
+        impact=_text(
+            normalized.get(
+                "impact",
+                "",
+            )
+        ),
+        remediation=_text(
+            normalized.get(
+                "remediation",
+                "",
+            )
+        ),
+        evidence=normalized.get(
+            "evidence"
+        ),
+        source_tool=_text(
+            normalized.get(
+                "source_tool",
+                normalized.get(
+                    "source",
+                    "",
+                ),
+            )
+        ),
+        detection_method=_text(
+            normalized.get(
+                "detection_method",
+                "",
+            )
+        ),
+        timestamp=_timestamp(
+            normalized.get(
+                "timestamp"
+            )
+        ),
+        metadata=dict(
+            normalized.get(
+                "metadata",
+                {},
+            )
+            or {}
+        ),
+        cwe=_optional_text(
+            normalized.get(
+                "cwe"
+            )
+        ),
+        cve=_optional_text(
+            normalized.get(
+                "cve"
+            )
+        ),
+        references=_references(
+            normalized.get(
+                "references",
+                [],
+            )
+        ),
     )
 
 
