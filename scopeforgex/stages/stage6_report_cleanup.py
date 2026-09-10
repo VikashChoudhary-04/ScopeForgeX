@@ -156,6 +156,60 @@ def _field(
     )
 
 
+def _tool_results_projection(
+    execution_results: Any,
+) -> dict[str, str]:
+    """
+    Build the compact reporting tool-status projection from canonical
+    execution results.
+
+    ``execution_results`` may contain ExecutionResult objects or serialized
+    mappings. The detailed execution results remain preserved separately in
+    ReportData.execution_results.
+    """
+    result: dict[str, str] = {}
+
+    for execution_result in _as_list(
+        execution_results
+    ):
+        tool = str(
+            _field(
+                execution_result,
+                "tool",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if not tool:
+            continue
+
+        status = str(
+            _field(
+                execution_result,
+                "status",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if not status:
+            success = _field(
+                execution_result,
+                "success",
+                False,
+            )
+            status = (
+                "success"
+                if success
+                else "failed"
+            )
+
+        result[tool] = status
+
+    return result
+
+
 def _finding_id(
     finding: Any,
 ) -> str:
@@ -2930,6 +2984,13 @@ def _report_data_from_state(
         }
     )
 
+    execution_results = _as_list(
+        data.get(
+            "execution_results",
+            [],
+        )
+    )
+
     canonical_findings: list[Finding] = []
 
     for item in _as_list(
@@ -3212,6 +3273,9 @@ def _report_data_from_state(
         ],
         stages=reporting_stages,
         findings=canonical_findings,
+        tool_results=_tool_results_projection(
+            execution_results
+        ),
         warnings=[
             str(item)
             for item in _as_list(
@@ -3280,12 +3344,7 @@ def _report_data_from_state(
         ],
         execution_results=[
             _serialize(item)
-            for item in _as_list(
-                data.get(
-                    "execution_results",
-                    [],
-                )
-            )
+            for item in execution_results
         ],
         native_analyzer_results=[
             _serialize(item)

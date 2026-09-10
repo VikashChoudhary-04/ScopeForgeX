@@ -236,6 +236,76 @@ def test_stage6_report_state_preserves_software_assessments():
     assert serialized["software_assessments"][0]["kev_count"] == 0
 
 
+def test_report_data_derives_tool_results_from_execution_results():
+    from datetime import datetime, timezone
+
+    from scopeforgex.models.execution_result import ExecutionResult
+    from scopeforgex.stages.stage6_report_cleanup import _report_data_from_state
+
+    started = datetime.now(timezone.utc)
+    finished = started
+
+    execution_results = [
+        ExecutionResult(
+            tool="httpx",
+            capability="web_enumeration",
+            success=True,
+            started_at=started,
+            finished_at=finished,
+        ),
+        ExecutionResult(
+            tool="nmap",
+            capability="network_recon",
+            success=False,
+            started_at=started,
+            finished_at=finished,
+            metadata={"status": "skipped"},
+        ),
+        ExecutionResult(
+            tool="nuclei",
+            capability="vulnerability_assessment",
+            success=False,
+            started_at=started,
+            finished_at=finished,
+        ),
+    ]
+
+    ctx = {
+        "target": "http://127.0.0.1:3000",
+        "profile": "standard",
+        "target_type": "url",
+        "workflow_start_time": started,
+        "workflow_end_time": finished,
+        "statistics": {},
+        "findings": [],
+        "execution_results": execution_results,
+        "stage_results": [],
+        "collector_results": [],
+        "native_analyzer_results": [],
+        "vulnerability_intelligence_results": [],
+        "software_assessments": [],
+        "correlation_groups": [],
+        "correlated_findings": [],
+        "generated_files": [],
+        "evidence_references": [],
+        "raw_evidence_references": [],
+        "finding_evidence_references": [],
+        "correlated_evidence_references": [],
+        "warnings": [],
+        "errors": [],
+        "analysis_metadata": {},
+    }
+
+    report = _report_data_from_state(ctx)
+
+    assert report.tool_results == {
+        "httpx": "success",
+        "nmap": "skipped",
+        "nuclei": "failed",
+    }
+    assert len(report.execution_results) == 3
+
+
 def test_report_generator_renders_software_assessments(tmp_path):
     from reporting.models import ReportData, ScanStatistics
     from reporting.report_generator import ReportGenerator

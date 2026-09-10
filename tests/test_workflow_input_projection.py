@@ -23,6 +23,108 @@ def _observation(
     )
 
 
+def test_url_projection_filters_external_hosts_when_target_is_supplied():
+    tool = SimpleNamespace(
+        input_type="host_or_url_list",
+        capability="http_service_enumeration",
+    )
+
+    observations = [
+        _observation(
+            observation_type="URL",
+            url="http://example.com/login",
+        ),
+        _observation(
+            observation_type="ENDPOINT",
+            url="https://example.com/api/users",
+        ),
+        _observation(
+            observation_type="URL",
+            url="https://twitter.com/intent/tweet",
+        ),
+        _observation(
+            observation_type="URL",
+            url="https://google.com/",
+        ),
+        _observation(
+            observation_type="URL",
+            url="https://example.com.evil.test/",
+        ),
+    ]
+
+    projected = _project_observation_inputs(
+        tool,
+        observations,
+        "http://example.com:8080/assessment",
+    )
+
+    assert projected == (
+        "http://example.com/login",
+        "https://example.com/api/users",
+    )
+
+
+def test_url_projection_matches_ip_target_exactly_when_target_is_supplied():
+    tool = SimpleNamespace(
+        input_type="host_or_url_list",
+        capability="http_service_enumeration",
+    )
+
+    observations = [
+        _observation(
+            observation_type="URL",
+            url="http://127.0.0.1:3000/api",
+        ),
+        _observation(
+            observation_type="URL",
+            url="https://127.0.0.1:8443/login",
+        ),
+        _observation(
+            observation_type="URL",
+            url="http://127.0.0.2:3000/api",
+        ),
+    ]
+
+    projected = _project_observation_inputs(
+        tool,
+        observations,
+        "http://127.0.0.1:3000",
+    )
+
+    assert projected == (
+        "http://127.0.0.1:3000/api",
+        "https://127.0.0.1:8443/login",
+    )
+
+
+def test_url_projection_does_not_implicitly_authorize_subdomains():
+    tool = SimpleNamespace(
+        input_type="host_or_url_list",
+        capability="http_service_enumeration",
+    )
+
+    observations = [
+        _observation(
+            observation_type="URL",
+            url="https://example.com/",
+        ),
+        _observation(
+            observation_type="URL",
+            url="https://api.example.com/",
+        ),
+    ]
+
+    projected = _project_observation_inputs(
+        tool,
+        observations,
+        "https://example.com",
+    )
+
+    assert projected == (
+        "https://example.com/",
+    )
+
+
 def test_url_projection_uses_normalized_observation_url():
     tool = SimpleNamespace(
         input_type="url",

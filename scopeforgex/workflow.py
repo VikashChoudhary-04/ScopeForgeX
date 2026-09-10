@@ -690,9 +690,94 @@ def _absolute_http_url(
     return candidate
 
 
+def _target_hostname(
+    target: Any,
+) -> str | None:
+    """
+    Extract the normalized hostname from an assessment target.
+
+    ScopeForgeX currently models one explicit assessment target and has no
+    separate scope-expansion configuration. URL projection therefore uses
+    exact hostname matching and does not implicitly authorize subdomains.
+    """
+
+    if target is None:
+        return None
+
+    value = str(
+        target
+    ).strip()
+
+    if not value:
+        return None
+
+    try:
+        parsed = urlparse(
+            value
+        )
+    except ValueError:
+        return None
+
+    hostname = parsed.hostname
+
+    if hostname:
+        return hostname.lower().rstrip(".")
+
+    try:
+        parsed = urlparse(
+            f"//{value}"
+        )
+    except ValueError:
+        return None
+
+    hostname = parsed.hostname
+
+    if not hostname:
+        return None
+
+    return hostname.lower().rstrip(".")
+
+
+def _url_matches_assessment_target(
+    url: str,
+    target: Any,
+) -> bool:
+    """
+    Return True when a projected URL belongs to the assessment target host.
+
+    Matching is intentionally hostname-based:
+    - scheme may differ;
+    - port, path and query do not change host identity;
+    - hostnames are case-insensitive;
+    - subdomains are not implicitly authorized.
+    """
+
+    target_hostname = _target_hostname(
+        target
+    )
+
+    if target_hostname is None:
+        return False
+
+    try:
+        parsed = urlparse(
+            url
+        )
+    except ValueError:
+        return False
+
+    hostname = parsed.hostname
+
+    if not hostname:
+        return False
+
+    return hostname.lower().rstrip(".") == target_hostname
+
+
 def _project_observation_inputs(
     tool: Any,
     observations: Any,
+    assessment_target: Any = None,
 ) -> tuple[str, ...]:
     """
     Project previously collected observations into the receiving tool's
@@ -839,6 +924,19 @@ def _project_observation_inputs(
         if not candidate:
             continue
 
+        if (
+            assessment_target is not None
+            and input_type in {
+                "url",
+                "host_or_url_list",
+            }
+            and not _url_matches_assessment_target(
+                candidate,
+                assessment_target,
+            )
+        ):
+            continue
+
         if candidate in seen:
             continue
 
@@ -870,6 +968,9 @@ def _prepare_tool_input_data(
     projected = _project_observation_inputs(
         tool,
         executor.last_collector_observations,
+        ctx.get(
+            "target",
+        ),
     )
 
     if projected:
