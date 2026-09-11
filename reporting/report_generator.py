@@ -1702,6 +1702,90 @@ class ReportGenerator:
             self.report
         )
 
+        risk = next(
+            (
+                severity
+                for severity in _SEVERITIES
+                if counts.get(
+                    severity,
+                    0,
+                )
+            ),
+            "No Material Finding",
+        )
+
+        if findings:
+            executive_summary_text = (
+                "<p>"
+                f"The assessment identified <strong>{len(findings)}</strong> "
+                f"finding(s). The highest observed severity is "
+                f"<strong>{escape(risk)}</strong>."
+                "</p>"
+            )
+        else:
+            executive_summary_text = (
+                "<p>"
+                "No vulnerabilities or other security findings were "
+                "recorded by the automated assessment."
+                "</p>"
+            )
+
+        executive_summary_html = (
+            '<section class="summary-section">'
+            "<h2>Executive Summary</h2>"
+            f"{executive_summary_text}"
+            "<p>"
+            f"<strong>Target:</strong> "
+            f"<code>{escape(str(self.report.target))}</code><br>"
+            f"<strong>Target Type:</strong> "
+            f"<code>{escape(str(self.report.target_type))}</code><br>"
+            f"<strong>Profile:</strong> "
+            f"<code>{escape(str(self.report.profile))}</code><br>"
+            f"<strong>Run ID:</strong> "
+            f"<code>{escape(str(self.report.run_id))}</code><br>"
+            f"<strong>Duration:</strong> "
+            f"<code>{self.report.duration_seconds:.2f} seconds</code>"
+            "</p>"
+            "<h3>Risk Summary</h3>"
+            "<table>"
+            "<thead>"
+            "<tr><th>Severity</th><th>Findings</th></tr>"
+            "</thead>"
+            "<tbody>"
+            + "".join(
+                (
+                    "<tr>"
+                    f"<td>{escape(severity)}</td>"
+                    f"<td>{counts.get(severity, 0)}</td>"
+                    "</tr>"
+                )
+                for severity in _SEVERITIES
+            )
+            + "</tbody>"
+            "</table>"
+            "<h3>Vulnerability Intelligence</h3>"
+            "<table>"
+            "<tbody>"
+            f"<tr><th>Intelligence observations</th>"
+            f"<td>{intelligence['observations']}</td></tr>"
+            f"<tr><th>CVEs</th>"
+            f"<td>{intelligence['cves']}</td></tr>"
+            f"<tr><th>NVD matches</th>"
+            f"<td>{intelligence['nvd']}</td></tr>"
+            f"<tr><th>KEV matches</th>"
+            f"<td>{intelligence['kev']}</td></tr>"
+            f"<tr><th>Version-based matches</th>"
+            f"<td>{intelligence['version_matches']}</td></tr>"
+            "</tbody>"
+            "</table>"
+            '<div class="notice">'
+            "NVD/CVE intelligence represents potential exposure and "
+            "does not independently confirm target-specific "
+            "exploitability."
+            "</div>"
+            "</section>"
+        )
+
         card_items = [
             ("Findings", len(findings)),
             (
@@ -2098,7 +2182,8 @@ th {
             f'<div class="meta">{escape(subtitle)}</div>'
             "</header>"
             f'<section class="grid">{cards}</section>'
-            '<section class="summary-section">'
+            + executive_summary_html
+            + '<section class="summary-section">'
             "<h2>Assessment Context</h2>"
             "<table>"
             "<tbody>"

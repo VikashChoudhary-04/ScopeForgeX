@@ -318,6 +318,31 @@ def test_report_generator_renders_software_assessments(tmp_path):
         start_time="2026-09-09T00:00:00",
         end_time="2026-09-09T00:01:00",
         statistics=ScanStatistics(),
+        findings=[
+            {
+                "finding_id": "SF-TEST-EXECUTIVE-SUMMARY",
+                "title": "Test Informational Finding",
+                "category": "test",
+                "severity": "Informational",
+                "confidence": "High",
+                "target": "http://127.0.0.1:3000",
+                "host": "127.0.0.1",
+                "port": 3000,
+                "url": "http://127.0.0.1:3000",
+                "parameter": None,
+                "description": "Synthetic regression-test finding.",
+                "evidence": [],
+                "source_tool": "scopeforgex-test",
+                "detection_method": "regression_test",
+                "timestamp": "2026-09-09T00:00:30",
+                "cwe": None,
+                "cve": None,
+                "references": [],
+                "impact": "Regression-test only.",
+                "remediation": "Regression-test only.",
+                "status": "Open",
+            }
+        ],
         software_assessments=[
             SoftwareAssessment(
                 product="express",
@@ -356,6 +381,11 @@ def test_report_generator_renders_software_assessments(tmp_path):
     assert "4.22.1" in markdown
     assert "openjsf" in markdown
     assert "0" in markdown
+
+    assert "<h2>Executive Summary</h2>" in html
+    assert "The assessment identified" in html
+    assert "Target:" in html
+    assert "http://127.0.0.1:3000" in html
 
     assert "<h2>Software Assessments</h2>" in html
     assert "express" in html
