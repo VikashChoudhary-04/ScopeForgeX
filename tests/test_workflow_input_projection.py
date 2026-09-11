@@ -423,3 +423,41 @@ def test_non_javascript_url_consumer_keeps_generic_url_projection():
     ) == (
         "http://example.test/",
     )
+
+
+def test_jsluice_observation_types_are_attack_surface_inventory():
+    from scopeforgex.analysis.pipeline import AnalysisPipeline
+    from scopeforgex.collectors.base import CollectorObservation
+
+    pipeline = AnalysisPipeline()
+
+    inventory_cases = (
+        ("JS_ENDPOINT", "https://twitter.com/example", "twitter.com"),
+        ("JS_URL", "https://googleapis.com/example.js", "googleapis.com"),
+        ("API_REFERENCE", "https://example.com/api/docs", "example.com"),
+    )
+
+    for observation_type, url, host in inventory_cases:
+        observation = CollectorObservation(
+            observation_type=observation_type,
+            value=url,
+            target="http://127.0.0.1:3000",
+            host=host,
+            url=url,
+            source_tool="jsluice",
+            detection_method=f"JSLuice {observation_type}",
+            confidence="informational",
+        )
+
+        assert pipeline._is_attack_surface_observation(observation) is True
+
+    secret = CollectorObservation(
+        observation_type="SECRET_CANDIDATE",
+        value="potential-secret-value",
+        target="http://127.0.0.1:3000",
+        source_tool="jsluice",
+        detection_method="JSLuice SECRET_CANDIDATE",
+        confidence="informational",
+    )
+
+    assert pipeline._is_attack_surface_observation(secret) is False
