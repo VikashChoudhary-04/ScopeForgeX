@@ -988,6 +988,7 @@ def _create_tool_context(
     tool: Any,
     profile: dict[str, Any],
     sensitive_input_data: Mapping[str, Sequence[str]] | None = None,
+    execution_timeout: int = 600,
 ) -> ToolContext:
     """
     Build the typed ToolContext required by ToolAdapter implementations.
@@ -1083,6 +1084,13 @@ def _create_tool_context(
     ):
         configured_options = {}
 
+    effective_options = dict(
+        configured_options
+    )
+
+    if "tool_timeout" not in effective_options:
+        effective_options["tool_timeout"] = execution_timeout
+
     workflow_input = ctx.get(
         "input_data",
         (),
@@ -1167,9 +1175,7 @@ def _create_tool_context(
                 "standard",
             )
         ),
-        options=dict(
-            configured_options
-        ),
+        options=effective_options,
         input_data=input_data,
         sensitive_input_data=safe_sensitive_input_data,
     )
@@ -2564,16 +2570,21 @@ class WorkflowEngine:
         ctx: dict[str, Any],
         profile: dict[str, Any],
         sensitive_input_data: Mapping[str, Sequence[str]] | None = None,
+        execution_timeout: int | None = None,
     ) -> ToolContext:
         """
         Create the canonical ToolContext for a registered tool.
         """
+
+        if execution_timeout is None:
+            execution_timeout = self.executor.default_timeout
 
         return _create_tool_context(
             ctx,
             tool,
             profile,
             sensitive_input_data=sensitive_input_data,
+            execution_timeout=execution_timeout,
         )
 
     def _prepare_context(
@@ -2764,6 +2775,7 @@ class WorkflowEngine:
             ctx,
             profile,
             sensitive_input_data=sensitive_input_data,
+            execution_timeout=self.executor.default_timeout,
         )
 
         adapter = create_tool_adapter(
