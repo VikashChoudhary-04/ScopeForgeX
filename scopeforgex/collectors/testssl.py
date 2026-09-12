@@ -145,6 +145,30 @@ class TestSSLCollector(CollectorBase):
         parsed using conservative category and finding heuristics.
         """
 
+        # A non-successful testssl.sh execution must never be interpreted
+        # as a security observation stream. The original ExecutionResult
+        # remains the source of truth for the execution failure.
+        success = getattr(
+            execution_result,
+            "success",
+            None,
+        )
+        exit_code = getattr(
+            execution_result,
+            "exit_code",
+            None,
+        )
+
+        if success is False:
+            return []
+
+        if exit_code is not None:
+            try:
+                if int(exit_code) != 0:
+                    return []
+            except (TypeError, ValueError):
+                pass
+
         target = self._resolve_target(
             execution_result,
             ctx,
@@ -688,6 +712,48 @@ class TestSSLCollector(CollectorBase):
 
         return observations
 
+    @staticmethod
+    def _is_operational_output(
+        text: str,
+    ) -> bool:
+        """
+        Return True for testssl.sh diagnostic/help output.
+
+        testssl.sh may emit TLS-related terminology while reporting an
+        invocation error. Such text is not a security observation and must
+        not enter the finding stream.
+        """
+
+        normalized = text.strip().lower()
+
+        if not normalized:
+            return True
+
+        operational_markers = (
+            "unrecognized option",
+            "unknown option",
+            "invalid option",
+            "illegal option",
+            "usage:",
+            "testssl.sh [options",
+            "command not found",
+        )
+
+        if any(
+            marker in normalized
+            for marker in operational_markers
+        ):
+            return True
+
+        # A standalone help-section heading is not a TLS observation.
+        if normalized.endswith("configuration options:"):
+            return True
+
+        if normalized.startswith("error:"):
+            return True
+
+        return False
+
     def _parse_text_record(
         self,
         line: str,
@@ -702,6 +768,11 @@ class TestSSLCollector(CollectorBase):
         text = line.strip()
 
         if not text:
+            return []
+
+        if self._is_operational_output(
+            text
+        ):
             return []
 
         observation_type = self._classify_text(

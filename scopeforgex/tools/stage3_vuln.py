@@ -507,18 +507,6 @@ def _build_testssl_flags(
         "batch",
     ]
 
-    socket_timeout = options.get(
-        "socket_timeout"
-    )
-
-    if socket_timeout is not None:
-        flags.extend(
-            [
-                "--socket-timeout",
-                str(socket_timeout),
-            ]
-        )
-
     openssl_timeout = options.get(
         "openssl_timeout"
     )
@@ -1137,15 +1125,6 @@ class TestSSLTool(
         ),
         options=(
             ToolOption(
-                name="socket_timeout",
-                flag="--socket-timeout",
-                description="TCP socket connection timeout in seconds.",
-                option_type="integer",
-                default=10,
-                safe=True,
-                aggressive=False,
-            ),
-            ToolOption(
                 name="openssl_timeout",
                 flag="--openssl-timeout",
                 description="OpenSSL operation timeout in seconds.",
@@ -1171,7 +1150,6 @@ class TestSSLTool(
         )
 
         for option_name in (
-            "socket_timeout",
             "openssl_timeout",
         ):
             value = options.get(

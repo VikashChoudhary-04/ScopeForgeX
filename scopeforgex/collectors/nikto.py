@@ -727,15 +727,11 @@ class NiktoCollector(CollectorBase):
             if not stripped:
                 continue
 
-            urls = _HTTP_URL_PATTERN.findall(
-                stripped
-            )
-
-            if urls:
-                current_target = urls[0]
-
+            # Only establish the affected target from Nikto's explicit
+            # target context. URLs appearing in "See:" or other reference
+            # lines are documentation and must not become affected assets.
             host_match = re.search(
-                r"Target\s*:\s*(.+)",
+                r"Target(?:\s+Hostname)?\s*:\s*(.+)",
                 stripped,
                 re.IGNORECASE,
             )
@@ -744,6 +740,16 @@ class NiktoCollector(CollectorBase):
                 current_host = host_match.group(
                     1
                 ).strip()
+
+                target_value = current_host
+
+                if target_value.startswith(
+                    (
+                        "http://",
+                        "https://",
+                    )
+                ):
+                    current_target = target_value
 
             if not stripped.startswith(
                 "+"
@@ -1449,23 +1455,10 @@ class NiktoCollector(CollectorBase):
                 ):
                     return value
 
-        for value in record.values():
-
-            if not isinstance(
-                value,
-                str,
-            ):
-                continue
-
-            match = _HTTP_URL_PATTERN.search(
-                value
-            )
-
-            if match:
-                return match.group(
-                    0
-                )
-
+        # Do not scan arbitrary record values for URLs. Descriptions and
+        # raw Nikto text can contain documentation/reference URLs such as
+        # "See: https://developer.mozilla.org/...", which are not affected
+        # assets.
         return None
 
     @staticmethod

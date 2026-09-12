@@ -251,7 +251,6 @@ profiles:
       testssl:
         enabled: true
         options:
-          socket_timeout: 10
           openssl_timeout: 10
 
     validation:
@@ -418,7 +417,6 @@ profiles:
       testssl:
         enabled: true
         options:
-          socket_timeout: 10
           openssl_timeout: 10
 
     validation:
