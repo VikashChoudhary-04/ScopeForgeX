@@ -392,3 +392,107 @@ def test_report_generator_renders_software_assessments(tmp_path):
     assert "4.22.1" in html
     assert "openjsf" in html
     assert "0" in html
+
+
+def test_findings_report_is_concise_without_raw_evidence(tmp_path):
+    from reporting.models import ReportData, ScanStatistics
+    from reporting.report_generator import ReportGenerator
+
+    evidence = {
+        "request": {
+            "method": "GET",
+            "url": "http://127.0.0.1:3000/admin",
+        },
+        "response": {
+            "status_code": 200,
+            "headers": {
+                "X-Test-Evidence": "retained-in-canonical-report",
+            },
+            "body": "synthetic-evidence-payload",
+        },
+    }
+
+    report = ReportData(
+        target="http://127.0.0.1:3000",
+        profile="fast",
+        target_type="url",
+        start_time="2026-09-09T00:00:00",
+        end_time="2026-09-09T00:01:00",
+        statistics=ScanStatistics(),
+        findings=[
+            {
+                "finding_id": "SF-TEST-CONCISE-FINDING",
+                "title": "Synthetic Evidence Finding",
+                "category": "test",
+                "severity": "High",
+                "confidence": "High",
+                "target": "http://127.0.0.1:3000",
+                "host": "127.0.0.1",
+                "port": 3000,
+                "url": "http://127.0.0.1:3000/admin",
+                "parameter": None,
+                "description": "Synthetic finding description.",
+                "evidence": evidence,
+                "source_tool": "scopeforgex-test",
+                "detection_method": "regression_test",
+                "timestamp": "2026-09-09T00:00:30",
+                "cwe": "CWE-200",
+                "cve": None,
+                "references": ["https://example.test/reference"],
+                "impact": "Synthetic finding impact.",
+                "remediation": "Synthetic finding remediation.",
+                "status": "Open",
+            }
+        ],
+    )
+
+    generator = ReportGenerator(report)
+
+    professional_md = tmp_path / "professional.md"
+    professional_html = tmp_path / "professional.html"
+    findings_md = tmp_path / "findings.md"
+    findings_html = tmp_path / "findings.html"
+
+    generator.generate_professional_markdown(
+        str(professional_md)
+    )
+    generator.generate_professional_html(
+        str(professional_html)
+    )
+    generator.generate_findings_markdown(
+        str(findings_md)
+    )
+    generator.generate_findings_html(
+        str(findings_html)
+    )
+
+    professional_markdown = professional_md.read_text()
+    professional_html_text = professional_html.read_text()
+    findings_markdown = findings_md.read_text()
+    findings_html_text = findings_html.read_text()
+
+    evidence_json = '"X-Test-Evidence": "retained-in-canonical-report"'
+
+    assert evidence_json in professional_markdown
+    assert "synthetic-evidence-payload" in professional_markdown
+    assert "retained-in-canonical-report" in professional_html_text
+    assert "synthetic-evidence-payload" in professional_html_text
+
+    assert "SF-TEST-CONCISE-FINDING" in findings_markdown
+    assert "Synthetic Evidence Finding" in findings_markdown
+    assert "High" in findings_markdown
+    assert "Synthetic finding description." in findings_markdown
+    assert "Synthetic finding impact." in findings_markdown
+    assert "Synthetic finding remediation." in findings_markdown
+    assert "Finding-specific evidence is available" in findings_markdown
+    assert evidence_json not in findings_markdown
+    assert "synthetic-evidence-payload" not in findings_markdown
+
+    assert "SF-TEST-CONCISE-FINDING" in findings_html_text
+    assert "Synthetic Evidence Finding" in findings_html_text
+    assert "Synthetic finding description." in findings_html_text
+    assert "Synthetic finding impact." in findings_html_text
+    assert "Synthetic finding remediation." in findings_html_text
+    assert "Finding-specific evidence is available" in findings_html_text
+    assert evidence_json not in findings_html_text
+    assert "synthetic-evidence-payload" not in findings_html_text

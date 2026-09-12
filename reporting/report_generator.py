@@ -1306,7 +1306,7 @@ class ReportGenerator:
             ):
                 lines.extend(
                     [
-                        self._finding_block(
+                        self._findings_finding_block(
                             finding,
                             index,
                         ),
@@ -1475,6 +1475,192 @@ class ReportGenerator:
             + "\n",
             encoding="utf-8",
         )
+
+    def _findings_finding_block(
+        self,
+        finding: Any,
+        index: int,
+    ) -> str:
+        """Render a concise finding block for the Findings Report."""
+        data = _finding_data(
+            finding
+        )
+
+        finding_id = str(
+            data.get(
+                "finding_id",
+                data.get(
+                    "id",
+                    f"SF-{index:03d}",
+                ),
+            )
+        )
+
+        confidence = str(
+            data.get(
+                "confidence",
+                "Medium",
+            )
+        )
+
+        status = str(
+            data.get(
+                "status",
+                "Pending",
+            )
+        )
+
+        source = str(
+            data.get(
+                "source_tool",
+                "ScopeForgeX",
+            )
+        )
+
+        category = str(
+            data.get(
+                "category",
+                "security_issue",
+            )
+        )
+
+        lines = [
+            f"### {index}. {_title(finding)}",
+            "",
+            f"- **Finding ID:** `{finding_id}`",
+            f"- **Severity:** **{_severity(finding)}**",
+            f"- **Confidence:** {confidence}",
+            f"- **Status:** {status}",
+            f"- **Source:** `{source}`",
+            f"- **Category:** `{category}`",
+            f"- **Affected Asset:** `{_asset(finding)}`",
+        ]
+
+        parameter = data.get(
+            "parameter"
+        )
+
+        if parameter:
+            lines.append(
+                f"- **Parameter:** `{parameter}`"
+            )
+
+        cve = _cve(
+            finding
+        )
+
+        if cve:
+            lines.append(
+                f"- **CVE:** `{cve}`"
+            )
+
+        cvss_score = _cvss_score(
+            finding
+        )
+
+        if cvss_score is not None:
+            cvss_version = _cvss_version(
+                finding
+            )
+
+            cvss_label = (
+                f"CVSS {cvss_version}"
+                if cvss_version
+                else "CVSS"
+            )
+
+            lines.append(
+                f"- **{cvss_label}:** `{cvss_score}`"
+            )
+
+        cwes = _cwes(
+            finding
+        )
+
+        if cwes:
+            lines.append(
+                f"- **CWE:** {', '.join(cwes)}"
+            )
+
+        if _kev_status(
+            finding
+        ):
+            lines.append(
+                "- **CISA KEV:** **Yes**"
+            )
+
+        lines.append("")
+
+        for heading, key in (
+            ("Description", "description"),
+            ("Impact", "impact"),
+            ("Remediation", "remediation"),
+        ):
+            value = data.get(
+                key
+            )
+
+            if value:
+                lines.extend(
+                    [
+                        f"**{heading}:**",
+                        "",
+                        str(value),
+                        "",
+                    ]
+                )
+
+        detection = data.get(
+            "detection_method"
+        )
+
+        if detection:
+            lines.extend(
+                [
+                    "**Detection:**",
+                    "",
+                    str(detection),
+                    "",
+                ]
+            )
+
+        evidence = data.get(
+            "evidence"
+        )
+
+        if evidence:
+            lines.extend(
+                [
+                    "**Evidence:** Finding-specific evidence is available "
+                    "in the canonical assessment artifacts and raw evidence "
+                    "references.",
+                    "",
+                ]
+            )
+
+        references = data.get(
+            "references",
+            [],
+        ) or []
+
+        if references:
+            lines.extend(
+                [
+                    "**References:**",
+                    "",
+                ]
+            )
+
+            lines.extend(
+                f"- {reference}"
+                for reference in references
+            )
+
+            lines.append("")
+
+        return "\n".join(
+            lines
+        ).rstrip()
 
     def _html_finding(
         self,
@@ -1691,10 +1877,221 @@ class ReportGenerator:
             pieces
         )
 
+    def _findings_html_finding(
+        self,
+        finding: Any,
+        index: int,
+    ) -> str:
+        """Render a concise finding card for the Findings HTML report."""
+        data = _finding_data(
+            finding
+        )
+
+        finding_id = str(
+            data.get(
+                "finding_id",
+                data.get(
+                    "id",
+                    f"SF-{index:03d}",
+                ),
+            )
+        )
+
+        confidence = str(
+            data.get(
+                "confidence",
+                "Medium",
+            )
+        )
+
+        status = str(
+            data.get(
+                "status",
+                "Pending",
+            )
+        )
+
+        source = str(
+            data.get(
+                "source_tool",
+                "ScopeForgeX",
+            )
+        )
+
+        category = str(
+            data.get(
+                "category",
+                "security_issue",
+            )
+        )
+
+        pieces = [
+            '<article class="finding">',
+            (
+                '<div class="finding-header">'
+                '<div>'
+                '<div class="finding-id">'
+                f"{escape(finding_id)}"
+                "</div>"
+                f"<h2>{escape(_title(finding))}</h2>"
+                "</div>"
+                '<span class="badge">'
+                f"{escape(_severity(finding))}"
+                "</span>"
+                "</div>"
+            ),
+            (
+                '<div class="finding-meta">'
+                f"<span><strong>Confidence:</strong> "
+                f"{escape(confidence)}</span>"
+                f"<span><strong>Status:</strong> "
+                f"{escape(status)}</span>"
+                f"<span><strong>Source:</strong> "
+                f"{escape(source)}</span>"
+                f"<span><strong>Category:</strong> "
+                f"{escape(category)}</span>"
+                "</div>"
+            ),
+            (
+                "<p><strong>Affected Asset:</strong> "
+                f"<code>{escape(_asset(finding))}</code></p>"
+            ),
+        ]
+
+        parameter = data.get(
+            "parameter"
+        )
+
+        if parameter:
+            pieces.append(
+                "<p><strong>Parameter:</strong> "
+                f"<code>{escape(str(parameter))}</code></p>"
+            )
+
+        cve = _cve(
+            finding
+        )
+
+        if cve:
+            pieces.append(
+                "<p><strong>CVE:</strong> "
+                f"<code>{escape(cve)}</code></p>"
+            )
+
+        cvss_score = _cvss_score(
+            finding
+        )
+
+        if cvss_score is not None:
+            cvss_version = _cvss_version(
+                finding
+            )
+
+            cvss_label = (
+                f"CVSS {cvss_version}"
+                if cvss_version
+                else "CVSS"
+            )
+
+            pieces.append(
+                f"<p><strong>{escape(cvss_label)}:</strong> "
+                f"<code>{escape(str(cvss_score))}</code></p>"
+            )
+
+        cwes = _cwes(
+            finding
+        )
+
+        if cwes:
+            pieces.append(
+                "<p><strong>CWE:</strong> "
+                f"{escape(', '.join(cwes))}</p>"
+            )
+
+        if _kev_status(
+            finding
+        ):
+            pieces.append(
+                '<p><strong>CISA KEV:</strong> '
+                '<span class="kev">Yes</span></p>'
+            )
+
+        for heading, key in (
+            ("Description", "description"),
+            ("Impact", "impact"),
+            ("Remediation", "remediation"),
+        ):
+            value = data.get(
+                key
+            )
+
+            if value:
+                pieces.extend(
+                    [
+                        f"<h3>{escape(heading)}</h3>",
+                        f"<p>{escape(str(value))}</p>",
+                    ]
+                )
+
+        detection = data.get(
+            "detection_method"
+        )
+
+        if detection:
+            pieces.extend(
+                [
+                    "<h3>Detection</h3>",
+                    f"<p>{escape(str(detection))}</p>",
+                ]
+            )
+
+        evidence = data.get(
+            "evidence"
+        )
+
+        if evidence:
+            pieces.append(
+                "<p><strong>Evidence:</strong> "
+                "Finding-specific evidence is available in the "
+                "canonical assessment artifacts and raw evidence "
+                "references.</p>"
+            )
+
+        references = data.get(
+            "references",
+            [],
+        ) or []
+
+        if references:
+            pieces.extend(
+                [
+                    "<h3>References</h3>",
+                    "<ul>",
+                ]
+            )
+
+            pieces.extend(
+                f"<li>{escape(str(reference))}</li>"
+                for reference in references
+            )
+
+            pieces.append(
+                "</ul>"
+            )
+
+        pieces.append(
+            "</article>"
+        )
+
+        return "".join(
+            pieces
+        )
+
     def _html(
         self,
         title: str,
         subtitle: str,
+        findings_view: bool = False,
     ) -> str:
         findings = self._sorted_findings()
         counts = self._severity_counts()
@@ -1837,8 +2234,14 @@ class ReportGenerator:
         )
 
         if findings:
+            finding_renderer = (
+                self._findings_html_finding
+                if findings_view
+                else self._html_finding
+            )
+
             finding_html = "".join(
-                self._html_finding(
+                finding_renderer(
                     finding,
                     index,
                 )
@@ -2438,6 +2841,7 @@ th {
                     f"{self.report.profile} · "
                     "findings-oriented view"
                 ),
+                findings_view=True,
             ),
             encoding="utf-8",
         )
