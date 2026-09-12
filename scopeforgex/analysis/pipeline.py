@@ -120,6 +120,7 @@ ATTACK_SURFACE_OBSERVATION_TYPES: frozenset[str] = frozenset(
         "API_ENDPOINT",
         "API_ROUTE",
         "ROUTE",
+        "JWT_CANDIDATE",
         "PARAMETER",
         "RESOURCE",
         "DNS",

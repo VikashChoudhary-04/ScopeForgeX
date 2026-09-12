@@ -987,6 +987,7 @@ def _create_tool_context(
     ctx: dict[str, Any],
     tool: Any,
     profile: dict[str, Any],
+    sensitive_input_data: Mapping[str, Sequence[str]] | None = None,
 ) -> ToolContext:
     """
     Build the typed ToolContext required by ToolAdapter implementations.
@@ -1123,6 +1124,40 @@ def _create_tool_context(
 
         input_data = ()
 
+    safe_sensitive_input_data: dict[
+        str,
+        tuple[str, ...],
+    ] = {}
+
+    if sensitive_input_data:
+        for key, values in sensitive_input_data.items():
+            normalized_key = str(
+                key
+            ).strip()
+
+            if not normalized_key:
+                continue
+
+            if isinstance(
+                values,
+                str,
+            ):
+                values = (
+                    values,
+                )
+
+            normalized_values = tuple(
+                str(value).strip()
+                for value in values
+                if value is not None
+                and str(value).strip()
+            )
+
+            if normalized_values:
+                safe_sensitive_input_data[
+                    normalized_key
+                ] = normalized_values
+
     return ToolContext(
         target=target,
         output_dir=output_dir,
@@ -1136,6 +1171,7 @@ def _create_tool_context(
             configured_options
         ),
         input_data=input_data,
+        sensitive_input_data=safe_sensitive_input_data,
     )
 
 
@@ -2527,6 +2563,7 @@ class WorkflowEngine:
         tool: Any,
         ctx: dict[str, Any],
         profile: dict[str, Any],
+        sensitive_input_data: Mapping[str, Sequence[str]] | None = None,
     ) -> ToolContext:
         """
         Create the canonical ToolContext for a registered tool.
@@ -2536,6 +2573,7 @@ class WorkflowEngine:
             ctx,
             tool,
             profile,
+            sensitive_input_data=sensitive_input_data,
         )
 
     def _prepare_context(
@@ -2706,16 +2744,37 @@ class WorkflowEngine:
                 f"Tool '{name}' has no canonical capability metadata."
             )
 
+        sensitive_input_data: dict[
+            str,
+            tuple[str, ...],
+        ] = {}
+
+        if name == "jwt_tool":
+            jwt_inputs = self.executor.get_sensitive_inputs(
+                "jwt"
+            )
+
+            if jwt_inputs:
+                sensitive_input_data["jwt"] = (
+                    jwt_inputs
+                )
+
         tool_context = self._create_tool_context(
             tool,
             ctx,
             profile,
+            sensitive_input_data=sensitive_input_data,
         )
 
         adapter = create_tool_adapter(
             name,
             context=tool_context,
         )
+
+        if name == "jwt_tool":
+            self.executor.clear_sensitive_inputs(
+                "jwt"
+            )
 
         execution_context = self._build_tool_context(
             ctx,

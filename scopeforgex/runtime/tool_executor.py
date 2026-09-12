@@ -254,6 +254,12 @@ class ToolExecutor:
         self._observations: list[Any] = []
         self._last_collector_observations: list[Any] = []
 
+        # Transient sensitive validation inputs are assessment-local and
+        # deliberately excluded from RuntimeState/result serialization.
+        # JWT values are stored here only long enough to construct the
+        # receiving ToolContext.
+        self._sensitive_inputs: dict[str, tuple[str, ...]] = {}
+
         self._collector_results: list[Any] = []
 
         self._native_analyzer_results: list[Any] = []
@@ -683,8 +689,150 @@ class ToolExecutor:
         )
 
     # ------------------------------------------------------------------
+    # Transient Sensitive Inputs
+    # ------------------------------------------------------------------
+
+    def set_sensitive_inputs(
+        self,
+        name: str,
+        values: list[str] | tuple[str, ...],
+    ) -> None:
+        """
+        Store assessment-local sensitive inputs outside persisted state.
+
+        Values are normalized into an immutable tuple. This store has no
+        serializer and must never be copied into RuntimeState or workflow ctx.
+        """
+        key = str(name).strip()
+
+        if not key:
+            raise ValueError(
+                "Sensitive input name must not be empty."
+            )
+
+        normalized = tuple(
+            str(value)
+            for value in values
+            if str(value).strip()
+        )
+
+        if normalized:
+            self._sensitive_inputs[key] = normalized
+        else:
+            self._sensitive_inputs.pop(key, None)
+
+    def get_sensitive_inputs(
+        self,
+        name: str,
+    ) -> tuple[str, ...]:
+        """
+        Return a snapshot of transient sensitive inputs.
+        """
+        key = str(name).strip()
+
+        if not key:
+            return ()
+
+        return tuple(
+            self._sensitive_inputs.get(
+                key,
+                (),
+            )
+        )
+
+    def clear_sensitive_inputs(
+        self,
+        name: str | None = None,
+    ) -> None:
+        """
+        Explicitly clear transient sensitive inputs.
+
+        If name is omitted, all transient sensitive inputs for this executor
+        are cleared.
+        """
+        if name is None:
+            self._sensitive_inputs.clear()
+            return
+
+        key = str(name).strip()
+
+        if key:
+            self._sensitive_inputs.pop(
+                key,
+                None,
+            )
+
+    # ------------------------------------------------------------------
     # Collector Helpers
     # ------------------------------------------------------------------
+
+    def _handoff_sensitive_inputs(
+        self,
+        collector: Any,
+        result: ExecutionResult,
+    ) -> None:
+        """
+        Transfer transient sensitive inputs from a collector into the
+        executor-owned sensitive store.
+
+        Sensitive values never enter CollectorResult, RuntimeState,
+        workflow context, or report serialization.
+
+        Collector-side sensitive state is cleared after the handoff attempt.
+
+        Collector implementations that do not expose the transient interface
+        are left unchanged.
+        """
+
+        get_sensitive_inputs = getattr(
+            collector,
+            "get_sensitive_inputs",
+            None,
+        )
+
+        clear_sensitive_inputs = getattr(
+            collector,
+            "clear_sensitive_inputs",
+            None,
+        )
+
+        if not callable(
+            get_sensitive_inputs
+        ):
+            return
+
+        try:
+            jwt_inputs = get_sensitive_inputs(
+                "jwt"
+            )
+
+            if jwt_inputs:
+                self.set_sensitive_inputs(
+                    "jwt",
+                    jwt_inputs,
+                )
+
+        except Exception as exc:
+            result.add_warning(
+                (
+                    "Transient sensitive-input handoff failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+            )
+
+        finally:
+            if callable(
+                clear_sensitive_inputs
+            ):
+                try:
+                    clear_sensitive_inputs()
+                except Exception as exc:
+                    result.add_warning(
+                        (
+                            "Transient sensitive-input cleanup failed: "
+                            f"{type(exc).__name__}: {exc}"
+                        )
+                    )
 
     @staticmethod
     def _collector_observations(
@@ -2174,6 +2322,8 @@ class ToolExecutor:
             ↓
         Collector
             ↓
+        Transient Sensitive Input Handoff
+            ↓
         Collector observations
             ↓
         Native analyzers
@@ -2185,6 +2335,10 @@ class ToolExecutor:
         Final Findings / Correlation Groups
 
         This method never launches the external tool.
+
+        Transient sensitive inputs are transferred from the collector into
+        the executor-owned non-serialized sensitive store before the
+        CollectorResult is retained or exposed to downstream analysis.
         """
 
         execution_context = dict(
@@ -2250,6 +2404,17 @@ class ToolExecutor:
             )
 
             return result
+
+        # Transfer transient sensitive validation material before the
+        # CollectorResult is retained or exposed to downstream processing.
+        #
+        # The collector-side state is cleared by the handoff helper, while
+        # the executor-owned copy remains available for the receiving
+        # validation tool (for example JWTTool).
+        self._handoff_sensitive_inputs(
+            collector,
+            result,
+        )
 
         # Every execution reaching the collector boundary gets exactly one
         # collector result entry.

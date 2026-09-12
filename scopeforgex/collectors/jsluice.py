@@ -41,6 +41,8 @@ Design Principles
 - Structured records are normalized without discarding useful evidence.
 - URLs and endpoint references are classified deterministically.
 - Potential secrets are observations, not automatically confirmed credentials.
+- JWT candidates are retained only through a transient sensitive-input channel.
+- Raw JWT authentication material never enters CollectorObservation evidence.
 - API references are represented separately from generic JavaScript URLs.
 - The collector does not assign final severity or risk.
 - Collection failures do not destroy the original execution result.
@@ -50,11 +52,13 @@ v1.0.0
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlparse
 
+from scopeforgex.analysis.jwt import is_jwt
 from scopeforgex.collectors.base import (
     CollectorBase,
     CollectorObservation,
@@ -72,6 +76,7 @@ TOOL_NAME = "jsluice"
 OBSERVATION_JS_ENDPOINT = "JS_ENDPOINT"
 OBSERVATION_JS_URL = "JS_URL"
 OBSERVATION_SECRET_CANDIDATE = "SECRET_CANDIDATE"
+OBSERVATION_JWT_CANDIDATE = "JWT_CANDIDATE"
 OBSERVATION_API_REFERENCE = "API_REFERENCE"
 
 
@@ -88,6 +93,10 @@ class JSLuiceCollector(CollectorBase):
     JSLuice output can vary depending on the selected analysis mode. The
     collector therefore accepts both plain-text values and JSONL-style
     records containing URLs, endpoints, secrets or API references.
+
+    JWT candidates are additionally retained in a private transient channel
+    so an authorized validation tool can consume them without placing the
+    raw token into normal collector/report serialization.
     """
 
     name = "jsluice"
@@ -103,6 +112,63 @@ class JSLuiceCollector(CollectorBase):
         "raw_file",
         "text",
     )
+
+    ###########################################################################
+    # Initialization / Transient Sensitive State
+    ###########################################################################
+
+    def __init__(
+        self,
+    ) -> None:
+        """
+        Initialize the collector and its transient sensitive-input store.
+
+        Raw JWT candidates are intentionally kept outside CollectorObservation
+        and CollectorResult. The transient store exists only for the current
+        collector lifecycle and is consumed by ToolExecutor at the collector
+        boundary.
+        """
+
+        super().__init__()
+
+        self._sensitive_inputs: dict[str, list[str]] = {
+            "jwt": [],
+        }
+
+    def get_sensitive_inputs(
+        self,
+        name: str,
+    ) -> tuple[str, ...]:
+        """
+        Return transient sensitive inputs produced by this collector.
+
+        Sensitive values are never returned through CollectorResult or normal
+        observation serialization.
+        """
+
+        values = self._sensitive_inputs.get(
+            str(name).strip(),
+            [],
+        )
+
+        return tuple(
+            value
+            for value in values
+            if isinstance(
+                value,
+                str,
+            ) and value
+        )
+
+    def clear_sensitive_inputs(
+        self,
+    ) -> None:
+        """
+        Clear all transient sensitive inputs held by this collector.
+        """
+
+        for values in self._sensitive_inputs.values():
+            values.clear()
 
     ###########################################################################
     # Input Validation
@@ -197,6 +263,27 @@ class JSLuiceCollector(CollectorBase):
                         key
                     )
 
+                    observation_evidence = evidence
+
+                    if (
+                        observation_type
+                        == OBSERVATION_JWT_CANDIDATE
+                    ):
+                        raw_jwt = parsed.get(
+                            "secret"
+                        )
+
+                        if isinstance(
+                            raw_jwt,
+                            str,
+                        ):
+                            observation_evidence = (
+                                self._sanitize_jwt_evidence(
+                                    evidence,
+                                    raw_jwt.strip(),
+                                )
+                            )
+
                     observation = (
                         self._build_observation(
                             observation_type=(
@@ -205,7 +292,7 @@ class JSLuiceCollector(CollectorBase):
                             value=value,
                             target=target,
                             url=url,
-                            evidence=evidence,
+                            evidence=observation_evidence,
                             source=source,
                             metadata=item.get(
                                 "metadata",
@@ -651,29 +738,78 @@ class JSLuiceCollector(CollectorBase):
             str,
         ) and secret:
 
-            observations.append(
-                {
-                    "observation_type": (
-                        OBSERVATION_SECRET_CANDIDATE
-                    ),
-                    "value": secret,
-                    "url": (
-                        self._normalize_url(
-                            url
-                        )
-                        if isinstance(
-                            url,
-                            str,
-                        )
-                        else None
-                    ),
-                    "metadata": {
-                        "classification": (
-                            "potential_secret"
+            normalized_secret = secret.strip()
+
+            if is_jwt(
+                normalized_secret
+            ):
+                # Keep the raw JWT only in the collector's transient
+                # sensitive-input channel. It must never be placed into
+                # CollectorObservation or CollectorResult fields.
+                if normalized_secret not in self._sensitive_inputs["jwt"]:
+                    self._sensitive_inputs["jwt"].append(
+                        normalized_secret
+                    )
+
+                candidate_id = hashlib.sha256(
+                    normalized_secret.encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+
+                observations.append(
+                    {
+                        "observation_type": (
+                            OBSERVATION_JWT_CANDIDATE
                         ),
-                    },
-                }
-            )
+                        # JWT values are sensitive authentication material.
+                        # The raw token must never enter the ordinary
+                        # CollectorObservation serialization path.
+                        "value": "<JWT_REDACTED>",
+                        "url": (
+                            self._normalize_url(
+                                url
+                            )
+                            if isinstance(
+                                url,
+                                str,
+                            )
+                            else None
+                        ),
+                        "metadata": {
+                            "classification": (
+                                "jwt_candidate"
+                            ),
+                            "sensitive": True,
+                            "candidate_id": candidate_id,
+                        },
+                    }
+                )
+
+            else:
+                observations.append(
+                    {
+                        "observation_type": (
+                            OBSERVATION_SECRET_CANDIDATE
+                        ),
+                        "value": normalized_secret,
+                        "url": (
+                            self._normalize_url(
+                                url
+                            )
+                            if isinstance(
+                                url,
+                                str,
+                            )
+                            else None
+                        ),
+                        "metadata": {
+                            "classification": (
+                                "potential_secret"
+                            ),
+                        },
+                    }
+                )
 
         if isinstance(
             api_reference,
@@ -711,6 +847,78 @@ class JSLuiceCollector(CollectorBase):
 
         return observations
 
+    @staticmethod
+    def _sanitize_jwt_evidence(
+        evidence: Any,
+        raw_jwt: str,
+    ) -> Any:
+        """
+        Return report-safe evidence for a JWT candidate.
+
+        JSLuice records are normally preserved as collector evidence. A
+        genuine JWT is different: the raw authentication material must never
+        enter CollectorObservation/CollectorResult serialization.
+
+        Only the exact classified JWT value is replaced. Other evidence
+        remains unchanged.
+        """
+
+        if not raw_jwt:
+            return evidence
+
+        def replace(value: Any) -> Any:
+            if isinstance(
+                value,
+                str,
+            ):
+                return (
+                    "<JWT_REDACTED>"
+                    if value == raw_jwt
+                    else value
+                )
+
+            if isinstance(
+                value,
+                Mapping,
+            ):
+                return {
+                    key: replace(item)
+                    for key, item in value.items()
+                }
+
+            if isinstance(
+                value,
+                list,
+            ):
+                return [
+                    replace(item)
+                    for item in value
+                ]
+
+            if isinstance(
+                value,
+                tuple,
+            ):
+                return tuple(
+                    replace(item)
+                    for item in value
+                )
+
+            if isinstance(
+                value,
+                set,
+            ):
+                return {
+                    replace(item)
+                    for item in value
+                }
+
+            return value
+
+        return replace(
+            evidence
+        )
+
     def _build_observation(
         self,
         *,
@@ -743,6 +951,9 @@ class JSLuiceCollector(CollectorBase):
             ),
             OBSERVATION_SECRET_CANDIDATE: (
                 "JSLuice potential secret detection"
+            ),
+            OBSERVATION_JWT_CANDIDATE: (
+                "JSLuice JWT candidate detection"
             ),
             OBSERVATION_API_REFERENCE: (
                 "JSLuice API reference discovery"
@@ -861,7 +1072,7 @@ class JSLuiceCollector(CollectorBase):
         record: Mapping[str, Any],
     ) -> str | None:
         """
-        Extract a potential secret from a structured record.
+        Extract a potential secret from a structured JSLuice record.
 
         The value is preserved as supplied by the parser. This collector does
         not attempt to determine whether a candidate is actually valid.

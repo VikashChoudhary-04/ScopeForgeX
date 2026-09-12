@@ -91,6 +91,10 @@ class ToolContext:
     input_data: Sequence[str] = field(
         default_factory=tuple
     )
+    sensitive_input_data: Mapping[str, Sequence[str]] = field(
+        default_factory=dict,
+        repr=False,
+    )
 
 
 ###############################################################################

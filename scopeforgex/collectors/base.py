@@ -568,6 +568,34 @@ class CollectorBase(ABC):
             ),
         }
 
+    def get_sensitive_inputs(
+        self,
+        name: str,
+    ) -> tuple[str, ...]:
+        """
+        Return transient sensitive inputs produced by this collector.
+
+        Sensitive inputs are intentionally kept outside CollectorResult and
+        therefore outside normal collector serialization/reporting.
+
+        The default collector implementation exposes no sensitive inputs.
+        Tool-specific collectors may override this method when they discover
+        sensitive validation material.
+        """
+
+        return ()
+
+    def clear_sensitive_inputs(
+        self,
+    ) -> None:
+        """
+        Clear transient sensitive inputs held by this collector.
+
+        The default implementation has no sensitive state to clear.
+        """
+
+        return None
+
     # ------------------------------------------------------------------
     # Input Validation
     # ------------------------------------------------------------------
