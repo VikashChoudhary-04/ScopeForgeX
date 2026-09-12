@@ -167,7 +167,7 @@ profiles:
           service_detection: true
           os_detection: false
           timing: T3
-          nse_profile: safe
+          nse_profile: default
 
       dig:
         enabled: true

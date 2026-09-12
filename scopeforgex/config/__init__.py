@@ -712,7 +712,7 @@ def build_fast_profile() -> AssessmentProfile:
                     "service_detection": True,
                     "os_detection": False,
                     "timing": "T3",
-                    "nse_profile": "safe",
+                    "nse_profile": "default",
                 }
             ),
             "dig": _tool(
@@ -852,7 +852,7 @@ def build_standard_profile() -> AssessmentProfile:
                     "service_detection": True,
                     "os_detection": False,
                     "timing": "T3",
-                    "nse_profile": "safe",
+                    "nse_profile": "default",
                 }
             ),
             "dig": _tool(
