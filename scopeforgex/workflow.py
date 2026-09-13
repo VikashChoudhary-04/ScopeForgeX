@@ -82,6 +82,7 @@ ScopeForgeX 3.0.0
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import time
 from importlib.resources import as_file, files
@@ -716,12 +717,32 @@ def _target_hostname(
             value
         )
     except ValueError:
-        return None
+        parsed = None
 
-    hostname = parsed.hostname
+    if parsed is not None:
+        hostname = parsed.hostname
 
-    if hostname:
-        return hostname.lower().rstrip(".")
+        if hostname:
+            return hostname.lower().rstrip(".")
+
+    # ``urlparse`` does not reliably expose bare IPv6 literals as hostnames.
+    # Recognize them explicitly so target applicability checks can distinguish
+    # IPv6 address targets from DNS hostnames.
+    ipv6_candidate = value
+
+    if ipv6_candidate.startswith("[") and "]" in ipv6_candidate:
+        ipv6_candidate = ipv6_candidate[
+            1:ipv6_candidate.index("]")
+        ]
+
+    try:
+        ipaddress.IPv6Address(
+            ipv6_candidate
+        )
+    except ValueError:
+        pass
+    else:
+        return ipv6_candidate.lower()
 
     try:
         parsed = urlparse(
@@ -1073,6 +1094,44 @@ def _conditional_tool_skip_result(
             ),
         )
 
+    if tool_name == "dig":
+        target_hostname = _target_hostname(
+            ctx.get(
+                "target",
+            )
+        )
+
+        if target_hostname is None:
+            return ExecutionResult.skipped(
+                tool=tool_name,
+                capability=capability or "unknown",
+                reason=(
+                    f"{tool_name} skipped: "
+                    "no applicable DNS hostname target was identified."
+                ),
+            )
+
+        try:
+            ipaddress.ip_address(
+                target_hostname
+            )
+
+        except ValueError:
+            pass
+
+        else:
+            return ExecutionResult.skipped(
+                tool=tool_name,
+                capability=capability or "unknown",
+                reason=(
+                    f"{tool_name} skipped: "
+                    "DNS reconnaissance is not applicable "
+                    "to an IP-literal target."
+                ),
+            )
+
+        return None
+
     if input_type in {
         "url",
         "host",
@@ -1080,7 +1139,7 @@ def _conditional_tool_skip_result(
     }:
         projected = _project_observation_inputs(
             tool,
-            executor.last_collector_observations,
+            executor.observations,
             ctx.get(
                 "target",
             ),
@@ -1128,7 +1187,7 @@ def _prepare_tool_input_data(
 
     projected = _project_observation_inputs(
         tool,
-        executor.last_collector_observations,
+        executor.observations,
         ctx.get(
             "target",
         ),

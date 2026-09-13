@@ -38,9 +38,13 @@ class FakeExecutor:
     def __init__(
         self,
         observations=(),
+        last_collector_observations=None,
         jwt_inputs=(),
     ):
-        self.last_collector_observations = observations
+        self.observations = tuple(observations)
+        if last_collector_observations is None:
+            last_collector_observations = observations
+        self.last_collector_observations = tuple(last_collector_observations)
         self._jwt_inputs = tuple(jwt_inputs)
 
     def get_sensitive_inputs(
@@ -217,6 +221,133 @@ def test_non_conditional_tool_is_not_skipped():
         tool,
         {"target": "https://example.test"},
         profile,
+        executor,
+    )
+
+    assert result is None
+
+
+def test_sqlmap_uses_assessment_wide_candidate_not_only_latest_collector():
+    tool = _tool(
+        "sqlmap",
+        "url",
+        "sql_injection_validation",
+    )
+
+    observation = SimpleNamespace(
+        observation_type="ENDPOINT",
+        value="https://example.test/login?id=1",
+        url="https://example.test/login?id=1",
+        resource_type=None,
+    )
+
+    executor = FakeExecutor(
+        observations=(observation,),
+        last_collector_observations=(),
+    )
+
+    result = _conditional_tool_skip_result(
+        tool,
+        {"target": "https://example.test"},
+        _profile("sqlmap"),
+        executor,
+    )
+
+    assert result is None
+
+
+def test_target_hostname_recognizes_ipv6_literal():
+    from scopeforgex.workflow import _target_hostname
+
+    assert _target_hostname("::1") == "::1"
+    assert _target_hostname("[::1]") == "::1"
+
+
+def test_target_hostname_recognizes_bracketed_ipv6_with_port():
+    from scopeforgex.workflow import _target_hostname
+
+    assert _target_hostname("[::1]:3000") == "::1"
+    assert _target_hostname("http://[::1]:3000") == "::1"
+
+
+def test_dig_skipped_for_ipv4_literal_target():
+    tool = _tool(
+        "dig",
+        "host",
+        "dns_reconnaissance",
+    )
+
+    executor = FakeExecutor()
+
+    result = _conditional_tool_skip_result(
+        tool,
+        {"target": "127.0.0.1"},
+        _profile("dig"),
+        executor,
+    )
+
+    assert result is not None
+    assert result.status == "skipped"
+    assert result.success is False
+    assert result.errors == []
+    assert "IP-literal target" in result.metadata["skip_reason"]
+
+
+def test_dig_skipped_for_ipv4_url_target():
+    tool = _tool(
+        "dig",
+        "host",
+        "dns_reconnaissance",
+    )
+
+    executor = FakeExecutor()
+
+    result = _conditional_tool_skip_result(
+        tool,
+        {"target": "http://127.0.0.1:3000"},
+        _profile("dig"),
+        executor,
+    )
+
+    assert result is not None
+    assert result.status == "skipped"
+    assert "IP-literal target" in result.metadata["skip_reason"]
+
+
+def test_dig_skipped_for_ipv6_literal_target():
+    tool = _tool(
+        "dig",
+        "host",
+        "dns_reconnaissance",
+    )
+
+    executor = FakeExecutor()
+
+    result = _conditional_tool_skip_result(
+        tool,
+        {"target": "::1"},
+        _profile("dig"),
+        executor,
+    )
+
+    assert result is not None
+    assert result.status == "skipped"
+    assert "IP-literal target" in result.metadata["skip_reason"]
+
+
+def test_dig_proceeds_for_hostname_target():
+    tool = _tool(
+        "dig",
+        "host",
+        "dns_reconnaissance",
+    )
+
+    executor = FakeExecutor()
+
+    result = _conditional_tool_skip_result(
+        tool,
+        {"target": "example.com"},
+        _profile("dig"),
         executor,
     )
 
