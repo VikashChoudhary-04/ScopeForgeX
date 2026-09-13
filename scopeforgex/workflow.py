@@ -948,6 +948,167 @@ def _project_observation_inputs(
     )
 
 
+def _tool_profile_configuration(
+    profile: dict[str, Any],
+    tool: Any,
+) -> dict[str, Any]:
+    """
+    Return the active profile configuration for one registry tool.
+    """
+
+    phase_sections = _phase_sections()
+
+    section_name = phase_sections.get(
+        _tool_phase(
+            tool
+        )
+    )
+
+    if section_name is None:
+        return {}
+
+    section = profile.get(
+        section_name,
+        {},
+    )
+
+    if not isinstance(
+        section,
+        dict,
+    ):
+        return {}
+
+    tool_name = _tool_name(
+        tool
+    )
+
+    lookup_name = (
+        "testssl"
+        if tool_name == "testssl.sh"
+        else tool_name
+    )
+
+    configuration = section.get(
+        lookup_name
+    )
+
+    if not isinstance(
+        configuration,
+        dict,
+    ):
+        return {}
+
+    return dict(
+        configuration
+    )
+
+
+def _conditional_tool_skip_result(
+    tool: Any,
+    ctx: dict[str, Any],
+    profile: dict[str, Any],
+    executor: ToolExecutor,
+) -> ExecutionResult | None:
+    """
+    Return a canonical skipped result when a conditional tool has no
+    applicable candidate.
+
+    Conditional eligibility is evaluated immediately before execution,
+    after observation projection has been prepared.
+
+    URL-based tools use the same canonical observation projection already
+    used by the workflow. JWT validation uses the executor's protected
+    JWT-input channel.
+
+    Returns:
+        ExecutionResult.skipped(...) when the tool is conditional and has
+        no applicable input; otherwise None.
+    """
+
+    configuration = _tool_profile_configuration(
+        profile,
+        tool,
+    )
+
+    if str(
+        configuration.get(
+            "mode",
+            "",
+        )
+        or ""
+    ).strip().lower() != "conditional":
+        return None
+
+    tool_name = _tool_name(
+        tool
+    )
+
+    capability = _tool_capability(
+        tool
+    )
+
+    input_type = str(
+        getattr(
+            tool,
+            "input_type",
+            "",
+        )
+        or ""
+    ).strip().lower()
+
+    if input_type == "jwt":
+        jwt_inputs = executor.get_sensitive_inputs(
+            "jwt"
+        )
+
+        if jwt_inputs:
+            return None
+
+        return ExecutionResult.skipped(
+            tool=tool_name,
+            capability=capability or "unknown",
+            reason=(
+                f"{tool_name} skipped: "
+                "no applicable JWT candidate was identified."
+            ),
+        )
+
+    if input_type in {
+        "url",
+        "host",
+        "host_or_url_list",
+    }:
+        projected = _project_observation_inputs(
+            tool,
+            executor.last_collector_observations,
+            ctx.get(
+                "target",
+            ),
+        )
+
+        if projected:
+            return None
+
+        return ExecutionResult.skipped(
+            tool=tool_name,
+            capability=capability or "unknown",
+            reason=(
+                f"{tool_name} skipped: "
+                f"no applicable {input_type} candidate was identified."
+            ),
+        )
+
+    return ExecutionResult.skipped(
+        tool=tool_name,
+        capability=capability or "unknown",
+        reason=(
+            f"{tool_name} skipped: "
+            f"conditional input type '{input_type or 'unknown'}' "
+            "has no applicable candidate."
+        ),
+    )
+
+
 def _prepare_tool_input_data(
     ctx: dict[str, Any],
     tool: Any,
@@ -2742,6 +2903,16 @@ class WorkflowEngine:
             tool,
             self.executor,
         )
+
+        conditional_skip = _conditional_tool_skip_result(
+            tool,
+            ctx,
+            profile,
+            self.executor,
+        )
+
+        if conditional_skip is not None:
+            return conditional_skip
 
         if not name:
 
