@@ -2056,21 +2056,12 @@ class ToolExecutor:
         return data
 
     @staticmethod
-    def _serialize_findings(
-        analysis_result: Any,
+    def _serialize_findings_from_list(
+        findings: Iterable[Any],
     ) -> list[Any]:
         """
-        Serialize final findings from an analysis result.
+        Serialize a supplied finding collection.
         """
-
-        if analysis_result is None:
-            return []
-
-        findings = getattr(
-            analysis_result,
-            "findings",
-            [],
-        )
 
         serialized: list[Any] = []
 
@@ -2109,6 +2100,26 @@ class ToolExecutor:
                 )
 
         return serialized
+
+    @staticmethod
+    def _serialize_findings(
+        analysis_result: Any,
+    ) -> list[Any]:
+        """
+        Serialize final findings from an analysis result.
+        """
+
+        if analysis_result is None:
+            return []
+
+        return ToolExecutor._serialize_findings_from_list(
+            getattr(
+                analysis_result,
+                "findings",
+                [],
+            )
+            or []
+        )
 
     @staticmethod
     def _serialize_correlation_groups(
@@ -2165,22 +2176,121 @@ class ToolExecutor:
 
         return serialized
 
+    def _execution_findings(
+        self,
+        observations: list[Any],
+        analysis_result: Any | None,
+    ) -> list[Any]:
+        """
+        Select canonical findings attributable to the current execution.
+
+        The analysis pipeline intentionally operates over the complete
+        assessment observation set so cross-tool deduplication and
+        correlation remain possible. ``ExecutionResult.findings`` is
+        different: it represents only the findings attributable to the
+        current execution.
+
+        Attribution is therefore based on the same semantic finding identity
+        used by the canonical Finding model rather than source-tool names or
+        finding IDs. This preserves cross-tool deduplication: when multiple
+        executions produce the same semantic finding, each execution can
+        reference the same canonical finding without inheriting unrelated
+        findings from earlier executions.
+
+        Attack-surface observations are excluded using the same classifier
+        used by ``AnalysisPipeline.process()``.
+        """
+
+        if (
+            analysis_result is None
+            or not observations
+        ):
+            return []
+
+        final_findings = list(
+            getattr(
+                analysis_result,
+                "findings",
+                [],
+            )
+            or []
+        )
+
+        if not final_findings:
+            return []
+
+        fingerprints: set[str] = set()
+
+        for observation in observations:
+            try:
+                if self.analysis_pipeline._is_attack_surface_observation(
+                    observation
+                ):
+                    continue
+
+                finding = self.analysis_pipeline._to_finding(
+                    observation
+                )
+
+                finding = self.analysis_pipeline._apply_normalizer(
+                    finding
+                )
+
+                fingerprints.add(
+                    finding.fingerprint()
+                )
+
+            except Exception:
+                # Analysis already records processing failures. Attribution
+                # must never make an otherwise completed execution fail.
+                continue
+
+        if not fingerprints:
+            return []
+
+        execution_findings: list[Any] = []
+
+        for finding in final_findings:
+            try:
+                fingerprint = finding.fingerprint()
+            except Exception:
+                continue
+
+            if fingerprint in fingerprints:
+                execution_findings.append(
+                    finding
+                )
+
+        return execution_findings
+
     def _attach_analysis_result(
         self,
         result: ExecutionResult,
         analysis_result: Any | None,
         context: Mapping[str, Any],
+        *,
+        execution_observations: list[Any] | None = None,
     ) -> None:
         """
-        Attach final analysis state to the ExecutionResult and shared
+        Attach analysis state to the current ExecutionResult and shared
         workflow collections.
+
+        The analysis pipeline remains assessment-wide. Only the findings
+        attached to the individual ExecutionResult are execution-local.
         """
 
         if analysis_result is None:
             return
 
-        findings = self._serialize_findings(
-            analysis_result
+        execution_findings = self._execution_findings(
+            list(
+                execution_observations or []
+            ),
+            analysis_result,
+        )
+
+        findings = self._serialize_findings_from_list(
+            execution_findings
         )
 
         groups = self._serialize_correlation_groups(
@@ -2236,11 +2346,7 @@ class ToolExecutor:
             existing_result_findings.clear()
 
             existing_result_findings.extend(
-                getattr(
-                    analysis_result,
-                    "findings",
-                    [],
-                )
+                execution_findings
             )
 
         shared_findings = context.get(
@@ -2503,6 +2609,7 @@ class ToolExecutor:
             result,
             analysis_result,
             execution_context,
+            execution_observations=all_observations,
         )
 
         return result
