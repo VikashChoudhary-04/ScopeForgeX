@@ -171,6 +171,7 @@ profiles:
 
       dig:
         enabled: true
+        mode: conditional
         options:
           record_types:
             - A
@@ -337,6 +338,7 @@ profiles:
 
       dig:
         enabled: true
+        mode: conditional
         options:
           record_types:
             - A
