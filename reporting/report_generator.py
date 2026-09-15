@@ -682,11 +682,9 @@ class ReportGenerator:
                 [
                     "**Evidence**",
                     "",
-                    "```json",
-                    _serialize_evidence(
-                        evidence
-                    ),
-                    "```",
+                    "Finding-specific evidence is available in the "
+                    "canonical assessment artifacts and raw evidence "
+                    "references.",
                     "",
                 ]
             )
@@ -1837,13 +1835,9 @@ class ReportGenerator:
             pieces.extend(
                 [
                     "<h3>Evidence</h3>",
-                    "<pre>",
-                    escape(
-                        _serialize_evidence(
-                            evidence
-                        )
-                    ),
-                    "</pre>",
+                    "<p>Finding-specific evidence is available in the "
+                    "canonical assessment artifacts and raw evidence "
+                    "references.</p>",
                 ]
             )
 

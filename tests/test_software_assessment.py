@@ -473,10 +473,13 @@ def test_findings_report_is_concise_without_raw_evidence(tmp_path):
 
     evidence_json = '"X-Test-Evidence": "retained-in-canonical-report"'
 
-    assert evidence_json in professional_markdown
-    assert "synthetic-evidence-payload" in professional_markdown
-    assert "retained-in-canonical-report" in professional_html_text
-    assert "synthetic-evidence-payload" in professional_html_text
+    assert "Finding-specific evidence is available in the canonical assessment artifacts and raw evidence references." in professional_markdown
+    assert evidence_json not in professional_markdown
+    assert "synthetic-evidence-payload" not in professional_markdown
+
+    assert "Finding-specific evidence is available in the canonical assessment artifacts and raw evidence references." in professional_html_text
+    assert evidence_json not in professional_html_text
+    assert "synthetic-evidence-payload" not in professional_html_text
 
     assert "SF-TEST-CONCISE-FINDING" in findings_markdown
     assert "Synthetic Evidence Finding" in findings_markdown
