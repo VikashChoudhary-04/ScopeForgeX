@@ -9,9 +9,8 @@
 # - Execution policy
 # - Native analyzer enablement
 #
-# Tool metadata and supported option contracts are defined separately in:
-#
-# config/tools.yaml
+# Tool metadata and supported option contracts are defined by the canonical
+# ToolRegistry and ToolAdapter implementations.
 #
 # Command construction remains owned by the corresponding ToolAdapter.
 #
