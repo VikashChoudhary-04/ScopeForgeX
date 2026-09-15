@@ -880,9 +880,10 @@ class KiterunnerTool(
     ScopeForgeX uses a local KiteBuilder route corpus so execution does not
     depend on Kiterunner's remote Assetnote wordlist service.
 
-    Full-scan mode is enabled by default because the normal Kiterunner
-    two-phase workflow can prompt interactively when the preflight phase
-    produces no results. ScopeForgeX workflows must remain non-interactive.
+    Full-scan mode is disabled by default so Kiterunner can use its
+    non-interactive quick-scan path without forcing the potentially much
+    larger KiteBuilder corpus scan. ScopeForgeX workflows remain
+    non-interactive.
     """
 
     definition = ToolDefinition(
@@ -936,7 +937,7 @@ class KiterunnerTool(
                     "interactive two-phase continuation."
                 ),
                 option_type="boolean",
-                default=True,
+                default=False,
                 safe=True,
                 aggressive=True,
             ),
@@ -1005,13 +1006,13 @@ class KiterunnerTool(
                 "Kiterunner threads must be greater than zero."
             )
 
-        for name in (
-            "full_scan",
-            "quiet",
+        for name, default in (
+            ("full_scan", False),
+            ("quiet", True),
         ):
             value = self.get_option(
                 name,
-                True,
+                default,
             )
 
             if not isinstance(
@@ -1063,7 +1064,7 @@ class KiterunnerTool(
 
         if self.get_option(
             "full_scan",
-            True,
+            False,
         ):
             arguments.append(
                 "--kitebuilder-full-scan"

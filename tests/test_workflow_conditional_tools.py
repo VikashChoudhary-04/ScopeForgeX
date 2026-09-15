@@ -352,3 +352,116 @@ def test_dig_proceeds_for_hostname_target():
     )
 
     assert result is None
+
+def test_stage4_url_validation_target_promotes_projected_url_without_mutating_context():
+    from scopeforgex.workflow import _stage4_url_validation_target
+
+    tool = _tool(
+        "sqlmap",
+        "url",
+        "sql_injection_validation",
+    )
+
+    ctx = {
+        "target": "example.test",
+        "input_data": (
+            "http://example.test/login?id=1",
+        ),
+    }
+
+    result = _stage4_url_validation_target(
+        tool,
+        ctx,
+    )
+
+    assert result == "http://example.test/login?id=1"
+    assert ctx["target"] == "example.test"
+
+
+def test_stage4_url_validation_target_accepts_https():
+    from scopeforgex.workflow import _stage4_url_validation_target
+
+    tool = _tool(
+        "dalfox",
+        "url",
+        "xss_validation",
+    )
+
+    ctx = {
+        "target": "example.test",
+        "input_data": (
+            "https://example.test/search?q=test",
+        ),
+    }
+
+    result = _stage4_url_validation_target(
+        tool,
+        ctx,
+    )
+
+    assert result == "https://example.test/search?q=test"
+
+
+def test_stage4_url_validation_target_returns_none_without_projected_url():
+    from scopeforgex.workflow import _stage4_url_validation_target
+
+    tool = _tool(
+        "sstimap",
+        "url",
+        "ssti_validation",
+    )
+
+    ctx = {
+        "target": "example.test",
+        "input_data": (),
+    }
+
+    assert _stage4_url_validation_target(
+        tool,
+        ctx,
+    ) is None
+
+
+def test_stage4_url_validation_target_does_not_apply_to_other_phases():
+    from scopeforgex.workflow import _stage4_url_validation_target
+
+    tool = SimpleNamespace(
+        name="katana",
+        input_type="url",
+        capability="endpoint_discovery",
+        phase="enumeration",
+    )
+
+    ctx = {
+        "target": "example.test",
+        "input_data": (
+            "http://example.test/",
+        ),
+    }
+
+    assert _stage4_url_validation_target(
+        tool,
+        ctx,
+    ) is None
+
+
+def test_stage4_url_validation_target_does_not_accept_markdown_literal():
+    from scopeforgex.workflow import _stage4_url_validation_target
+
+    tool = _tool(
+        "sqlmap",
+        "url",
+        "sql_injection_validation",
+    )
+
+    ctx = {
+        "target": "example.test",
+        "input_data": (
+            "[http://example.test/](http://example.test/)",
+        ),
+    }
+
+    assert _stage4_url_validation_target(
+        tool,
+        ctx,
+    ) is None

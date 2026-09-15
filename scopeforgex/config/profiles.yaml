@@ -32,6 +32,9 @@ profiles:
     execution:
       continue_on_error: true
 
+    vulnerability_intelligence:
+      allow_network: true
+
     reconnaissance:
 
       amass:
@@ -146,6 +149,9 @@ profiles:
     execution:
       continue_on_error: true
 
+    vulnerability_intelligence:
+      allow_network: true
+
     reconnaissance:
 
       amass:
@@ -216,7 +222,7 @@ profiles:
         options:
           wordlist: /home/kali/tools/kiterunner/wordlists/routes-small.kite
           threads: 10
-          full_scan: true
+          full_scan: false
           quiet: true
 
       jsluice:
@@ -313,6 +319,9 @@ profiles:
     execution:
       continue_on_error: true
 
+    vulnerability_intelligence:
+      allow_network: true
+
     reconnaissance:
 
       amass:
@@ -383,7 +392,7 @@ profiles:
         options:
           wordlist: /home/kali/tools/kiterunner/wordlists/routes-small.kite
           threads: 25
-          full_scan: true
+          full_scan: false
           quiet: true
 
       jsluice:
@@ -403,12 +412,9 @@ profiles:
           severity:
             - critical
             - high
-            - medium
-            - low
-            - info
-          rate_limit: 100
-          timeout: 10
-          retries: 2
+          rate_limit: 30
+          timeout: 5
+          retries: 1
 
       nikto:
         enabled: true

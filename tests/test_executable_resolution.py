@@ -41,3 +41,58 @@ def test_resolver_rejects_non_executable_explicit_path(
     assert resolve_executable(
         str(fake_bin)
     ) is None
+
+
+def test_resolver_prefers_invoking_users_go_binary_under_sudo(
+    monkeypatch,
+):
+    from scopeforgex.executable import resolve_executable
+
+    monkeypatch.setenv(
+        "HOME",
+        "/root",
+    )
+    monkeypatch.setenv(
+        "SUDO_USER",
+        "kali",
+    )
+    monkeypatch.setenv(
+        "PATH",
+        "/usr/local/bin:/usr/bin:/bin",
+    )
+
+    expected = Path(
+        "/home/kali/go/bin/httpx"
+    )
+
+    assert resolve_executable(
+        "httpx"
+    ) == str(expected)
+
+
+def test_resolver_uses_sudo_user_from_supplied_environment(
+    monkeypatch,
+):
+    from scopeforgex.executable import resolve_executable
+
+    monkeypatch.setenv(
+        "HOME",
+        "/root",
+    )
+    monkeypatch.delenv(
+        "SUDO_USER",
+        raising=False,
+    )
+
+    expected = Path(
+        "/home/kali/go/bin/nuclei"
+    )
+
+    assert resolve_executable(
+        "nuclei",
+        env={
+            "HOME": "/root",
+            "SUDO_USER": "kali",
+            "PATH": "/usr/local/bin:/usr/bin:/bin",
+        },
+    ) == str(expected)

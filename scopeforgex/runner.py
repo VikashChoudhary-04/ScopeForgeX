@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import os
 import shlex
-import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -682,7 +681,7 @@ def is_command_available(
         return False
 
     return (
-        shutil.which(
+        resolve_executable(
             executable
         )
         is not None

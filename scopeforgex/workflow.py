@@ -651,6 +651,52 @@ def _mapping_value(
     )
 
 
+def _stage4_url_validation_target(
+    tool: Any,
+    ctx: dict[str, Any],
+) -> str | None:
+    """
+    Return an in-scope HTTP(S) URL for Stage 4 URL validators.
+
+    The canonical workflow target remains unchanged. This helper only
+    supplies a projected HTTP(S) URL to vulnerability-validation adapters
+    that require an explicit HTTP(S) target.
+    """
+
+    if _tool_phase(tool) != AssessmentPhase.VULNERABILITY_VALIDATION:
+        return None
+
+    input_type = str(
+        getattr(
+            tool,
+            "input_type",
+            "",
+        )
+        or ""
+    ).strip().lower()
+
+    if input_type != "url":
+        return None
+
+    input_data = ctx.get(
+        "input_data",
+        (),
+    )
+
+    if isinstance(input_data, str):
+        input_data = (input_data,)
+
+    for candidate in input_data or ():
+        normalized = _absolute_http_url(
+            candidate,
+        )
+
+        if normalized:
+            return normalized
+
+    return None
+
+
 def _absolute_http_url(
     value: Any,
 ) -> str | None:
@@ -2719,10 +2765,32 @@ class WorkflowEngine:
             runtime_state=self.runtime,
         )
 
+        vulnerability_intelligence = self.profile.get(
+            "vulnerability_intelligence",
+            {},
+        )
+
+        if not isinstance(
+            vulnerability_intelligence,
+            dict,
+        ):
+            vulnerability_intelligence = {}
+
+        self.vulnerability_intelligence_allow_network = bool(
+            vulnerability_intelligence.get(
+                "allow_network",
+                False,
+            )
+        )
+
         self.ctx: dict[str, Any] = {
             "profile": profile_name,
 
             "profile_config": self.profile,
+
+            "vulnerability_intelligence_allow_network": (
+                self.vulnerability_intelligence_allow_network
+            ),
 
             "runtime": self.runtime,
 
@@ -2786,8 +2854,8 @@ class WorkflowEngine:
 
     def _create_tool_context(
         self,
-        tool: Any,
         ctx: dict[str, Any],
+        tool: Any,
         profile: dict[str, Any],
         sensitive_input_data: Mapping[str, Sequence[str]] | None = None,
         execution_timeout: int | None = None,
@@ -3000,9 +3068,20 @@ class WorkflowEngine:
                     jwt_inputs
                 )
 
-        tool_context = self._create_tool_context(
+        tool_context_data = ctx
+
+        validation_target = _stage4_url_validation_target(
             tool,
             ctx,
+        )
+
+        if validation_target:
+            tool_context_data = dict(ctx)
+            tool_context_data["target"] = validation_target
+
+        tool_context = self._create_tool_context(
+            tool_context_data,
+            tool,
             profile,
             sensitive_input_data=sensitive_input_data,
             execution_timeout=self.executor.default_timeout,

@@ -16,6 +16,7 @@ v3.0.0
 from __future__ import annotations
 
 import os
+import pwd
 import shutil
 
 
@@ -69,6 +70,28 @@ def resolve_executable(
         return None
 
     home = os.path.expanduser("~")
+
+    # When ScopeForgeX is launched through sudo, ``~`` may resolve to
+    # ``/root`` even though the security tools were installed for the
+    # invoking user. Prefer that user's home directory for the canonical
+    # Go security-tool location.
+    sudo_user = (
+        env.get("SUDO_USER")
+        if env is not None
+        else os.environ.get("SUDO_USER")
+    )
+
+    if sudo_user:
+        try:
+            home = pwd.getpwnam(
+                str(sudo_user)
+            ).pw_dir
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+        ):
+            pass
 
     go_binary = os.path.join(
         home,

@@ -1869,6 +1869,102 @@ class ToolExecutor:
     # Vulnerability Intelligence
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _intelligence_result_identity(
+        result: Any,
+    ) -> tuple[
+        str,
+        str,
+        str | None,
+        int | None,
+        str | None,
+    ]:
+        """Return the canonical identity for one intelligence result."""
+
+        if isinstance(result, Mapping):
+            metadata = result.get("metadata", {})
+            if not isinstance(metadata, Mapping):
+                metadata = {}
+
+            cve = result.get("cve", "")
+            cpe = result.get("cpe") or metadata.get("cpe")
+            host = result.get("host")
+            port = result.get("port")
+            url = result.get("url")
+        else:
+            metadata = getattr(
+                result,
+                "metadata",
+                {},
+            )
+            if not isinstance(metadata, Mapping):
+                metadata = {}
+
+            cve = getattr(
+                result,
+                "cve",
+                "",
+            )
+            cpe = (
+                getattr(result, "cpe", None)
+                or metadata.get("cpe")
+            )
+            host = getattr(
+                result,
+                "host",
+                None,
+            )
+            port = getattr(
+                result,
+                "port",
+                None,
+            )
+            url = getattr(
+                result,
+                "url",
+                None,
+            )
+
+        return (
+            str(cve or "").strip().upper(),
+            str(cpe or "").strip(),
+            (
+                str(host).strip().lower()
+                if host is not None
+                else None
+            ),
+            port,
+            (
+                str(url).strip()
+                if url is not None
+                else None
+            ),
+        )
+
+    def _append_unique_intelligence_results(
+        self,
+        results: list[Any],
+    ) -> None:
+        """Accumulate intelligence results without duplicate identities."""
+
+        existing = {
+            self._intelligence_result_identity(item)
+            for item in self._vulnerability_intelligence_results
+        }
+
+        for result in results:
+            identity = self._intelligence_result_identity(
+                result
+            )
+
+            if identity in existing:
+                continue
+
+            self._vulnerability_intelligence_results.append(
+                result
+            )
+            existing.add(identity)
+
     def _run_vulnerability_intelligence(
         self,
         observations: list[Any],
@@ -1902,7 +1998,9 @@ class ToolExecutor:
             return []
 
         results = list(results or [])
-        self._vulnerability_intelligence_results.extend(results)
+        self._append_unique_intelligence_results(
+            results
+        )
 
         self._software_assessments = list(
             self.vulnerability_intelligence.software_assessments
@@ -2581,7 +2679,6 @@ class ToolExecutor:
         intelligence_observations = (
             self._run_vulnerability_intelligence(
                 [
-                    *self._observations,
                     *observations,
                     *native_observations,
                 ],

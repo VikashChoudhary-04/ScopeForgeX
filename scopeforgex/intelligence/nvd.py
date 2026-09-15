@@ -354,13 +354,22 @@ class NVDClient:
         """
         Resolve an observed product/version to one CPE identity.
 
-        Exact version-aware candidates are preferred. When no unique exact
-        identity can be resolved, candidates are normalized to CPE families
-        by replacing only the version component.
+        NVD keyword search is intentionally broad. Multiple CPE records can
+        therefore describe the same product family, platform-specific
+        variants, or unrelated products containing the search term.
 
-        A family is returned only when exactly one unique family identity is
-        available. Ambiguous results return None instead of manufacturing a
-        CPE identity.
+        Resolution is conservative and generic:
+
+        * exact CPE product identity is preferred;
+        * an explicitly supplied vendor is preferred when it matches;
+        * an exact observed version is strongly preferred;
+        * stable/base CPEs are preferred over release/update variants when
+          the observation provides no corresponding qualifier;
+        * unrelated keyword matches are rejected;
+        * genuine ambiguity remains unresolved.
+
+        When no exact-version candidate can be selected, the resolver falls
+        back to a unique product family.
         """
 
         terms = [
@@ -389,75 +398,65 @@ class NVDClient:
             limit=100,
         )
 
-        cpes: list[str] = []
-
-        for item in candidates:
-            cpe = item.get(
-                "cpe",
-                {},
-            )
-
-            if not isinstance(
-                cpe,
-                dict,
-            ):
-                continue
-
-            cpe_name = (
-                self._cpe_name_from_record(
-                    cpe
-                )
-            )
-
-            if cpe_name:
-                cpes.append(
-                    cpe_name
-                )
-
-        unique = list(
-            dict.fromkeys(
-                cpes
-            )
+        ranked = self._rank_cpe_candidates(
+            candidates=candidates,
+            product=product,
+            vendor=vendor,
+            version=version,
         )
 
-        if len(unique) == 1:
+        if ranked:
+            best_score = ranked[0][0]
+
+            best = [
+                cpe_name
+                for score, cpe_name
+                in ranked
+                if score == best_score
+            ]
+
+            if len(best) == 1:
+                return (
+                    best[0],
+                    list(
+                        dict.fromkeys(
+                            cpe_name
+                            for _, cpe_name
+                            in ranked
+                        )
+                    ),
+                )
+
             return (
-                unique[0],
-                unique,
+                None,
+                list(
+                    dict.fromkeys(
+                        cpe_name
+                        for _, cpe_name
+                        in ranked
+                    )
+                ),
             )
 
-        # If the version-aware lookup did not produce one unique CPE,
-        # retry without a version filter so that a product family can be
-        # resolved for versions missing from the NVD CPE dictionary.
+        # If the version-aware lookup did not produce a usable identity,
+        # retry without a version filter so a unique product family can
+        # still be resolved when the exact version is absent from NVD.
         family_candidates = self.search_cpes(
             keyword=keyword,
             version=None,
             limit=100,
         )
 
+        family_ranked = self._rank_cpe_candidates(
+            candidates=family_candidates,
+            product=product,
+            vendor=vendor,
+            version=None,
+        )
+
         families: list[str] = []
 
-        for item in family_candidates:
-            cpe = item.get(
-                "cpe",
-                {},
-            )
-
-            if not isinstance(
-                cpe,
-                dict,
-            ):
-                continue
-
-            cpe_name = (
-                self._cpe_name_from_record(
-                    cpe
-                )
-            )
-
-            if not cpe_name:
-                continue
-
+        for _, cpe_name in family_ranked:
             family = self._virtual_match_cpe(
                 cpe_name
             )
@@ -481,7 +480,223 @@ class NVDClient:
 
         return (
             None,
-            unique_families or unique,
+            unique_families,
+        )
+
+    @classmethod
+    def _rank_cpe_candidates(
+        cls,
+        *,
+        candidates: list[dict[str, Any]],
+        product: str,
+        vendor: str | None,
+        version: str | None,
+    ) -> list[tuple[int, str]]:
+        """
+        Rank NVD CPE records using generic CPE identity signals.
+
+        No product-specific mappings are used. The ranking only considers
+        structured CPE components and NVD CPE titles.
+        """
+
+        requested_product = cls._normalize_cpe_identity(
+            product
+        )
+
+        requested_vendor = cls._normalize_cpe_identity(
+            vendor
+        )
+
+        requested_version = (
+            str(version).strip()
+            if version
+            else ""
+        )
+
+        ranked: list[tuple[int, str]] = []
+
+        for item in candidates:
+            if not isinstance(
+                item,
+                dict,
+            ):
+                continue
+
+            cpe = item.get(
+                "cpe",
+                {},
+            )
+
+            if not isinstance(
+                cpe,
+                dict,
+            ):
+                continue
+
+            cpe_name = cls._cpe_name_from_record(
+                cpe
+            )
+
+            if not cpe_name:
+                continue
+
+            parts = cls._parse_cpe23(
+                cpe_name
+            )
+
+            if parts is None:
+                continue
+
+            cpe_vendor = cls._normalize_cpe_identity(
+                cls._unescape_cpe_component(
+                    parts[3]
+                )
+            )
+
+            cpe_product = cls._normalize_cpe_identity(
+                cls._unescape_cpe_component(
+                    parts[4]
+                )
+            )
+
+            cpe_version = cls._unescape_cpe_component(
+                parts[_CPE_VERSION_INDEX]
+            )
+
+            titles = cpe.get(
+                "titles",
+                [],
+            )
+
+            title_text = " ".join(
+                str(entry.get("title", ""))
+                for entry in titles
+                if isinstance(
+                    entry,
+                    dict,
+                )
+            )
+
+            normalized_title = cls._normalize_cpe_identity(
+                title_text
+            )
+
+            score = 0
+
+            # Product identity is mandatory. Exact CPE product equality is
+            # strongest; a title match is weaker and exists for names whose
+            # human form differs from the CPE component.
+            if (
+                requested_product
+                and cpe_product == requested_product
+            ):
+                score += 100
+            elif (
+                requested_product
+                and requested_product in normalized_title
+            ):
+                score += 40
+            else:
+                continue
+
+            # An explicit vendor is an additional identity constraint.
+            if requested_vendor:
+                if cpe_vendor == requested_vendor:
+                    score += 50
+                elif requested_vendor in normalized_title:
+                    score += 15
+                else:
+                    continue
+
+            # Exact observed versions are strongly preferred. NVD search_cpes
+            # already filters fixed version candidates, but this also handles
+            # direct/mock candidate sets safely.
+            if requested_version:
+                if (
+                    cpe_version not in {
+                        "*",
+                        "-",
+                    }
+                    and cls._version_equal(
+                        cpe_version,
+                        requested_version,
+                    )
+                ):
+                    score += 100
+                elif cpe_version == "*":
+                    score += 10
+                else:
+                    continue
+
+            # When no qualifier was observed, prefer the base/stable CPE.
+            # '*' means ANY and is the canonical unqualified value.
+            # '-' means NOT APPLICABLE and should not tie with '*'.
+            update = parts[6]
+
+            if update == "*":
+                score += 20
+            elif update == "-":
+                score -= 10
+            else:
+                score -= 20
+
+            # Platform/deployment-specific identities should only win when
+            # the observed evidence supplies a corresponding signal. Since
+            # resolve_cpe currently receives only product/vendor/version,
+            # such qualifiers are conservatively penalized.
+            qualifiers = (
+                parts[7],   # edition
+                parts[8],   # language
+                parts[9],   # sw_edition
+                parts[10],  # target_sw
+                parts[11],  # target_hw
+                parts[12],  # other
+            )
+
+            for qualifier in qualifiers:
+                if qualifier not in {
+                    "*",
+                    "-",
+                    "",
+                }:
+                    score -= 10
+
+            if item.get("deprecated") is True:
+                score -= 25
+
+            ranked.append(
+                (
+                    score,
+                    cpe_name,
+                )
+            )
+
+        return sorted(
+            ranked,
+            key=lambda entry: (
+                -entry[0],
+                entry[1],
+            ),
+        )
+
+    @staticmethod
+    def _normalize_cpe_identity(
+        value: str | None,
+    ) -> str:
+        """
+        Normalize human/CPE identity text for generic comparison.
+
+        Separators and punctuation are ignored so human names such as
+        ``http-server`` and CPE components such as ``http_server`` can be
+        compared without product-specific aliases.
+        """
+
+        return re.sub(
+            r"[^a-z0-9]+",
+            "",
+            str(
+                value or ""
+            ).strip().lower(),
         )
 
     ###########################################################################

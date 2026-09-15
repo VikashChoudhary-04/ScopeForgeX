@@ -70,8 +70,27 @@ EXPRESS_SIGNATURE = SoftwareSignature(
 )
 
 
+JQUERY_SIGNATURE = SoftwareSignature(
+    product="jquery",
+    vendor="jquery",
+    patterns=(
+        re.compile(
+            r"\bjQuery\s*:\s*"
+            r"(?P<version>[0-9][A-Za-z0-9._+-]*)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\bjQuery(?:\.js)?\s+"
+            r"[v=]?\s*(?P<version>[0-9][A-Za-z0-9._+-]*)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
 DEFAULT_SIGNATURES = (
     EXPRESS_SIGNATURE,
+    JQUERY_SIGNATURE,
 )
 
 
@@ -393,6 +412,32 @@ class SoftwareIdentityAnalyzer:
                     },
                 )
 
+            for text, source in self._iter_nested_text(
+                direct_observation_evidence.get("tech"),
+                prefix="observation.evidence.tech",
+            ):
+
+                key = (
+                    source,
+                    text,
+                )
+
+                if key in yielded:
+                    continue
+
+                yielded.add(key)
+
+                yield (
+                    text,
+                    source,
+                    {
+                        "source": source,
+                        "observation": dict(
+                            evidence
+                        ),
+                    },
+                )
+
         # --------------------------------------------------------------
         # Runtime collector observations
         # --------------------------------------------------------------
@@ -462,6 +507,32 @@ class SoftwareIdentityAnalyzer:
                         "source": (
                             f"collector_observation.{field_name}"
                         ),
+                        "observation": dict(
+                            observation
+                        ),
+                    },
+                )
+
+            for text, source in self._iter_nested_text(
+                observation_evidence.get("tech"),
+                prefix="collector_observation.evidence.tech",
+            ):
+
+                key = (
+                    source,
+                    text,
+                )
+
+                if key in yielded:
+                    continue
+
+                yielded.add(key)
+
+                yield (
+                    text,
+                    source,
+                    {
+                        "source": source,
                         "observation": dict(
                             observation
                         ),
