@@ -54,6 +54,7 @@ v1.3.0
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -138,6 +139,63 @@ def _optional_text(
     normalized = _text(
         value
     )
+
+    return normalized or None
+
+
+def _url(
+    value: Any,
+) -> str | None:
+    """
+    Normalize a URL into canonical, presentation-independent text.
+
+    URL values may originate from command-line tools that emit terminal
+    formatting or from producers that preserve Markdown link syntax.
+    Canonical Finding URLs must contain neither representation.
+    """
+
+    normalized = _text(
+        value
+    )
+
+    if not normalized:
+        return None
+
+    # Remove standard ANSI CSI sequences.
+    normalized = re.sub(
+        r"\x1b(?:\[[0-?]*[ -/]*[@-~])",
+        "",
+        normalized,
+    )
+
+    # Remove captured ESC + literal backslash + '[' CSI sequences.
+    normalized = re.sub(
+        r"\x1b\\\[[0-?]*[ -/]*[@-~]",
+        "",
+        normalized,
+    )
+
+    # Remove remaining C0/C1 control characters.
+    normalized = re.sub(
+        r"[\x00-\x1f\x7f-\x9f]",
+        "",
+        normalized,
+    )
+
+    normalized = normalized.strip()
+
+    # If the complete value is a Markdown HTTP(S) link, retain only its
+    # destination URL.
+    markdown_match = re.fullmatch(
+        r"\[[^\]]*\]\((https?://[^)]+)\)",
+        normalized,
+        re.IGNORECASE,
+    )
+
+    if markdown_match:
+        normalized = markdown_match.group(
+            1
+        ).strip()
 
     return normalized or None
 
@@ -732,7 +790,7 @@ class FindingNormalizer:
             "port": _port(
                 port
             ),
-            "url": _optional_text(
+            "url": _url(
                 url
             ),
             "parameter": _optional_text(

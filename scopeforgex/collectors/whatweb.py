@@ -574,6 +574,44 @@ class WhatWebCollector(CollectorBase):
             }
         ]
 
+    @staticmethod
+    def _strip_terminal_formatting(
+        value: str,
+    ) -> str:
+        """
+        Remove terminal ANSI formatting from parser input.
+
+        WhatWeb's human-readable output may contain ANSI CSI sequences.
+        These are presentation data and must not become part of canonical
+        URLs, hosts, or technology names.
+        """
+
+        # Standard ANSI CSI sequences.
+        value = re.sub(
+            r"\x1b(?:\[[0-?]*[ -/]*[@-~])",
+            "",
+            value,
+        )
+
+        # Some captured output represents the CSI introducer as ESC followed
+        # by a literal backslash and '['.
+        value = re.sub(
+            r"\x1b\\\[[0-?]*[ -/]*[@-~]",
+            "",
+            value,
+        )
+
+        # Remove remaining terminal/control characters that cannot be part
+        # of a canonical URL or technology name.
+        value = re.sub(
+            r"[\x00-\x1f\x7f-\x9f]",
+            "",
+            value,
+        )
+
+        return value
+
+
     def _parse_text_record(
         self,
         record: str,
@@ -583,28 +621,49 @@ class WhatWebCollector(CollectorBase):
 
         Typical forms include:
 
-            http://example.com [200 OK] Apache, PHP, WordPress
+            [http://example.com](http://example.com) [200 OK] Apache, PHP, WordPress
 
         The parser intentionally treats only the recognizable technology
         portion as structured data.
         """
 
-        url_match = re.search(
-            r"(https?://[^\s\[]+)",
-            record,
+        parse_record = self._strip_terminal_formatting(
+            record
+        )
+
+        # WhatWeb may emit its target as a Markdown link. When present,
+        # extract the destination URL rather than the display-side URL.
+        markdown_url_match = re.search(
+            r"\[[^\]]*\]\((https?://[^)]+)\)",
+            parse_record,
             re.IGNORECASE,
         )
 
-        if not url_match:
-            return []
+        if markdown_url_match:
+            url = markdown_url_match.group(
+                1
+            )
 
-        url = url_match.group(
-            1
-        )
+            technology_text = parse_record[
+                markdown_url_match.end():
+            ]
+        else:
+            url_match = re.search(
+                r"(https?://[^\s\[]+)",
+                parse_record,
+                re.IGNORECASE,
+            )
 
-        technology_text = record[
-            url_match.end():
-        ]
+            if not url_match:
+                return []
+
+            url = url_match.group(
+                1
+            )
+
+            technology_text = parse_record[
+                url_match.end():
+            ]
 
         technology_text = re.sub(
             r"^\s*\[[^\]]*\]\s*",
