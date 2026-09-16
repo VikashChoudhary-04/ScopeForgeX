@@ -663,6 +663,61 @@ class SoftwareIdentityAnalyzer:
                 )
 
     # ------------------------------------------------------------------
+    # Evidence normalization
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compact_source_evidence(
+        value: Any,
+    ) -> Any:
+        """
+        Return compact provenance evidence suitable for propagation.
+
+        Raw response/request material is intentionally consumed by the
+        analyzer when detecting software identity, but it must not be
+        propagated into structured software-intelligence evidence.
+
+        Raw scanner artifacts remain responsible for retaining complete
+        forensic material when required.
+        """
+
+        if isinstance(value, Mapping):
+            compact: dict[str, Any] = {}
+
+            for key, item in value.items():
+                key_text = str(key).strip().lower()
+
+                if key_text in {
+                    "body",
+                    "raw_body",
+                    "raw_header",
+                    "raw_headers",
+                    "request",
+                    "raw_request",
+                    "response",
+                    "raw_response",
+                }:
+                    continue
+
+                compact[key] = SoftwareIdentityAnalyzer._compact_source_evidence(item)
+
+            return compact
+
+        if isinstance(value, list):
+            return [
+                SoftwareIdentityAnalyzer._compact_source_evidence(item)
+                for item in value
+            ]
+
+        if isinstance(value, tuple):
+            return tuple(
+                SoftwareIdentityAnalyzer._compact_source_evidence(item)
+                for item in value
+            )
+
+        return value
+
+    # ------------------------------------------------------------------
     # Observation construction
     # ------------------------------------------------------------------
 
@@ -701,8 +756,10 @@ class SoftwareIdentityAnalyzer:
             evidence={
                 "source": source,
                 "raw_version": raw_version,
-                "source_evidence": dict(
-                    source_evidence
+                "source_evidence": (
+                    SoftwareIdentityAnalyzer._compact_source_evidence(
+                        source_evidence
+                    )
                 ),
             },
             source_tool="scopeforgex",
