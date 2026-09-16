@@ -72,7 +72,7 @@ Enumeration:
     - jsluice
 
 Vulnerability Assessment:
-    - nuclei
+    - wapiti
     - nikto
     - testssl.sh
 
@@ -145,7 +145,7 @@ ENUMERATION_TOOLS = (
 )
 
 VULNERABILITY_ASSESSMENT_TOOLS = (
-    "nuclei",
+    "wapiti",
     "nikto",
     "testssl.sh",
 )
@@ -893,13 +893,15 @@ def build_standard_profile() -> AssessmentProfile:
             "jsluice": _tool(
                 enabled=True,
             ),
-            "nuclei": _tool(
+            "wapiti": _tool(
                 options={
-                    "severity": (
-                        "critical",
-                        "high",
-                        "medium",
-                    ),
+                    "scope": "domain",
+                    "max_links_per_page": 100,
+                    "max_files_per_dir": 50,
+                    "max_scan_time": 540,
+                    "max_attack_time": 480,
+                    "max_parameters": 50,
+                    "timeout": 10,
                 }
             ),
             "nikto": _tool(

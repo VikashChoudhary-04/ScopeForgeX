@@ -5,6 +5,7 @@ Stage 3 — Vulnerability Assessment
 
 Provides the canonical Stage 3 vulnerability-assessment adapters:
 
+- Wapiti
 - Nuclei
 - Nikto
 - testssl.sh
@@ -520,6 +521,333 @@ def _build_testssl_flags(
         )
 
     return flags
+
+
+###############################################################################
+# Wapiti
+###############################################################################
+
+
+class WapitiTool(
+    ToolAdapter
+):
+    """
+    Bounded web-application vulnerability and security-configuration
+    assessment using Wapiti's native scan-time controls.
+    """
+
+    definition = ToolDefinition(
+        name="wapiti",
+        capability="web_application_vulnerability_detection",
+        phase="vulnerability_assessment",
+        purpose=(
+            "Bounded web-application security assessment with native "
+            "scan-time and attack-time controls."
+        ),
+        executable="wapiti",
+        input_type="url",
+        output_type="vulnerability_findings",
+        finding_types=(
+            "VULNERABILITY",
+            "MISCONFIGURATION",
+            "SECURITY_ISSUE",
+        ),
+        dependencies=(
+            "wapiti",
+        ),
+        options=(
+            ToolOption(
+                name="scope",
+                flag="--scope",
+                description="Wapiti crawl scope.",
+                option_type="string",
+                default="domain",
+                choices=(
+                    "url",
+                    "page",
+                    "folder",
+                    "subdomain",
+                    "domain",
+                    "punk",
+                ),
+                safe=True,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="max_links_per_page",
+                flag="--max-links-per-page",
+                description="Maximum links followed per page.",
+                option_type="integer",
+                default=100,
+                safe=True,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="max_files_per_dir",
+                flag="--max-files-per-dir",
+                description="Maximum files tested per directory.",
+                option_type="integer",
+                default=50,
+                safe=True,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="max_scan_time",
+                flag="--max-scan-time",
+                description="Maximum total Wapiti scan time in seconds.",
+                option_type="integer",
+                default=540,
+                safe=True,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="max_attack_time",
+                flag="--max-attack-time",
+                description="Maximum Wapiti attack phase time in seconds.",
+                option_type="integer",
+                default=480,
+                safe=True,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="max_parameters",
+                flag="--max-parameters",
+                description="Maximum parameters accepted per URL/form.",
+                option_type="integer",
+                default=50,
+                safe=True,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="timeout",
+                flag="-t",
+                description="Wapiti HTTP request timeout.",
+                option_type="integer",
+                default=10,
+                safe=True,
+                aggressive=True,
+            ),
+            ToolOption(
+                name="format",
+                flag="-f",
+                description="Wapiti report format.",
+                option_type="string",
+                default="json",
+                choices=(
+                    "json",
+                    "html",
+                    "md",
+                    "csv",
+                ),
+                safe=True,
+                aggressive=True,
+            ),
+        ),
+        safe=True,
+        aggressive=True,
+    )
+
+    def validate_options(
+        self,
+    ) -> None:
+        """Validate Wapiti options."""
+
+        super().validate_options()
+
+        options = _resolve_option_values(self)
+
+        for option_name in (
+            "max_links_per_page",
+            "max_files_per_dir",
+            "max_scan_time",
+            "max_attack_time",
+            "max_parameters",
+            "timeout",
+        ):
+            value = options.get(option_name)
+
+            if value is None:
+                continue
+
+            try:
+                integer_value = int(value)
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    f"Wapiti {option_name} must be an integer."
+                ) from exc
+
+            if integer_value <= 0:
+                raise ValueError(
+                    f"Wapiti {option_name} must be greater than zero."
+                )
+
+        scan_time = int(options["max_scan_time"])
+        attack_time = int(options["max_attack_time"])
+
+        if attack_time > scan_time:
+            raise ValueError(
+                "Wapiti max_attack_time cannot exceed max_scan_time."
+            )
+
+    def build_arguments(
+        self,
+    ) -> list[str]:
+        """
+        Build Wapiti command-line arguments.
+
+        Wapiti receives the canonical URL target. The native scan and attack
+        budgets deliberately remain below the outer ScopeForgeX process
+        timeout.
+        """
+
+        self.validate_options()
+
+        target = str(
+            self.context.target
+        ).strip()
+
+        if not target:
+            raise ValueError(
+                "Wapiti requires a target URL."
+            )
+
+        # ScopeForgeX accepts canonical web targets such as bare hostnames
+        # and host:port values. Wapiti requires an explicit HTTP(S) URL.
+        if not target.startswith(("http://", "https://")):
+            target = f"http://{target}"
+
+        vuln_dir = (
+            self.context.output_dir
+            / "vuln"
+        )
+
+        vuln_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        output_file = (
+            vuln_dir
+            / "wapiti_report.json"
+        )
+
+        options = _resolve_option_values(self)
+
+        return [
+            "-u",
+            target,
+            "--scope",
+            str(options["scope"]),
+            "--max-links-per-page",
+            str(options["max_links_per_page"]),
+            "--max-files-per-dir",
+            str(options["max_files_per_dir"]),
+            "--max-scan-time",
+            str(options["max_scan_time"]),
+            "--max-attack-time",
+            str(options["max_attack_time"]),
+            "--max-parameters",
+            str(options["max_parameters"]),
+            "-t",
+            str(options["timeout"]),
+            "-f",
+            "json",
+            "-o",
+            str(output_file),
+        ]
+
+    def run(
+        self,
+    ) -> ExecutionResult:
+        """Execute Wapiti and preserve its JSON report and log."""
+
+        if not is_tool_installed(
+            self.executable
+        ):
+            return ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error="wapiti not installed",
+            )
+
+        try:
+            command = self.build_command()
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
+            return ExecutionResult.failure(
+                tool=self.name,
+                capability=self.capability,
+                error=str(exc),
+            )
+
+        vuln_dir = (
+            self.context.output_dir
+            / "vuln"
+        )
+
+        vuln_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        output_file = (
+            vuln_dir
+            / "wapiti_report.json"
+        )
+
+        log_file = (
+            vuln_dir
+            / "wapiti.log"
+        )
+
+        _remove_stale_artifact(
+            output_file
+        )
+        _remove_stale_artifact(
+            log_file
+        )
+
+        result = run_command(
+            tool=self.name,
+            capability=self.capability,
+            cmd=command,
+            outfile=str(log_file),
+            timeout=_execution_timeout(
+                self.context,
+                600,
+            ),
+        )
+
+        if output_file.exists():
+            result.add_artifact(
+                output_file
+            )
+
+        if log_file.exists():
+            result.add_artifact(
+                log_file
+            )
+
+        result.metadata.update(
+            {
+                "target": self.context.target,
+                "output_file": str(output_file),
+                "log_file": str(log_file),
+                "command": command,
+            }
+        )
+
+        return result
+
+    def collect(
+        self,
+        result: ExecutionResult,
+    ) -> ExecutionResult:
+        """Preserve the canonical execution result."""
+
+        return result
 
 
 ###############################################################################
@@ -1365,6 +1693,7 @@ class TestSSLTool(
 
 
 ALL_STAGE3_VULN_TOOLS = [
+    WapitiTool,
     NucleiTool,
     NiktoTool,
     TestSSLTool,
@@ -1377,6 +1706,7 @@ ALL_STAGE3_VULN_TOOLS = [
 
 
 __all__ = [
+    "WapitiTool",
     "NucleiTool",
     "NiktoTool",
     "TestSSLTool",

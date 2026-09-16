@@ -484,7 +484,7 @@ def get_tool_definitions_by_phase(
 
 def build_registry() -> dict[str, ToolDefinition]:
     """
-    Build and return the canonical ScopeForgeX 19-tool registry.
+    Build and return the canonical ScopeForgeX 20-tool registry.
 
     Registry construction is idempotent.
     """
@@ -526,6 +526,7 @@ def build_registry() -> dict[str, ToolDefinition]:
     from scopeforgex.tools.stage3_vuln import (
         NiktoTool,
         NucleiTool,
+        WapitiTool,
     )
 
     # ========================================================================
@@ -654,6 +655,11 @@ def build_registry() -> dict[str, ToolDefinition]:
     # ========================================================================
     # Stage 3 — Vulnerability Assessment
     # ========================================================================
+
+    register_tool(
+        WapitiTool,
+        parser="Wapiti Collector",
+    )
 
     register_tool(
         NucleiTool,

@@ -59,6 +59,7 @@ from scopeforgex.collectors.katana import KatanaCollector
 from scopeforgex.collectors.kiterunner import KiterunnerCollector
 from scopeforgex.collectors.nikto import NiktoCollector
 from scopeforgex.collectors.nmap import NmapCollector
+from scopeforgex.collectors.wapiti import WapitiCollector
 from scopeforgex.collectors.nuclei import NucleiCollector
 from scopeforgex.collectors.sqlmap import SQLMapCollector
 from scopeforgex.collectors.sstimap import SSTImapCollector
@@ -83,6 +84,7 @@ _COLLECTOR_REGISTRY: dict[str, type[Any]] = {
     "whatweb": WhatWebCollector,
     "kiterunner": KiterunnerCollector,
     "jsluice": JSLuiceCollector,
+    "wapiti": WapitiCollector,
     "nuclei": NucleiCollector,
     "nikto": NiktoCollector,
     "testssl": TestSSLCollector,

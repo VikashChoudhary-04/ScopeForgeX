@@ -3,7 +3,7 @@ ScopeForgeX Tool Installer
 ==========================
 
 Installs and verifies the external tools required by the canonical
-ScopeForgeX 19-tool registry.
+ScopeForgeX 20-tool registry.
 
 Supported platform:
     - Linux (APT-based distributions)
@@ -70,6 +70,7 @@ REQUIRED_TOOLS = [
     "kiterunner",
     "jsluice",
     "nuclei",
+    "wapiti",
     "nikto",
     "testssl.sh",
     "sqlmap",
@@ -93,6 +94,7 @@ APT_PACKAGES = [
     "sstimap",
     "hydra",
     "hashcat",
+    "wapiti",
 ]
 
 
@@ -762,7 +764,7 @@ def install_tools() -> None:
     install_jwt_tool()
 
     info(
-        "Verifying canonical 19-tool installation..."
+        "Verifying canonical 20-tool installation..."
     )
 
     missing = [
@@ -775,7 +777,7 @@ def install_tools() -> None:
 
     if not missing:
         ok(
-            "All 19 canonical ScopeForgeX tools "
+            "All 20 canonical ScopeForgeX tools "
             "are installed and detected."
         )
         return
