@@ -2761,8 +2761,45 @@ class WorkflowEngine:
             self.profile_name
         )
 
+        execution_config = self.profile.get(
+            "execution",
+            {},
+        )
+
+        if not isinstance(
+            execution_config,
+            dict,
+        ):
+            raise SystemExit(
+                f"Invalid execution configuration for profile: "
+                f"{profile_name}"
+            )
+
+        execution_timeout = execution_config.get(
+            "timeout",
+            600,
+        )
+
+        if (
+            not isinstance(
+                execution_timeout,
+                int,
+            )
+            or isinstance(
+                execution_timeout,
+                bool,
+            )
+            or execution_timeout <= 0
+        ):
+            raise SystemExit(
+                f"Invalid execution timeout for profile: "
+                f"{profile_name}. "
+                "Expected a positive integer."
+            )
+
         self.executor = ToolExecutor(
             runtime_state=self.runtime,
+            default_timeout=execution_timeout,
         )
 
         vulnerability_intelligence = self.profile.get(

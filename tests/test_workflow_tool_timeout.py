@@ -109,3 +109,50 @@ def test_nuclei_execution_timeout_falls_back_without_tool_timeout():
     )
 
     assert _execution_timeout(context, 600) == 600
+
+
+def test_workflow_engine_uses_profile_execution_timeout():
+    from scopeforgex.workflow import WorkflowEngine
+
+    expected = {
+        "fast": 300,
+        "standard": 600,
+        "full": 1200,
+    }
+
+    for profile_name, timeout in expected.items():
+        engine = WorkflowEngine(profile_name)
+
+        assert engine.executor.default_timeout == timeout
+        assert engine.profile["execution"]["timeout"] == timeout
+
+
+def test_workflow_engine_rejects_invalid_profile_execution_timeout(
+    monkeypatch,
+):
+    from scopeforgex import workflow
+
+    invalid_profile = {
+        "execution": {
+            "continue_on_error": True,
+            "timeout": 0,
+        },
+        "vulnerability_intelligence": {
+            "allow_network": False,
+        },
+    }
+
+    monkeypatch.setattr(
+        workflow,
+        "_load_profile",
+        lambda profile_name: invalid_profile,
+    )
+
+    try:
+        workflow.WorkflowEngine("standard")
+    except SystemExit as exc:
+        assert "Invalid execution timeout" in str(exc)
+    else:
+        raise AssertionError(
+            "WorkflowEngine accepted a non-positive execution timeout."
+        )

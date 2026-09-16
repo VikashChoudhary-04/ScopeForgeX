@@ -30,6 +30,7 @@ profiles:
 
     execution:
       continue_on_error: true
+      timeout: 300
 
     vulnerability_intelligence:
       allow_network: true
@@ -147,6 +148,7 @@ profiles:
 
     execution:
       continue_on_error: true
+      timeout: 600
 
     vulnerability_intelligence:
       allow_network: true
@@ -317,6 +319,7 @@ profiles:
 
     execution:
       continue_on_error: true
+      timeout: 1200
 
     vulnerability_intelligence:
       allow_network: true
