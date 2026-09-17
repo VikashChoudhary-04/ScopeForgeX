@@ -80,6 +80,106 @@ def test_software_assessment_defaults_to_unchecked():
     assert assessment.kev_count == 0
 
 
+def test_executor_retains_software_assessments_across_vi_calls(monkeypatch):
+    """Executor retains assessments across real VI calls that reset the engine."""
+    from scopeforgex.intelligence.models import SoftwareAssessment
+    from scopeforgex.runtime.tool_executor import ToolExecutor
+
+    executor = ToolExecutor()
+
+    first = SoftwareAssessment(
+        product="jquery",
+        version="3.4.1",
+        vendor="jquery",
+        cpe="cpe:2.3:a:jquery:jquery:3.4.1:*:*:*:*:*:*:*",
+        target="https://example.test/",
+        host="example.test",
+        port=443,
+        url="https://example.test/",
+        source_tool="scopeforgex",
+        detection_method="Software / Framework Identity Analyzer",
+        confidence="High",
+        nvd_checked=True,
+        applicable_cve_count=2,
+        kev_count=1,
+    )
+
+    second = SoftwareAssessment(
+        product="lodash",
+        version="4.17.21",
+        vendor="lodash",
+        cpe="cpe:2.3:a:lodash:lodash:4.17.21:*:*:*:*:*:*:*",
+        target="https://example.test/",
+        host="example.test",
+        port=443,
+        url="https://example.test/",
+        source_tool="scopeforgex",
+        detection_method="Software / Framework Identity Analyzer",
+        confidence="High",
+        nvd_checked=True,
+        applicable_cve_count=0,
+        kev_count=0,
+    )
+
+    calls = iter(
+        [
+            [first],
+            [second],
+            [first],
+        ]
+    )
+
+    def fake_analyze(observations):
+        assessments = next(calls)
+
+        executor.vulnerability_intelligence._software_assessments.clear()
+        executor.vulnerability_intelligence._software_assessments.extend(
+            assessments
+        )
+
+        return []
+
+    monkeypatch.setattr(
+        executor.vulnerability_intelligence,
+        "analyze",
+        fake_analyze,
+    )
+
+    context = {
+        "vulnerability_intelligence_allow_network": False,
+        "errors": [],
+    }
+
+    executor._run_vulnerability_intelligence(
+        [{"observation_type": "software"}],
+        context,
+    )
+
+    assert len(executor.software_assessments) == 1
+    assert executor.software_assessments[0].product == "jquery"
+
+    executor._run_vulnerability_intelligence(
+        [{"observation_type": "software"}],
+        context,
+    )
+
+    assert len(executor.software_assessments) == 2
+    assert {
+        item.product
+        for item in executor.software_assessments
+    } == {"jquery", "lodash"}
+
+    executor._run_vulnerability_intelligence(
+        [{"observation_type": "software"}],
+        context,
+    )
+
+    assert len(executor.software_assessments) == 2
+    assert {
+        item.product
+        for item in executor.software_assessments
+    } == {"jquery", "lodash"}
+
 def test_stage6_reportdata_serializes_software_assessments():
     from datetime import datetime, timezone
 

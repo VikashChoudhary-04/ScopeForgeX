@@ -1965,6 +1965,99 @@ class ToolExecutor:
             )
             existing.add(identity)
 
+    @staticmethod
+    def _software_assessment_identity(
+        assessment: Any,
+    ) -> tuple[Any, ...]:
+        """
+        Build a stable identity for executor-level software assessments.
+
+        VulnerabilityIntelligenceEngine intentionally resets its assessment
+        collection for each analyze() call. ToolExecutor, however, represents
+        the complete assessment lifecycle and therefore must retain distinct
+        assessments across multiple VI calls.
+        """
+
+        as_dict = getattr(
+            assessment,
+            "as_dict",
+            None,
+        )
+
+        data: Mapping[str, Any] | None = None
+
+        if callable(as_dict):
+            try:
+                value = as_dict()
+            except Exception:
+                value = None
+
+            if isinstance(value, Mapping):
+                data = value
+
+        if data is None and isinstance(
+            assessment,
+            Mapping,
+        ):
+            data = assessment
+
+        fields = (
+            "product",
+            "version",
+            "vendor",
+            "cpe",
+            "target",
+            "host",
+            "port",
+            "url",
+        )
+
+        if data is not None:
+            return tuple(
+                data.get(field)
+                for field in fields
+            )
+
+        return tuple(
+            getattr(
+                assessment,
+                field,
+                None,
+            )
+            for field in fields
+        )
+
+    def _append_unique_software_assessments(
+        self,
+        assessments: Iterable[Any],
+    ) -> None:
+        """
+        Accumulate software assessments across the complete assessment.
+
+        VulnerabilityIntelligenceEngine.software_assessments is intentionally
+        scoped to one analyze() call. ToolExecutor owns the broader workflow
+        lifecycle, so assessments produced by earlier tool executions must not
+        be discarded when a later VI call resets the engine collection.
+        """
+
+        existing = {
+            self._software_assessment_identity(item)
+            for item in self._software_assessments
+        }
+
+        for assessment in assessments:
+            identity = self._software_assessment_identity(
+                assessment
+            )
+
+            if identity in existing:
+                continue
+
+            self._software_assessments.append(
+                assessment
+            )
+            existing.add(identity)
+
     def _run_vulnerability_intelligence(
         self,
         observations: list[Any],
@@ -2002,7 +2095,7 @@ class ToolExecutor:
             results
         )
 
-        self._software_assessments = list(
+        self._append_unique_software_assessments(
             self.vulnerability_intelligence.software_assessments
         )
 
