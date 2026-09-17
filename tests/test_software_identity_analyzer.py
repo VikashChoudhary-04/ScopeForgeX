@@ -103,10 +103,47 @@ def test_preserves_detection_evidence():
         == "Express ^4.22.1"
     )
 
-    assert (
-        data["evidence"]["source_evidence"]["text"]
-        == stdout
+    assert "text" not in data["evidence"]["source_evidence"]
+
+
+def test_stdout_raw_payload_is_not_propagated_as_text():
+    """Raw stdout used for detection must not survive as report evidence."""
+
+    stdout = (
+        '{"timestamp":"2026-09-17T01:16:37.450785306-04:00",'
+        '"url":"https://warrantyindia.com/about.js",'
+        '"status_code":200,'
+        '"body":"FULL HTTP RESPONSE BODY MUST NOT BE PROPAGATED",'
+        '"request":"FULL HTTP REQUEST MUST NOT BE PROPAGATED",'
+        '"response":"FULL HTTP RESPONSE MUST NOT BE PROPAGATED",'
+        '"tech":["jQuery:3.4.1"]}'
     )
+
+    analyzer = SoftwareIdentityAnalyzer()
+
+    results = analyzer.analyze(
+        {
+            "target": "warrantyindia.com",
+            "stdout": stdout,
+            "stderr": "",
+        }
+    )
+
+    assert results
+
+    data = results[0].as_dict()
+    source_evidence = data["evidence"]["source_evidence"]
+
+    assert "text" not in source_evidence
+    assert "body" not in source_evidence
+    assert "request" not in source_evidence
+    assert "response" not in source_evidence
+    assert "FULL HTTP RESPONSE BODY MUST NOT BE PROPAGATED" not in str(
+        source_evidence
+    )
+
+    assert data["metadata"]["product"] == "jquery"
+    assert data["metadata"]["version"] == "3.4.1"
 
 
 def test_detects_express_from_collector_evidence():

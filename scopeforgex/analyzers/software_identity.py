@@ -329,7 +329,6 @@ class SoftwareIdentityAnalyzer:
                     "stdout",
                     {
                         "source": "stdout",
-                        "text": stdout,
                     },
                 )
 
