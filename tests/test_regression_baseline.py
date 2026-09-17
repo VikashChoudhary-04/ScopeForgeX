@@ -172,9 +172,6 @@ def _mock_run_command(
     if executable == "httpx":
         tool = "httpx"
 
-    elif executable == "nuclei":
-        tool = "nuclei"
-
     elif executable == "subhunt":
         tool = "subhunt"
 
@@ -625,7 +622,7 @@ def test_workflow_native_state_for_fast_profile(
 
     assert len(
         native_results
-    ) == 21
+    ) == 14
 
     assert {
         item.tool
@@ -633,7 +630,13 @@ def test_workflow_native_state_for_fast_profile(
     } == {
         "subhunt",
         "httpx",
-        "nuclei",
+        "wapiti",
+    }
+
+    expected_native_counts = {
+        "subhunt": 7,
+        "httpx": 7,
+        "wapiti": 0,
     }
 
     for item in execution_results:
@@ -647,13 +650,17 @@ def test_workflow_native_state_for_fast_profile(
             "native_analyzers"
         ]
 
+        expected_count = expected_native_counts[
+            item.tool
+        ]
+
         assert native[
             "analyzer_count"
-        ] == 7
+        ] == expected_count
 
         assert len(
             native["results"]
-        ) == 7
+        ) == expected_count
 
         for analyzer_result in native[
             "results"

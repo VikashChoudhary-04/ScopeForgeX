@@ -753,12 +753,15 @@ def build_fast_profile() -> AssessmentProfile:
             "jsluice": _tool(
                 enabled=False,
             ),
-            "nuclei": _tool(
+            "wapiti": _tool(
                 options={
-                    "severity": (
-                        "critical",
-                        "high",
-                    ),
+                    "scope": "domain",
+                    "max_links_per_page": 100,
+                    "max_files_per_dir": 50,
+                    "max_scan_time": 540,
+                    "max_attack_time": 480,
+                    "max_parameters": 50,
+                    "timeout": 10,
                 }
             ),
             "nikto": _tool(
@@ -1037,15 +1040,15 @@ def build_full_profile() -> AssessmentProfile:
             "jsluice": _tool(
                 enabled=True,
             ),
-            "nuclei": _tool(
+            "wapiti": _tool(
                 options={
-                    "severity": (
-                        "critical",
-                        "high",
-                        "medium",
-                        "low",
-                        "info",
-                    ),
+                    "scope": "domain",
+                    "max_links_per_page": 100,
+                    "max_files_per_dir": 50,
+                    "max_scan_time": 540,
+                    "max_attack_time": 480,
+                    "max_parameters": 50,
+                    "timeout": 10,
                 }
             ),
             "nikto": _tool(
