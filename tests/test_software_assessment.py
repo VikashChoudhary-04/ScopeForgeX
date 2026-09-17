@@ -394,6 +394,73 @@ def test_report_generator_renders_software_assessments(tmp_path):
     assert "0" in html
 
 
+
+def test_findings_report_cve_summary_includes_all_severities(tmp_path):
+    from reporting.models import ReportData, ScanStatistics
+    from reporting.report_generator import ReportGenerator
+
+    findings = []
+    severities = [
+        ("Critical", "CVE-TEST-CRITICAL"),
+        ("High", "CVE-TEST-HIGH"),
+        ("Medium", "CVE-TEST-MEDIUM"),
+        ("Low", "CVE-TEST-LOW"),
+        ("Informational", "CVE-TEST-INFORMATIONAL"),
+    ]
+
+    for severity, cve in severities:
+        findings.append(
+            {
+                "finding_id": f"SF-TEST-{severity.upper()}",
+                "title": f"Synthetic {severity} CVE Finding",
+                "category": "test",
+                "severity": severity,
+                "confidence": "High",
+                "target": "http://127.0.0.1:3000",
+                "host": "127.0.0.1",
+                "port": 3000,
+                "url": "http://127.0.0.1:3000",
+                "parameter": None,
+                "description": "Synthetic CVE regression-test finding.",
+                "evidence": [],
+                "source_tool": "scopeforgex-test",
+                "detection_method": "regression_test",
+                "timestamp": "2026-09-09T00:00:30",
+                "cwe": None,
+                "cve": cve,
+                "references": [],
+                "impact": "Regression-test only.",
+                "remediation": "Regression-test only.",
+                "status": "Open",
+            }
+        )
+
+    report = ReportData(
+        target="http://127.0.0.1:3000",
+        profile="fast",
+        target_type="url",
+        start_time="2026-09-09T00:00:00",
+        end_time="2026-09-09T00:01:00",
+        statistics=ScanStatistics(),
+        findings=findings,
+    )
+
+    output = tmp_path / "findings.md"
+
+    ReportGenerator(report).generate_findings_markdown(
+        str(output)
+    )
+
+    markdown = output.read_text()
+
+    assert "## CVE Summary" in markdown
+
+    for severity, cve in severities:
+        assert f"`{cve}`" in markdown
+        assert f"| `{cve}` | {severity} |" in markdown
+
+    assert "| CVEs | **5** |" in markdown
+
 def test_findings_report_is_concise_without_raw_evidence(tmp_path):
     from reporting.models import ReportData, ScanStatistics
     from reporting.report_generator import ReportGenerator
