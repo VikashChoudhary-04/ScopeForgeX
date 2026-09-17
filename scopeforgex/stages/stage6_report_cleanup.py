@@ -53,6 +53,49 @@ _SEVERITIES = (
 )
 
 
+_REPORT_FORBIDDEN_EVIDENCE_KEYS = frozenset(
+    {
+        "body",
+        "raw_body",
+        "raw_header",
+        "raw_headers",
+        "request",
+        "raw_request",
+        "response",
+        "raw_response",
+    }
+)
+
+
+def _sanitize_report_payload(value: Any) -> Any:
+    """
+    Remove raw HTTP payload material from the published report projection.
+
+    Raw HTTP request/response material remains available to the runtime,
+    analyzers, and persisted raw-evidence artifacts. This sanitizer applies
+    only to the final report representation so large or sensitive HTTP
+    payloads are not duplicated throughout report.json.
+
+    Keys are matched case-insensitively and nested mappings/sequences are
+    sanitized recursively. The input object is never mutated.
+    """
+
+    if isinstance(value, Mapping):
+        return {
+            str(key): _sanitize_report_payload(item)
+            for key, item in value.items()
+            if str(key).lower() not in _REPORT_FORBIDDEN_EVIDENCE_KEYS
+        }
+
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [
+            _sanitize_report_payload(item)
+            for item in value
+        ]
+
+    return value
+
+
 def _serialize(value: Any) -> Any:
     """Convert ScopeForgeX objects into JSON-compatible values."""
 
@@ -3484,6 +3527,13 @@ def stage6_report_cleanup(
         data = _report_state(
             ctx,
             paths,
+        )
+
+        # Publish a compact report projection. Raw HTTP request/response
+        # payloads remain available in runtime/raw-evidence storage but are
+        # intentionally excluded from the canonical human-facing report.
+        data = _sanitize_report_payload(
+            data
         )
 
         report = _report_data_from_state(
