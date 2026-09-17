@@ -104,6 +104,95 @@ def test_report_payload_sanitizer_removes_raw_http_material_recursively():
     assert "response" in original["finding"]["evidence"]
 
 
+def test_json_exporter_payload_contains_no_raw_http_material():
+    from scopeforgex.stages.stage6_report_cleanup import (
+        _report_data_from_state,
+    )
+    from reporting import JSONReportExporter
+
+    now = datetime.now(timezone.utc)
+    evidence = _httpx_payload()
+
+    state = {
+        "target": "https://example.test/",
+        "profile": "fast",
+        "target_type": "url",
+        "run_id": "exporter-contract-test",
+        "start_time": now,
+        "end_time": now,
+        "duration": 0.0,
+        "statistics": {},
+        "findings": [
+            {
+                "finding_id": "SF-HTTPX-EXPORT-001",
+                "title": "WEB_SERVER",
+                "category": "WEB_SERVER",
+                "severity": "Informational",
+                "confidence": "Informational",
+                "target": "https://example.test/",
+                "source_tool": "httpx",
+                "detection_method": "httpx web server detection",
+                "evidence": evidence,
+            }
+        ],
+        "correlation_groups": [],
+        "correlated_findings": [],
+        "collector_results": [
+            {
+                "tool": "httpx",
+                "observations": [
+                    {
+                        "observation_type": "HTTP_SERVICE",
+                        "evidence": evidence,
+                    }
+                ],
+            }
+        ],
+        "execution_results": [
+            {
+                "tool": "httpx",
+                "status": "success",
+                "findings": [{"evidence": evidence}],
+            }
+        ],
+        "native_analyzer_results": [],
+        "vulnerability_intelligence_results": [],
+        "software_assessments": [],
+        "stage_results": [],
+        "evidence_references": [],
+        "raw_evidence_references": [],
+        "finding_evidence_references": [],
+        "correlated_evidence_references": [],
+        "generated_files": [],
+        "warnings": [],
+        "errors": [],
+        "analysis_metadata": {},
+        "summary": {},
+        "vulnerability_intelligence": {},
+        "report_views": {},
+    }
+
+    published_state = _sanitize_report_payload(state)
+    report = _report_data_from_state(published_state)
+    payload = JSONReportExporter(report).build_payload()
+
+    violations = [
+        key
+        for key in _walk_keys(payload)
+        if key in _FORBIDDEN
+    ]
+
+    assert violations == []
+
+    finding_evidence = payload["findings"][0]["evidence"]
+
+    assert finding_evidence["url"] == "https://example.test/"
+    assert finding_evidence["status_code"] == 200
+    assert finding_evidence["content_type"] == "text/html"
+    assert finding_evidence["content_length"] == 45340
+    assert finding_evidence["webserver"] == "nginx"
+
+
 def test_stage6_report_state_can_be_projected_without_raw_http_material():
     now = datetime.now(timezone.utc)
     evidence = _httpx_payload()
