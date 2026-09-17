@@ -263,6 +263,7 @@ class SubhuntTool(
             [
                 "--bruteforce",
                 str(wordlist),
+                "--quiet",
             ]
         )
 
