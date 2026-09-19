@@ -40,7 +40,7 @@ Adapter Execution Contract
     |
     +-- generic build_command()
     |
-    +-- legacy run(ctx)
+    +-- canonical adapter execution
     ↓
 ExecutionResult
     ↓
@@ -182,7 +182,7 @@ class ToolExecutor:
 
     1. Custom ToolAdapter run() implementation.
     2. New-style build_command() execution path.
-    3. Legacy run(ctx) compatibility path.
+    3. Canonical adapter execution path.
 
     Collection and native analysis occur only after an execution result already
     exists. Neither operation launches the external executable a second time.
@@ -2956,8 +2956,7 @@ class ToolExecutor:
         Execution precedence:
 
         1. Custom ToolAdapter run().
-        2. New-style build_command().
-        3. Legacy run(ctx).
+        2. Canonical build_command() / build_arguments() execution.
 
         All completed ExecutionResult instances pass through the same
         collector/native-analysis boundary.
@@ -3002,22 +3001,10 @@ class ToolExecutor:
 
             else:
 
-                run = getattr(
-                    adapter,
-                    "run",
-                    None,
-                )
-
-                if not callable(
-                    run
-                ):
-                    raise TypeError(
-                        "Tool adapter must expose either "
-                        "build_command() or run(ctx)."
-                    )
-
-                result = run(
-                    context
+                raise TypeError(
+                    "Tool adapter must expose either a custom run() "
+                    "implementation or the canonical build_command() "
+                    "and build_arguments() contract."
                 )
 
             if isinstance(
