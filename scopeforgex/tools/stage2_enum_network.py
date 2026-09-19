@@ -6,13 +6,8 @@ Deprecated Stage 2 Network Enumeration Compatibility Module
 The final ScopeForgeX architecture uses Nmap as the primary network
 discovery and enumeration tool.
 
-The previous integrations for:
-
-    - enum4linux-ng
-    - snmpwalk
-    - testssl.sh
-
-are not implemented in this compatibility module.
+Previous secondary network-enumeration integrations are not
+implemented in this compatibility module.
 
 Nmap owns the primary network discovery capability, including:
 
