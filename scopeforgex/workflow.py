@@ -1178,6 +1178,52 @@ def _conditional_tool_skip_result(
 
         return None
 
+    if input_type == "domain":
+        target_hostname = _target_hostname(
+            ctx.get(
+                "target",
+            )
+        )
+
+        if target_hostname is None:
+            return ExecutionResult.skipped(
+                tool=tool_name,
+                capability=capability or "unknown",
+                reason=(
+                    f"{tool_name} skipped: "
+                    "no applicable domain target was identified."
+                ),
+            )
+
+        try:
+            ipaddress.ip_address(
+                target_hostname
+            )
+        except ValueError:
+            pass
+        else:
+            return ExecutionResult.skipped(
+                tool=tool_name,
+                capability=capability or "unknown",
+                reason=(
+                    f"{tool_name} skipped: "
+                    "domain reconnaissance is not applicable "
+                    "to an IP-literal target."
+                ),
+            )
+
+        if "." not in target_hostname:
+            return ExecutionResult.skipped(
+                tool=tool_name,
+                capability=capability or "unknown",
+                reason=(
+                    f"{tool_name} skipped: "
+                    "no applicable domain target was identified."
+                ),
+            )
+
+        return None
+
     if input_type in {
         "url",
         "host",

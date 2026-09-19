@@ -158,6 +158,7 @@ profiles:
 
       amass:
         enabled: true
+        mode: conditional
         options:
           passive: true
           active: false
@@ -327,6 +328,7 @@ profiles:
 
       amass:
         enabled: true
+        mode: conditional
         options:
           passive: false
           active: true

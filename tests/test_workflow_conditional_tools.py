@@ -12,20 +12,22 @@ def _tool(
     name: str,
     input_type: str,
     capability: str,
+    phase: str = "vulnerability_validation",
 ):
     return SimpleNamespace(
         name=name,
         input_type=input_type,
         capability=capability,
-        phase="vulnerability_validation",
+        phase=phase,
     )
 
 
 def _profile(
     name: str,
+    section: str = "validation",
 ):
     return {
-        "validation": {
+        section: {
             name: {
                 "enabled": True,
                 "mode": "conditional",
@@ -327,6 +329,134 @@ def test_dig_skipped_for_ipv6_literal_target():
         tool,
         {"target": "::1"},
         _profile("dig"),
+        executor,
+    )
+
+    assert result is not None
+    assert result.status == "skipped"
+    assert "IP-literal target" in result.metadata["skip_reason"]
+
+
+def test_amass_conditional_proceeds_for_domain_target():
+    tool = _tool(
+        "amass",
+        "domain",
+        "attack_surface_discovery",
+        phase="reconnaissance",
+    )
+
+    executor = FakeExecutor()
+
+    result = _conditional_tool_skip_result(
+        tool,
+        {"target": "example.com"},
+        _profile("amass", section="reconnaissance"),
+        executor,
+    )
+
+    assert result is None
+
+
+def test_amass_conditional_proceeds_for_https_domain_target():
+    tool = _tool(
+        "amass",
+        "domain",
+        "attack_surface_discovery",
+        phase="reconnaissance",
+    )
+
+    executor = FakeExecutor()
+
+    result = _conditional_tool_skip_result(
+        tool,
+        {"target": "https://example.com"},
+        _profile("amass", section="reconnaissance"),
+        executor,
+    )
+
+    assert result is None
+
+
+def test_amass_skipped_for_localhost_target():
+    tool = _tool(
+        "amass",
+        "domain",
+        "attack_surface_discovery",
+        phase="reconnaissance",
+    )
+
+    executor = FakeExecutor()
+
+    result = _conditional_tool_skip_result(
+        tool,
+        {"target": "localhost"},
+        _profile("amass", section="reconnaissance"),
+        executor,
+    )
+
+    assert result is not None
+    assert result.status == "skipped"
+    assert "no applicable domain target" in result.metadata["skip_reason"]
+
+
+def test_amass_skipped_for_localhost_url_target():
+    tool = _tool(
+        "amass",
+        "domain",
+        "attack_surface_discovery",
+        phase="reconnaissance",
+    )
+
+    executor = FakeExecutor()
+
+    result = _conditional_tool_skip_result(
+        tool,
+        {"target": "http://localhost:3000"},
+        _profile("amass", section="reconnaissance"),
+        executor,
+    )
+
+    assert result is not None
+    assert result.status == "skipped"
+    assert "no applicable domain target" in result.metadata["skip_reason"]
+
+
+def test_amass_skipped_for_ipv4_target():
+    tool = _tool(
+        "amass",
+        "domain",
+        "attack_surface_discovery",
+        phase="reconnaissance",
+    )
+
+    executor = FakeExecutor()
+
+    result = _conditional_tool_skip_result(
+        tool,
+        {"target": "127.0.0.1"},
+        _profile("amass", section="reconnaissance"),
+        executor,
+    )
+
+    assert result is not None
+    assert result.status == "skipped"
+    assert "IP-literal target" in result.metadata["skip_reason"]
+
+
+def test_amass_skipped_for_ipv6_target():
+    tool = _tool(
+        "amass",
+        "domain",
+        "attack_surface_discovery",
+        phase="reconnaissance",
+    )
+
+    executor = FakeExecutor()
+
+    result = _conditional_tool_skip_result(
+        tool,
+        {"target": "::1"},
+        _profile("amass", section="reconnaissance"),
         executor,
     )
 
