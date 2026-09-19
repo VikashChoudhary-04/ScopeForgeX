@@ -21,7 +21,7 @@ Evidence is deliberately separate from the Finding identity.
 For example, two observations may produce the same semantic finding while
 having different evidence:
 
-    Nuclei
+    Wapiti
         -> finding
         -> HTTP response evidence
 

@@ -395,7 +395,7 @@ def classify_confidence(
 
     Importantly, this function does not infer confirmation merely because:
 
-    - the source is Nuclei,
+    - the source is an automated vulnerability scanner,
     - the source is Nmap NSE,
     - evidence exists,
     - severity is High/Critical,

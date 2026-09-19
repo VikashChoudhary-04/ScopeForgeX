@@ -83,7 +83,7 @@ class CollectorObservation:
         Katana
             ENDPOINT
 
-        Nuclei
+        Wapiti
             VULNERABILITY
     """
 

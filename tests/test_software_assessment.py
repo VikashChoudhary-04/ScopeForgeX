@@ -362,7 +362,7 @@ def test_report_data_derives_tool_results_from_execution_results():
             metadata={"status": "skipped"},
         ),
         ExecutionResult(
-            tool="nuclei",
+            tool="nikto",
             capability="vulnerability_assessment",
             success=False,
             started_at=started,
@@ -401,7 +401,7 @@ def test_report_data_derives_tool_results_from_execution_results():
     assert report.tool_results == {
         "httpx": "success",
         "nmap": "skipped",
-        "nuclei": "failed",
+        "nikto": "failed",
     }
     assert len(report.execution_results) == 3
 

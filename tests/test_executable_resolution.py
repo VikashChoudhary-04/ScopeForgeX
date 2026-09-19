@@ -85,11 +85,11 @@ def test_resolver_uses_sudo_user_from_supplied_environment(
     )
 
     expected = Path(
-        "/home/kali/go/bin/nuclei"
+        "/home/kali/go/bin/katana"
     )
 
     assert resolve_executable(
-        "nuclei",
+        "katana",
         env={
             "HOME": "/root",
             "SUDO_USER": "kali",

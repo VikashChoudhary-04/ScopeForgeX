@@ -373,7 +373,6 @@ class ScanStatistics:
 
     urls_discovered: int = 0
 
-    nuclei_findings: int = 0
 
     files_generated: int = 0
 

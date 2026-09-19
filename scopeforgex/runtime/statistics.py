@@ -46,7 +46,6 @@ class WorkflowStatistics:
     # Vulnerability Assessment
     # ------------------------------------------------------------------
 
-    nuclei_findings: int = 0
     findings_total: int = 0
 
     findings_info: int = 0
@@ -86,9 +85,6 @@ class WorkflowStatistics:
 
     def increment_endpoints(self, count: int = 1) -> None:
         self.endpoints_discovered += count
-
-    def increment_nuclei_findings(self, count: int = 1) -> None:
-        self.nuclei_findings += count
 
     def increment_findings(
         self,

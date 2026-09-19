@@ -30,7 +30,7 @@ WhatWeb
 testssl.sh
     -> TLS 1.0 enabled
 
-Nuclei
+Wapiti
     -> related Apache issue
 
 ScopeForgeX correlation understands that these observations belong to the

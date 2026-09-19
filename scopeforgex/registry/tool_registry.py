@@ -525,7 +525,6 @@ def build_registry() -> dict[str, ToolDefinition]:
 
     from scopeforgex.tools.stage3_vuln import (
         NiktoTool,
-        NucleiTool,
         WapitiTool,
     )
 
@@ -659,11 +658,6 @@ def build_registry() -> dict[str, ToolDefinition]:
     register_tool(
         WapitiTool,
         parser="Wapiti Collector",
-    )
-
-    register_tool(
-        NucleiTool,
-        parser="Nuclei Collector",
     )
 
     register_tool(

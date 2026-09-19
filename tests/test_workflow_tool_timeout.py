@@ -2,13 +2,13 @@ from pathlib import Path
 
 from scopeforgex.registry.tool_base import ToolContext
 from scopeforgex.tools.stage3_vuln import (
-    NucleiTool,
+    NiktoTool,
     _execution_timeout,
 )
 from scopeforgex.workflow import _create_tool_context
 
 
-def test_create_nuclei_context_injects_execution_timeout(tmp_path):
+def test_create_nikto_context_injects_execution_timeout(tmp_path):
     ctx = {
         "target": "example.com",
         "outdir": str(tmp_path),
@@ -17,19 +17,11 @@ def test_create_nuclei_context_injects_execution_timeout(tmp_path):
 
     profile = {
         "vulnerability": {
-            "nuclei": {
+            "nikto": {
                 "enabled": True,
                 "options": {
-                    "severity": [
-                        "info",
-                        "low",
-                        "medium",
-                        "high",
-                        "critical",
-                    ],
-                    "rate_limit": 100,
                     "timeout": 10,
-                    "retries": 2,
+                    "tuning": "123",
                 },
             },
         },
@@ -37,7 +29,7 @@ def test_create_nuclei_context_injects_execution_timeout(tmp_path):
 
     context = _create_tool_context(
         ctx,
-        NucleiTool.definition,
+        NiktoTool.definition,
         profile,
         execution_timeout=600,
     )
@@ -45,18 +37,9 @@ def test_create_nuclei_context_injects_execution_timeout(tmp_path):
     assert isinstance(context, ToolContext)
     assert context.options["timeout"] == 10
     assert context.options["tool_timeout"] == 600
-    assert context.options["rate_limit"] == 100
-    assert context.options["retries"] == 2
-    assert context.options["severity"] == [
-        "info",
-        "low",
-        "medium",
-        "high",
-        "critical",
-    ]
+    assert context.options["tuning"] == "123"
 
-
-def test_create_nuclei_context_preserves_explicit_tool_timeout(tmp_path):
+def test_create_nikto_context_preserves_explicit_tool_timeout(tmp_path):
     ctx = {
         "target": "example.com",
         "outdir": str(tmp_path),
@@ -65,7 +48,7 @@ def test_create_nuclei_context_preserves_explicit_tool_timeout(tmp_path):
 
     profile = {
         "vulnerability": {
-            "nuclei": {
+            "nikto": {
                 "enabled": True,
                 "options": {
                     "timeout": 10,
@@ -77,7 +60,7 @@ def test_create_nuclei_context_preserves_explicit_tool_timeout(tmp_path):
 
     context = _create_tool_context(
         ctx,
-        NucleiTool.definition,
+        NiktoTool.definition,
         profile,
         execution_timeout=600,
     )
@@ -85,8 +68,7 @@ def test_create_nuclei_context_preserves_explicit_tool_timeout(tmp_path):
     assert context.options["timeout"] == 10
     assert context.options["tool_timeout"] == 900
 
-
-def test_nuclei_execution_timeout_uses_tool_timeout():
+def test_execution_timeout_uses_tool_timeout():
     context = ToolContext(
         target="example.com",
         output_dir=Path("."),
@@ -99,7 +81,7 @@ def test_nuclei_execution_timeout_uses_tool_timeout():
     assert _execution_timeout(context, 600) == 600
 
 
-def test_nuclei_execution_timeout_falls_back_without_tool_timeout():
+def test_execution_timeout_falls_back_without_tool_timeout():
     context = ToolContext(
         target="example.com",
         output_dir=Path("."),

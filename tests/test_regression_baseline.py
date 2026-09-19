@@ -30,7 +30,6 @@ EXPECTED_TOOLS = {
     "whatweb",
     "kiterunner",
     "jsluice",
-    "nuclei",
     "wapiti",
     "nikto",
     "testssl.sh",
@@ -53,7 +52,6 @@ EXPECTED_COLLECTORS = {
     "whatweb",
     "kiterunner",
     "jsluice",
-    "nuclei",
     "wapiti",
     "nikto",
     "testssl",
@@ -99,7 +97,6 @@ SMOKE_OUTPUTS = {
     "kiterunner": "https://example.com/api [200]\n",
     "nikto": "+ Server: nginx\n",
     "nmap": "80/tcp open http\n",
-    "nuclei": "[medium] test [http] [https://example.com]\n",
     "wapiti": "",
     "sqlmap": "Parameter: id (GET)\n",
     "sstimap": "parameter is vulnerable\n",
@@ -266,7 +263,7 @@ def test_tool_registry_contains_expected_tools() -> None:
     )
 
     assert tools == EXPECTED_TOOLS
-    assert len(tools) == 20
+    assert len(tools) == 19
 
     for name in sorted(tools):
         definition = get_tool_definition(
@@ -287,7 +284,7 @@ def test_all_collectors_are_registered_and_instantiable() -> None:
     )
 
     assert collectors == EXPECTED_COLLECTORS
-    assert len(collectors) == 20
+    assert len(collectors) == 19
 
     for name in sorted(collectors):
         collector_class = get_collector_class(

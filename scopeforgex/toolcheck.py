@@ -22,7 +22,7 @@ def is_tool_installed(tool_name: str) -> bool:
 
     Args:
         tool_name:
-            Executable name (e.g. "nuclei", "httpx", "ffuf").
+            Executable name (e.g. "httpx", "katana", "ffuf").
 
     Returns:
         True if the executable can be resolved, otherwise False.

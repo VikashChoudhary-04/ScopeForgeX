@@ -60,7 +60,6 @@ from scopeforgex.collectors.kiterunner import KiterunnerCollector
 from scopeforgex.collectors.nikto import NiktoCollector
 from scopeforgex.collectors.nmap import NmapCollector
 from scopeforgex.collectors.wapiti import WapitiCollector
-from scopeforgex.collectors.nuclei import NucleiCollector
 from scopeforgex.collectors.sqlmap import SQLMapCollector
 from scopeforgex.collectors.sstimap import SSTImapCollector
 from scopeforgex.collectors.subhunt import SubhuntCollector
@@ -85,7 +84,6 @@ _COLLECTOR_REGISTRY: dict[str, type[Any]] = {
     "kiterunner": KiterunnerCollector,
     "jsluice": JSLuiceCollector,
     "wapiti": WapitiCollector,
-    "nuclei": NucleiCollector,
     "nikto": NiktoCollector,
     "testssl": TestSSLCollector,
     "sqlmap": SQLMapCollector,

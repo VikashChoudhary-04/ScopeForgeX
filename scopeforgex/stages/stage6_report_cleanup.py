@@ -3003,7 +3003,6 @@ def _report_data_from_state(
         "alive_hosts",
         "final_hosts",
         "urls_discovered",
-        "nuclei_findings",
         "files_generated",
         "tools_executed",
         "stages_executed",

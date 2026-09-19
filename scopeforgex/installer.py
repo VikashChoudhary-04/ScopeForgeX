@@ -3,7 +3,7 @@ ScopeForgeX Tool Installer
 ==========================
 
 Installs and verifies the external tools required by the canonical
-ScopeForgeX 20-tool registry.
+ScopeForgeX 19-tool registry.
 
 Supported platform:
     - Linux (APT-based distributions)
@@ -27,7 +27,6 @@ APT packages
 Go-installed tools
     - httpx
     - katana
-    - nuclei
     - jsluice
 
 Source-built tools
@@ -69,7 +68,6 @@ REQUIRED_TOOLS = [
     "whatweb",
     "kiterunner",
     "jsluice",
-    "nuclei",
     "wapiti",
     "nikto",
     "testssl.sh",
@@ -106,10 +104,6 @@ GO_TOOLS = [
     (
         "katana",
         "github.com/projectdiscovery/katana/cmd/katana@latest",
-    ),
-    (
-        "nuclei",
-        "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
     ),
     (
         "jsluice",
@@ -764,7 +758,7 @@ def install_tools() -> None:
     install_jwt_tool()
 
     info(
-        "Verifying canonical 20-tool installation..."
+        "Verifying canonical 19-tool installation..."
     )
 
     missing = [
