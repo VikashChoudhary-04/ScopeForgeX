@@ -1,0 +1,107 @@
+Starting Nmap 7.99 ( https://nmap.org ) at 2026-09-18 10:53 -0400
+Nmap scan report for warrantyindia.com (101.53.149.53)
+Host is up (0.022s latency).
+Other addresses for warrantyindia.com (not scanned): 64:ff9b::6535:9535
+rDNS record for 101.53.149.53: 101-53-149-53.cprapid.com
+Not shown: 980 closed tcp ports (reset)
+PORT     STATE    SERVICE      VERSION
+21/tcp   open     ftp          Pure-FTPd
+|_ssl-date: TLS randomness does not represent time
+| ssl-cert: Subject: commonName=101-53-149-53.cprapid.com
+| Subject Alternative Name: DNS:101-53-149-53.cprapid.com
+| Not valid before: 2026-07-24T09:44:42
+|_Not valid after:  2026-10-22T09:44:41
+25/tcp   filtered smtp
+53/tcp   open     domain       PowerDNS Authoritative Server 4.9.17
+| dns-nsid: 
+|   NSID: 101-53-149-53.cprapid.com (3130312d35332d3134392d35332e637072617069642e636f6d)
+|   id.server: 101-53-149-53.cprapid.com
+|_  bind.version: PowerDNS Authoritative Server 4.9.17 (built Aug 10 2026 00:00:00 by root@bh-centos-9.dev.cpanel.net)
+80/tcp   open     http         Apache httpd
+|_http-title: Extended Warranty
+|_http-server-header: Apache
+110/tcp  open     pop3         Dovecot pop3d
+|_ssl-date: TLS randomness does not represent time
+| ssl-cert: Subject: commonName=warrantyindia.com
+| Subject Alternative Name: DNS:*.warrantyindia.com, DNS:warrantyindia.com
+| Not valid before: 2026-09-08T06:22:06
+|_Not valid after:  2026-12-07T06:22:05
+|_pop3-capabilities: STLS PIPELINING AUTH-RESP-CODE USER SASL(PLAIN LOGIN) UIDL CAPA RESP-CODES TOP
+111/tcp  open     rpcbind      2-4 (RPC #100000)
+| rpcinfo: 
+|   program version    port/proto  service
+|   100000  2,3,4        111/tcp   rpcbind
+|   100000  2,3,4        111/udp   rpcbind
+|   100000  3,4          111/tcp6  rpcbind
+|_  100000  3,4          111/udp6  rpcbind
+135/tcp  filtered msrpc
+139/tcp  filtered netbios-ssn
+143/tcp  open     imap         Dovecot imapd
+| ssl-cert: Subject: commonName=warrantyindia.com
+| Subject Alternative Name: DNS:*.warrantyindia.com, DNS:warrantyindia.com
+| Not valid before: 2026-09-08T06:22:06
+|_Not valid after:  2026-12-07T06:22:05
+|_ssl-date: TLS randomness does not represent time
+|_imap-capabilities: IDLE OK more STARTTLS have listed ID Pre-login SASL-IR LITERAL+ ENABLE AUTH=LOGINA0001 IMAP4rev1 AUTH=PLAIN capabilities LOGIN-REFERRALS post-login
+443/tcp  open     ssl/http     Apache httpd
+| ssl-cert: Subject: commonName=warrantyindia.com
+| Subject Alternative Name: DNS:*.warrantyindia.com, DNS:warrantyindia.com
+| Not valid before: 2026-09-08T06:22:06
+|_Not valid after:  2026-12-07T06:22:05
+|_ssl-date: TLS randomness does not represent time
+|_http-server-header: Apache
+|_http-title: Extended Warranty
+445/tcp  filtered microsoft-ds
+465/tcp  open     ssl/smtp     Exim smtpd 4.100
+| ssl-cert: Subject: commonName=warrantyindia.com
+| Subject Alternative Name: DNS:*.warrantyindia.com, DNS:warrantyindia.com
+| Not valid before: 2026-09-08T06:22:06
+|_Not valid after:  2026-12-07T06:22:05
+|_ssl-date: TLS randomness does not represent time
+| smtp-commands: 101-53-149-53.cprapid.com Hello warrantyindia.com [157.49.121.74], SIZE 52428800, LIMITS MAILMAX=1000 RCPTMAX=50000, 8BITMIME, PIPELINING, PIPECONNECT, AUTH PLAIN LOGIN, HELP
+|_ Commands supported: AUTH HELO EHLO MAIL RCPT DATA BDAT NOOP QUIT RSET HELP
+587/tcp  open     smtp         Exim smtpd 4.100
+|_ssl-date: TLS randomness does not represent time
+| ssl-cert: Subject: commonName=warrantyindia.com
+| Subject Alternative Name: DNS:*.warrantyindia.com, DNS:warrantyindia.com
+| Not valid before: 2026-09-08T06:22:06
+|_Not valid after:  2026-12-07T06:22:05
+| smtp-commands: 101-53-149-53.cprapid.com Hello warrantyindia.com [157.49.121.74], SIZE 52428800, LIMITS MAILMAX=1000 RCPTMAX=50000, 8BITMIME, PIPELINING, PIPECONNECT, STARTTLS, HELP
+|_ Commands supported: AUTH STARTTLS HELO EHLO MAIL RCPT DATA BDAT NOOP QUIT RSET HELP
+993/tcp  open     ssl/imap     Dovecot imapd
+| ssl-cert: Subject: commonName=warrantyindia.com
+| Subject Alternative Name: DNS:*.warrantyindia.com, DNS:warrantyindia.com
+| Not valid before: 2026-09-08T06:22:06
+|_Not valid after:  2026-12-07T06:22:05
+|_ssl-date: TLS randomness does not represent time
+|_imap-capabilities: ID Pre-login SASL-IR more IDLE LITERAL+ AUTH=PLAIN post-login AUTH=LOGINA0001 IMAP4rev1 have OK LOGIN-REFERRALS capabilities listed ENABLE
+995/tcp  open     ssl/pop3     Dovecot pop3d
+| ssl-cert: Subject: commonName=warrantyindia.com
+| Subject Alternative Name: DNS:*.warrantyindia.com, DNS:warrantyindia.com
+| Not valid before: 2026-09-08T06:22:06
+|_Not valid after:  2026-12-07T06:22:05
+|_ssl-date: TLS randomness does not represent time
+|_pop3-capabilities: USER SASL(PLAIN LOGIN) TOP UIDL PIPELINING CAPA RESP-CODES AUTH-RESP-CODE
+3306/tcp open     mysql        MariaDB 5.5.5-10.11.19
+| mysql-info: 
+|   Protocol: 10
+|   Version: 5.5.5-10.11.19-MariaDB
+|   Thread ID: 204584
+|   Capabilities flags: 63486
+|   Some Capabilities: Support41Auth, FoundRows, Speaks41ProtocolOld, SupportsTransactions, SupportsLoadDataLocal, IgnoreSigpipes, LongColumnFlag, IgnoreSpaceBeforeParenthesis, DontAllowDatabaseTableColumn, Speaks41ProtocolNew, InteractiveClient, ConnectWithDatabase, SupportsCompression, ODBCClient, SupportsAuthPlugins, SupportsMultipleResults, SupportsMultipleStatments
+|   Status: Autocommit
+|   Salt: 4uqXF2i;+c4x!70-1KfB
+|_  Auth Plugin Name: mysql_native_password
+5000/tcp open     http         Node.js Express framework
+|_http-title: Site doesn't have a title (text/html; charset=utf-8).
+|_http-cors: HEAD GET POST PUT DELETE PATCH
+7000/tcp open     http         Node.js Express framework
+|_http-cors: HEAD GET POST PUT DELETE PATCH
+|_http-title: Error
+8000/tcp open     http         Node.js Express framework
+|_http-cors: HEAD GET POST PUT DELETE PATCH
+|_http-title: Error
+9100/tcp open     jetdirect?
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 27.19 seconds

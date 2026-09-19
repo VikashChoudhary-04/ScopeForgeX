@@ -1,0 +1,41 @@
+
+     __      __               .__  __  .__________
+    /  \    /  \_____  ______ |__|/  |_|__\_____  \
+    \   \/\/   /\__  \ \____ \|  \   __\  | _(__  <
+     \        /  / __ \|  |_> >  ||  | |  |/       \
+      \__/\  /  (____  /   __/|__||__| |__/______  /
+           \/        \/|__|                      \/
+Wapiti 3.3.2 (wapiti-scanner.github.io)
+[*] 0 URLs and forms having more than 50 parameters were removed.
+[*] Wapiti found 23 URLs and forms during the scan
+
+[*] Launching module file
+[*] 23 pages were previously attacked and will be skipped
+
+[*] Launching module xss
+[*] 23 pages were previously attacked and will be skipped
+
+[*] Launching module redirect
+[*] 23 pages were previously attacked and will be skipped
+
+[*] Launching module exec
+[*] 23 pages were previously attacked and will be skipped
+
+[*] Launching module upload
+[*] 23 pages were previously attacked and will be skipped
+
+[*] Launching module ssrf
+[*] 23 pages were previously attacked and will be skipped
+[*] Asking endpoint URL https://wapiti3.ovh/get_ssrf.php?session_id=oichmu for results, please wait...
+
+[*] Launching module ssl
+[*] 23 pages were previously attacked and will be skipped
+
+[*] Launching module sql
+[*] 23 pages were previously attacked and will be skipped
+
+[*] Launching module permanentxss
+[*] 23 pages were previously attacked and will be skipped
+
+[*] Generating report...
+A report has been generated in the file benchmark/baseline_standard_clean/run_02/wapiti/wapiti_report.json

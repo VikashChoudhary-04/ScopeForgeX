@@ -1,0 +1,523 @@
+{
+  "run": 3,
+  "valid": true,
+  "total_duration_seconds": 1060.8447160859996,
+  "tools": [
+    {
+      "tool": "amass",
+      "command_count": 1,
+      "commands": [
+        {
+          "command": [
+            "amass",
+            "enum",
+            "-d",
+            "warrantyindia.com",
+            "-passive"
+          ],
+          "return_code": 0,
+          "duration_seconds": 26.149653456001033,
+          "stdout_bytes": 41,
+          "stderr_bytes": 15720
+        }
+      ],
+      "duration_seconds": 26.149653456001033,
+      "return_codes": [
+        0
+      ]
+    },
+    {
+      "tool": "subhunt",
+      "command_count": 1,
+      "commands": [
+        {
+          "command": [
+            "subhunt",
+            "-d",
+            "warrantyindia.com",
+            "--bruteforce",
+            "/usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
+            "--quiet",
+            "--threads",
+            "50"
+          ],
+          "return_code": 0,
+          "duration_seconds": 41.23275181700046,
+          "stdout_bytes": 554,
+          "stderr_bytes": 0
+        }
+      ],
+      "duration_seconds": 41.23275181700046,
+      "return_codes": [
+        0
+      ]
+    },
+    {
+      "tool": "nmap",
+      "command_count": 1,
+      "commands": [
+        {
+          "command": [
+            "nmap",
+            "-sV",
+            "-T3",
+            "--script",
+            "default",
+            "warrantyindia.com"
+          ],
+          "return_code": 0,
+          "duration_seconds": 26.446843833000457,
+          "stdout_bytes": 5945,
+          "stderr_bytes": 0
+        }
+      ],
+      "duration_seconds": 26.446843833000457,
+      "return_codes": [
+        0
+      ]
+    },
+    {
+      "tool": "dig",
+      "command_count": 7,
+      "commands": [
+        {
+          "command": [
+            "dig",
+            "+noall",
+            "+answer",
+            "warrantyindia.com",
+            "A"
+          ],
+          "return_code": 0,
+          "duration_seconds": 0.01532294800017553,
+          "stdout_bytes": 43,
+          "stderr_bytes": 0
+        },
+        {
+          "command": [
+            "dig",
+            "+noall",
+            "+answer",
+            "warrantyindia.com",
+            "AAAA"
+          ],
+          "return_code": 0,
+          "duration_seconds": 0.014482149999821559,
+          "stdout_bytes": 52,
+          "stderr_bytes": 0
+        },
+        {
+          "command": [
+            "dig",
+            "+noall",
+            "+answer",
+            "warrantyindia.com",
+            "CNAME"
+          ],
+          "return_code": 0,
+          "duration_seconds": 0.10267393899994204,
+          "stdout_bytes": 0,
+          "stderr_bytes": 0
+        },
+        {
+          "command": [
+            "dig",
+            "+noall",
+            "+answer",
+            "warrantyindia.com",
+            "MX"
+          ],
+          "return_code": 0,
+          "duration_seconds": 0.043307648000336485,
+          "stdout_bytes": 57,
+          "stderr_bytes": 0
+        },
+        {
+          "command": [
+            "dig",
+            "+noall",
+            "+answer",
+            "warrantyindia.com",
+            "NS"
+          ],
+          "return_code": 0,
+          "duration_seconds": 0.03225730099984503,
+          "stdout_bytes": 108,
+          "stderr_bytes": 0
+        },
+        {
+          "command": [
+            "dig",
+            "+noall",
+            "+answer",
+            "warrantyindia.com",
+            "TXT"
+          ],
+          "return_code": 0,
+          "duration_seconds": 0.0475600489990029,
+          "stdout_bytes": 210,
+          "stderr_bytes": 0
+        },
+        {
+          "command": [
+            "dig",
+            "+noall",
+            "+answer",
+            "warrantyindia.com",
+            "SOA"
+          ],
+          "return_code": 0,
+          "duration_seconds": 0.055995366999923135,
+          "stdout_bytes": 122,
+          "stderr_bytes": 0
+        }
+      ],
+      "duration_seconds": 0.3115994019990467,
+      "return_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "tool": "katana",
+      "command_count": 1,
+      "commands": [
+        {
+          "command": [
+            "katana",
+            "-u",
+            "https://warrantyindia.com/",
+            "-d",
+            "2",
+            "-silent"
+          ],
+          "return_code": 0,
+          "duration_seconds": 13.021452331000546,
+          "stdout_bytes": 2125,
+          "stderr_bytes": 0
+        }
+      ],
+      "duration_seconds": 13.021452331000546,
+      "return_codes": [
+        0
+      ]
+    },
+    {
+      "tool": "jsluice",
+      "command_count": 1,
+      "commands": [
+        {
+          "command": [
+            "jsluice",
+            "urls",
+            "-c",
+            "1",
+            "-S",
+            "-R",
+            "https://warrantyindia.com/about.js",
+            "https://warrantyindia.com/about.js",
+            "https://warrantyindia.com/js/main.js",
+            "https://warrantyindia.com/js2/script.js",
+            "https://warrantyindia.com/lib/counterup/counterup.min.js",
+            "https://warrantyindia.com/lib/easing/easing.min.js",
+            "https://warrantyindia.com/lib/owlcarousel/owl.carousel.min.js",
+            "https://warrantyindia.com/lib/waypoints/waypoints.min.js",
+            "https://warrantyindia.com/lib/wow/wow.min.js",
+            "https://warrantyindia.com/plugins/colorbox/jquery.colorbox.js",
+            "https://warrantyindia.com/plugins/google-map/map.js",
+            "https://warrantyindia.com/plugins/shuffle/shuffle.min.js",
+            "https://warrantyindia.com/plugins/slick/slick-animation.min.js",
+            "https://warrantyindia.com/plugins/slick/slick.min.js"
+          ],
+          "return_code": 0,
+          "duration_seconds": 0.7021184830009588,
+          "stdout_bytes": 1998,
+          "stderr_bytes": 0
+        }
+      ],
+      "duration_seconds": 0.7021184830009588,
+      "return_codes": [
+        0
+      ]
+    },
+    {
+      "tool": "httpx",
+      "command_count": 1,
+      "commands": [
+        {
+          "command": [
+            "/home/kali/go/bin/httpx",
+            "-status-code",
+            "-title",
+            "-server",
+            "-tech-detect",
+            "-include-response",
+            "-json",
+            "-silent",
+            "-u",
+            "https://warrantyindia.com/",
+            "-u",
+            "https://warrantyindia.com/plugins/slick/slick-animation.min.js",
+            "-u",
+            "https://warrantyindia.com/plugins/google-map/map.js",
+            "-u",
+            "https://warrantyindia.com/lib/waypoints/waypoints.min.js",
+            "-u",
+            "https://warrantyindia.com/lib/counterup/counterup.min.js",
+            "-u",
+            "https://warrantyindia.com/js/main.js",
+            "-u",
+            "https://warrantyindia.com/js2/script.js",
+            "-u",
+            "https://warrantyindia.com/plugins/shuffle/shuffle.min.js",
+            "-u",
+            "https://warrantyindia.com/lib/easing/easing.min.js",
+            "-u",
+            "https://warrantyindia.com/plugins/colorbox/colorbox.css",
+            "-u",
+            "https://warrantyindia.com/plugins/slick/slick.css",
+            "-u",
+            "https://warrantyindia.com/plugins/slick/slick-theme.css",
+            "-u",
+            "https://warrantyindia.com/lib/wow/wow.min.js",
+            "-u",
+            "https://warrantyindia.com/plugins/colorbox/jquery.colorbox.js",
+            "-u",
+            "https://warrantyindia.com/lib/animate/animate.min.css",
+            "-u",
+            "https://warrantyindia.com/plugins/animate-css/animate.css",
+            "-u",
+            "https://warrantyindia.com/plugins/slick/slick.min.js",
+            "-u",
+            "https://warrantyindia.com/css/newstyle.css",
+            "-u",
+            "https://warrantyindia.com/lib/owlcarousel/assets/owl.carousel.min.css",
+            "-u",
+            "https://warrantyindia.com/lib/owlcarousel/owl.carousel.min.js",
+            "-u",
+            "https://warrantyindia.com/css/style.css",
+            "-u",
+            "https://warrantyindia.com/index.css",
+            "-u",
+            "https://warrantyindia.com/contact.html",
+            "-u",
+            "https://warrantyindia.com/privacy-policy.html",
+            "-u",
+            "https://warrantyindia.com/about.html",
+            "-u",
+            "https://warrantyindia.com/partnerwithuse.html",
+            "-u",
+            "https://warrantyindia.com/index.html",
+            "-u",
+            "https://warrantyindia.com/services.html",
+            "-u",
+            "https://warrantyindia.com/terms-and-conditions.html",
+            "-u",
+            "https://warrantyindia.com/plugins/bootstrap/bootstrap.min.css",
+            "-u",
+            "https://warrantyindia.com/css/bootstrap.min.css",
+            "-u",
+            "https://warrantyindia.com/insure-1.0.0/css/2W.css",
+            "-u",
+            "https://warrantyindia.com/2W.css",
+            "-u",
+            "https://warrantyindia.com/newstyle.css",
+            "-u",
+            "https://warrantyindia.com/about.css",
+            "-u",
+            "https://warrantyindia.com/about.js",
+            "-u",
+            "https://warrantyindia.com/about2.css",
+            "-u",
+            "https://warrantyindia.com/contact.css",
+            "-u",
+            "https://warrantyindia.com/hqdefault.jpg",
+            "-u",
+            "https://warrantyindia.com/.json",
+            "-u",
+            "https://warrantyindia.com/about.js?autoplay=1&rel=0&v="
+          ],
+          "return_code": 0,
+          "duration_seconds": 3.6453232749991002,
+          "stdout_bytes": 1157918,
+          "stderr_bytes": 0
+        }
+      ],
+      "duration_seconds": 3.6453232749991002,
+      "return_codes": [
+        0
+      ]
+    },
+    {
+      "tool": "ffuf",
+      "command_count": 1,
+      "commands": [
+        {
+          "command": [
+            "ffuf",
+            "-u",
+            "https://warrantyindia.com/FUZZ",
+            "-w",
+            "/usr/share/seclists/Discovery/Web-Content/directory-list-2.3-small.txt",
+            "-noninteractive",
+            "-maxtime",
+            "540",
+            "-t",
+            "20",
+            "-rate",
+            "10"
+          ],
+          "return_code": 0,
+          "duration_seconds": 540.1623348569992,
+          "stdout_bytes": 4275,
+          "stderr_bytes": 414832
+        }
+      ],
+      "duration_seconds": 540.1623348569992,
+      "return_codes": [
+        0
+      ]
+    },
+    {
+      "tool": "whatweb",
+      "command_count": 1,
+      "commands": [
+        {
+          "command": [
+            "whatweb",
+            "-a",
+            "1",
+            "https://warrantyindia.com/"
+          ],
+          "return_code": 0,
+          "duration_seconds": 5.40530775499974,
+          "stdout_bytes": 435,
+          "stderr_bytes": 0
+        }
+      ],
+      "duration_seconds": 5.40530775499974,
+      "return_codes": [
+        0
+      ]
+    },
+    {
+      "tool": "kiterunner",
+      "command_count": 1,
+      "commands": [
+        {
+          "command": [
+            "kr",
+            "scan",
+            "https://warrantyindia.com/",
+            "-w",
+            "/home/kali/tools/kiterunner/wordlists/routes-small.kite",
+            "-x",
+            "10",
+            "-q"
+          ],
+          "return_code": 0,
+          "duration_seconds": 122.48828065999987,
+          "stdout_bytes": 4712,
+          "stderr_bytes": 117746
+        }
+      ],
+      "duration_seconds": 122.48828065999987,
+      "return_codes": [
+        0
+      ]
+    },
+    {
+      "tool": "wapiti",
+      "command_count": 1,
+      "commands": [
+        {
+          "command": [
+            "wapiti",
+            "-u",
+            "https://warrantyindia.com/",
+            "--scope",
+            "domain",
+            "--max-links-per-page",
+            "100",
+            "--max-files-per-dir",
+            "50",
+            "--max-scan-time",
+            "540",
+            "--max-attack-time",
+            "480",
+            "--max-parameters",
+            "50",
+            "-t",
+            "10",
+            "-f",
+            "json",
+            "-o",
+            "benchmark/baseline_standard_clean/run_03/wapiti/wapiti_report.json"
+          ],
+          "return_code": 0,
+          "duration_seconds": 3.932074750000538,
+          "stdout_bytes": 1483,
+          "stderr_bytes": 0
+        }
+      ],
+      "duration_seconds": 3.932074750000538,
+      "return_codes": [
+        0
+      ]
+    },
+    {
+      "tool": "nikto",
+      "command_count": 1,
+      "commands": [
+        {
+          "command": [
+            "nikto",
+            "-h",
+            "https://warrantyindia.com/",
+            "-Tuning",
+            "default",
+            "-timeout",
+            "10"
+          ],
+          "return_code": 0,
+          "duration_seconds": 201.30685157100015,
+          "stdout_bytes": 2308,
+          "stderr_bytes": 42
+        }
+      ],
+      "duration_seconds": 201.30685157100015,
+      "return_codes": [
+        0
+      ]
+    },
+    {
+      "tool": "testssl.sh",
+      "command_count": 1,
+      "commands": [
+        {
+          "command": [
+            "testssl.sh",
+            "--warnings",
+            "batch",
+            "--openssl-timeout",
+            "10",
+            "https://warrantyindia.com/"
+          ],
+          "return_code": 0,
+          "duration_seconds": 76.03667369100003,
+          "stdout_bytes": 14516,
+          "stderr_bytes": 0
+        }
+      ],
+      "duration_seconds": 76.03667369100003,
+      "return_codes": [
+        0
+      ]
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+Starting Nmap 7.99 ( https://nmap.org ) at 2026-09-18 09:02 -0400
+Nmap scan report for warrantyindia.com (101.53.149.53)
+Host is up (0.032s latency).
+Other addresses for warrantyindia.com (not scanned): 64:ff9b::6535:9535
+rDNS record for 101.53.149.53: 101-53-149-53.cprapid.com
+Not shown: 946 closed tcp ports (reset), 50 filtered tcp ports (no-response)
+PORT     STATE SERVICE    VERSION
+465/tcp  open  ssl/smtp   Exim smtpd 4.100
+|_ssl-date: TLS randomness does not represent time
+| smtp-commands: 101-53-149-53.cprapid.com Hello warrantyindia.com [157.49.122.78], SIZE 52428800, LIMITS MAILMAX=1000 RCPTMAX=50000, 8BITMIME, PIPELINING, PIPECONNECT, AUTH PLAIN LOGIN, HELP
+|_ Commands supported: AUTH HELO EHLO MAIL RCPT DATA BDAT NOOP QUIT RSET HELP
+| ssl-cert: Subject: commonName=warrantyindia.com
+| Subject Alternative Name: DNS:*.warrantyindia.com, DNS:warrantyindia.com
+| Not valid before: 2026-09-08T06:22:06
+|_Not valid after:  2026-12-07T06:22:05
+7000/tcp open  http       Node.js Express framework
+|_http-title: Error
+|_http-cors: HEAD GET POST PUT DELETE PATCH
+8000/tcp open  http       Node.js Express framework
+|_http-cors: HEAD GET POST PUT DELETE PATCH
+|_http-title: Error
+9100/tcp open  jetdirect?
+Device type: general purpose
+Running (JUST GUESSING): Linux 5.X|4.X (88%)
+OS CPE: cpe:/o:linux:linux_kernel:5 cpe:/o:linux:linux_kernel:4
+Aggressive OS guesses: Linux 5.0 - 5.14 (88%), Linux 4.19 - 5.15 (85%), Linux 4.15 - 5.19 (85%)
+No exact OS matches for host (test conditions non-ideal).
+Network Distance: 15 hops
+
+OS and Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 28.45 seconds

@@ -1,0 +1,21 @@
+{
+  "benchmark": "Independent Python sequential baseline vs ScopeForgeX STANDARD",
+  "target": "https://warrantyindia.com/",
+  "reference_run": "outputs/https_warrantyindia.com_/20260917_150445_145_cd69e9ad",
+  "reference_scopeforgex_duration_seconds": 1060.6487560272217,
+  "logical_tools": 13,
+  "dig_queries": 7,
+  "runs_requested": 5,
+  "runs_completed": 5,
+  "valid_runs": 4,
+  "invalid_runs": 1,
+  "valid_totals_seconds": [
+    1060.7696018240003,
+    984.8302501480002,
+    1060.8447160859996,
+    994.6224477469987
+  ],
+  "mean_seconds": 1025.2667539512497,
+  "min_seconds": 984.8302501480002,
+  "max_seconds": 1060.8447160859996
+}

@@ -1,0 +1,29 @@
++----------------------+----------------------------------------------------------------------------------------------------------------------------------+
+| SETTING              | VALUE                                                                                                                            |
++----------------------+----------------------------------------------------------------------------------------------------------------------------------+
+| delay                | 0s                                                                                                                               |
+| full-scan            | false                                                                                                                            |
+| full-scan-requests   | 53033                                                                                                                            |
+| headers              | [x-forwarded-for:127.0.0.1]                                                                                                      |
+| kitebuilder-apis     | [/home/kali/tools/kiterunner/wordlists/routes-small.kite]                                                                        |
+| max-conn-per-host    | 10                                                                                                                               |
+| max-parallel-host    | 50                                                                                                                               |
+| max-redirects        | 3                                                                                                                                |
+| max-timeout          | 3s                                                                                                                               |
+| preflight-routes     | 11                                                                                                                               |
+| quarantine-threshold | 10                                                                                                                               |
+| quick-scan-requests  | 9691                                                                                                                             |
+| read-body            | false                                                                                                                            |
+| read-headers         | false                                                                                                                            |
+| scan-depth           | 1                                                                                                                                |
+| skip-preflight       | false                                                                                                                            |
+| target               | https://warrantyindia.com/                                                                                                       |
+| total-routes         | 35884                                                                                                                            |
+| user-agent           | Chrome. Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.96 Safari/537.36 |
++----------------------+----------------------------------------------------------------------------------------------------------------------------------+
+[36mGET     301 [[37m    278[0m,[37m   15[0m,[37m   8[0m][36m https://warrantyindia.com/api [0m-> https://warrantyindia.com/api/ 0cc39f6e78bff83fca4e6ca8e297f112112881e7
+[36mGET     301 [[37m    285[0m,[37m   15[0m,[37m   8[0m][36m https://warrantyindia.com/api/config [0m-> https://warrantyindia.com/api/config/ 0cc39f6e3b22718ca30e77b4fb254a0a6f6394b0
+[36mGET     301 [[37m    282[0m,[37m   15[0m,[37m   8[0m][36m https://warrantyindia.com/plugins [0m-> https://warrantyindia.com/plugins/ 0cc39f7b5a049e9ae41ab708e4d2b52f2affe896
+[36mGET     301 [[37m    278[0m,[37m   15[0m,[37m   8[0m][36m https://warrantyindia.com/api [0m-> https://warrantyindia.com/api/ 0cc39f6e78bff83fca4e6ca8e297f112112881e7
+[36mGET     301 [[37m    285[0m,[37m   15[0m,[37m   8[0m][36m https://warrantyindia.com/api/config [0m-> https://warrantyindia.com/api/config/ 0cc39f6e3b22718ca30e77b4fb254a0a6f6394b0
+[36mGET     301 [[37m    282[0m,[37m   15[0m,[37m   8[0m][36m https://warrantyindia.com/plugins [0m-> https://warrantyindia.com/plugins/ 0cc39f7b5a049e9ae41ab708e4d2b52f2affe896

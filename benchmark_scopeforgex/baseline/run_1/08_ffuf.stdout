@@ -1,0 +1,74 @@
+
+[2K                        [Status: 200, Size: 45401, Words: 4800, Lines: 3, Duration: 26ms][0m
+
+[2K.htaccess               [Status: 403, Size: 358, Words: 31, Lines: 10, Duration: 35ms][0m
+
+[2K.htpasswd               [Status: 403, Size: 358, Words: 31, Lines: 10, Duration: 24ms][0m
+
+[2Kaccounts                [Status: 301, Size: 283, Words: 15, Lines: 8, Duration: 25ms][0m
+
+[2Kadmin                   [Status: 301, Size: 280, Words: 15, Lines: 8, Duration: 41ms][0m
+
+[2Kapi                     [Status: 301, Size: 278, Words: 15, Lines: 8, Duration: 27ms][0m
+
+[2Kapp                     [Status: 301, Size: 278, Words: 15, Lines: 8, Duration: 17ms][0m
+
+[2Kassets                  [Status: 301, Size: 281, Words: 15, Lines: 8, Duration: 52ms][0m
+
+[2Kcgi-bin                 [Status: 301, Size: 282, Words: 15, Lines: 8, Duration: 26ms][0m
+
+[2Kcgi-bin/                [Status: 403, Size: 358, Words: 31, Lines: 10, Duration: 31ms][0m
+
+[2Kcgi-sys                 [Status: 301, Size: 282, Words: 15, Lines: 8, Duration: 24ms][0m
+
+[2Kcontact                 [Status: 301, Size: 282, Words: 15, Lines: 8, Duration: 29ms][0m
+
+[2Kcontrolpanel            [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 72ms][0m
+
+[2Kcpanel                  [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 71ms][0m
+
+[2Kcss                     [Status: 301, Size: 278, Words: 15, Lines: 8, Duration: 40ms][0m
+
+[2Kerror_log               [Status: 403, Size: 358, Words: 31, Lines: 10, Duration: 35ms][0m
+
+[2Kfolder                  [Status: 301, Size: 281, Words: 15, Lines: 8, Duration: 37ms][0m
+
+[2Khome                    [Status: 403, Size: 420, Words: 41, Lines: 10, Duration: 34ms][0m
+
+[2Khonda                   [Status: 301, Size: 280, Words: 15, Lines: 8, Duration: 39ms][0m
+
+[2Kimages                  [Status: 301, Size: 281, Words: 15, Lines: 8, Duration: 35ms][0m
+
+[2Kimg                     [Status: 301, Size: 278, Words: 15, Lines: 8, Duration: 23ms][0m
+
+[2Kinc                     [Status: 301, Size: 278, Words: 15, Lines: 8, Duration: 34ms][0m
+
+[2Kinclude                 [Status: 301, Size: 282, Words: 15, Lines: 8, Duration: 23ms][0m
+
+[2Kindex.html              [Status: 200, Size: 58587, Words: 14472, Lines: 1760, Duration: 32ms][0m
+
+[2Kindex.php               [Status: 200, Size: 45401, Words: 4800, Lines: 3, Duration: 29ms][0m
+
+[2Kjs                      [Status: 301, Size: 277, Words: 15, Lines: 8, Duration: 31ms][0m
+
+[2Klib                     [Status: 301, Size: 278, Words: 15, Lines: 8, Duration: 27ms][0m
+
+[2Klog                     [Status: 301, Size: 278, Words: 15, Lines: 8, Duration: 30ms][0m
+
+[2Kmailman                 [Status: 301, Size: 282, Words: 15, Lines: 8, Duration: 20ms][0m
+
+[2Kphp.ini                 [Status: 403, Size: 358, Words: 31, Lines: 10, Duration: 23ms][0m
+
+[2Kpipermail               [Status: 301, Size: 284, Words: 15, Lines: 8, Duration: 22ms][0m
+
+[2Kplugins                 [Status: 301, Size: 282, Words: 15, Lines: 8, Duration: 58ms][0m
+
+[2Kpop                     [Status: 301, Size: 278, Words: 15, Lines: 8, Duration: 29ms][0m
+
+[2Kpremium                 [Status: 301, Size: 282, Words: 15, Lines: 8, Duration: 37ms][0m
+
+[2Ktest                    [Status: 301, Size: 279, Words: 15, Lines: 8, Duration: 24ms][0m
+
+[2Ktmp                     [Status: 403, Size: 420, Words: 41, Lines: 10, Duration: 29ms][0m
+
+[2Kwebmail                 [Status: 301, Size: 0, Words: 1, Lines: 1, Duration: 67ms][0m

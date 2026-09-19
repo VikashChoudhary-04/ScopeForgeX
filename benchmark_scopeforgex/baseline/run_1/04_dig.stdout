@@ -1,0 +1,142 @@
+
+; <<>> DiG 9.20.22-1-Debian <<>> warrantyindia.com A
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 37773
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;warrantyindia.com.		IN	A
+
+;; ANSWER SECTION:
+warrantyindia.com.	12919	IN	A	101.53.149.53
+
+;; Query time: 15 msec
+;; SERVER: 10.97.246.149#53(10.97.246.149) (UDP)
+;; WHEN: Fri Sep 18 09:02:44 EDT 2026
+;; MSG SIZE  rcvd: 51
+
+
+; <<>> DiG 9.20.22-1-Debian <<>> warrantyindia.com AAAA
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 30093
+;; flags: qr rd ra ad; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 0
+
+;; QUESTION SECTION:
+;warrantyindia.com.		IN	AAAA
+
+;; ANSWER SECTION:
+warrantyindia.com.	11636	IN	AAAA	64:ff9b::6535:9535
+
+;; Query time: 3 msec
+;; SERVER: 10.97.246.149#53(10.97.246.149) (UDP)
+;; WHEN: Fri Sep 18 09:02:44 EDT 2026
+;; MSG SIZE  rcvd: 63
+
+
+; <<>> DiG 9.20.22-1-Debian <<>> warrantyindia.com CNAME
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 13097
+;; flags: qr rd ra; QUERY: 1, ANSWER: 0, AUTHORITY: 1, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1280
+;; QUESTION SECTION:
+;warrantyindia.com.		IN	CNAME
+
+;; AUTHORITY SECTION:
+warrantyindia.com.	2117	IN	SOA	ns3.warrantyindia.com. root.101-53-149-53.cprapid.com. 2026090801 3600 1800 1209600 86400
+
+;; Query time: 50 msec
+;; SERVER: 10.97.246.149#53(10.97.246.149) (UDP)
+;; WHEN: Fri Sep 18 09:02:44 EDT 2026
+;; MSG SIZE  rcvd: 113
+
+
+; <<>> DiG 9.20.22-1-Debian <<>> warrantyindia.com MX
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 59008
+;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1280
+;; QUESTION SECTION:
+;warrantyindia.com.		IN	MX
+
+;; ANSWER SECTION:
+warrantyindia.com.	14400	IN	MX	0 email.warrantyindia.com.
+
+;; Query time: 2249 msec
+;; SERVER: 10.97.246.149#53(10.97.246.149) (UDP)
+;; WHEN: Fri Sep 18 09:02:46 EDT 2026
+;; MSG SIZE  rcvd: 68
+
+
+; <<>> DiG 9.20.22-1-Debian <<>> warrantyindia.com NS
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 58316
+;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 3
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1280
+;; QUESTION SECTION:
+;warrantyindia.com.		IN	NS
+
+;; ANSWER SECTION:
+warrantyindia.com.	86400	IN	NS	ns4.warrantyindia.com.
+warrantyindia.com.	86400	IN	NS	ns3.warrantyindia.com.
+
+;; ADDITIONAL SECTION:
+ns4.warrantyindia.com.	11633	IN	A	101.53.149.53
+ns3.warrantyindia.com.	11633	IN	A	101.53.149.53
+
+;; Query time: 39 msec
+;; SERVER: 10.97.246.149#53(10.97.246.149) (UDP)
+;; WHEN: Fri Sep 18 09:02:47 EDT 2026
+;; MSG SIZE  rcvd: 114
+
+
+; <<>> DiG 9.20.22-1-Debian <<>> warrantyindia.com TXT
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 64468
+;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1280
+;; QUESTION SECTION:
+;warrantyindia.com.		IN	TXT
+
+;; ANSWER SECTION:
+warrantyindia.com.	14400	IN	TXT	"v=spf1 ip4:101.53.149.53 include:_spf.google.com ip4:192.206.4.0/24 ~all"
+warrantyindia.com.	14400	IN	TXT	"google-site-verification=q3UqY9Kh9vbr5k_UsFMeCeU8s3HizORKQhkvKs9qLEI"
+
+;; Query time: 31 msec
+;; SERVER: 10.97.246.149#53(10.97.246.149) (UDP)
+;; WHEN: Fri Sep 18 09:02:47 EDT 2026
+;; MSG SIZE  rcvd: 212
+
+
+; <<>> DiG 9.20.22-1-Debian <<>> warrantyindia.com SOA
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 49657
+;; flags: qr rd ra; QUERY: 1, ANSWER: 1, AUTHORITY: 0, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags:; udp: 1280
+;; QUESTION SECTION:
+;warrantyindia.com.		IN	SOA
+
+;; ANSWER SECTION:
+warrantyindia.com.	85033	IN	SOA	ns3.warrantyindia.com. root.101-53-149-53.cprapid.com. 2026090801 3600 1800 1209600 86400
+
+;; Query time: 23 msec
+;; SERVER: 10.97.246.149#53(10.97.246.149) (UDP)
+;; WHEN: Fri Sep 18 09:02:47 EDT 2026
+;; MSG SIZE  rcvd: 113
+
