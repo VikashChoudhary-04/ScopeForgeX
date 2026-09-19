@@ -144,11 +144,35 @@ class SubhuntTool(
     )
 
     @staticmethod
+    def _target_is_http_url(
+        target: str,
+    ) -> bool:
+        """
+        Return whether the workflow target is an explicit HTTP(S) URL.
+
+        Subhunt v1.3.0 uses ``-u`` for HTTP virtual-host enumeration and
+        ``-d`` for DNS subdomain enumeration.
+        """
+
+        value = str(
+            target
+        ).strip()
+
+        parsed = urlparse(value)
+
+        return parsed.scheme.lower() in {
+            "http",
+            "https",
+        } and bool(
+            parsed.netloc
+        )
+
+    @staticmethod
     def _target_hostname(
         target: str,
     ) -> str:
         """
-        Normalize a workflow target into the hostname expected by Subhunt.
+        Normalize a DNS-oriented workflow target into a hostname.
 
         Examples:
 
@@ -186,6 +210,39 @@ class SubhuntTool(
             )
 
         return hostname
+
+    @staticmethod
+    def _target_url(
+        target: str,
+    ) -> str:
+        """
+        Normalize an explicit HTTP(S) target into the URL expected by
+        Subhunt's ``-u`` HTTP enumeration mode.
+        """
+
+        value = str(
+            target
+        ).strip()
+
+        if not value:
+            raise ValueError(
+                "Subhunt target cannot be empty."
+            )
+
+        parsed = urlparse(
+            value
+        )
+
+        if parsed.scheme.lower() not in {
+            "http",
+            "https",
+        } or not parsed.netloc:
+            raise ValueError(
+                f"Subhunt HTTP mode requires an explicit http:// or "
+                f"https:// URL: {target!r}"
+            )
+
+        return value
 
     def validate_options(
         self,
@@ -245,12 +302,22 @@ class SubhuntTool(
 
         self.validate_options()
 
-        arguments: list[str] = [
-            "-d",
-            self._target_hostname(
-                self.context.target
-            ),
-        ]
+        if self._target_is_http_url(
+            self.context.target
+        ):
+            arguments: list[str] = [
+                "-u",
+                self._target_url(
+                    self.context.target
+                ),
+            ]
+        else:
+            arguments = [
+                "-d",
+                self._target_hostname(
+                    self.context.target
+                ),
+            ]
 
         wordlist = self.get_option(
             "wordlist",

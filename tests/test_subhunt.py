@@ -37,6 +37,45 @@ def test_subhunt_adapter_always_uses_long_quiet_flag():
     assert "-quiet" not in arguments
 
 
+def test_subhunt_adapter_uses_http_mode_for_http_url():
+    arguments = SubhuntTool(
+        _context(
+            target="http://localhost:3000",
+        )
+    ).build_arguments()
+
+    assert arguments[:2] == [
+        "-u",
+        "http://localhost:3000",
+    ]
+
+
+def test_subhunt_adapter_preserves_http_url_port_and_scheme():
+    arguments = SubhuntTool(
+        _context(
+            target="https://example.com:8443/app",
+        )
+    ).build_arguments()
+
+    assert arguments[:2] == [
+        "-u",
+        "https://example.com:8443/app",
+    ]
+
+
+def test_subhunt_adapter_uses_dns_mode_for_hostname():
+    arguments = SubhuntTool(
+        _context(
+            target="example.com",
+        )
+    ).build_arguments()
+
+    assert arguments[:2] == [
+        "-d",
+        "example.com",
+    ]
+
+
 def test_subhunt_adapter_preserves_optional_execution_arguments(tmp_path):
     wordlist = tmp_path / "subdomains.txt"
     wordlist.write_text(
@@ -48,6 +87,7 @@ def test_subhunt_adapter_preserves_optional_execution_arguments(tmp_path):
 
     arguments = SubhuntTool(
         _context(
+            target="example.com",
             options={
                 "wordlist": str(wordlist),
                 "threads": 20,
