@@ -69,6 +69,62 @@ def test_subhunt_adapter_preserves_optional_execution_arguments(tmp_path):
     ]
 
 
+def test_subhunt_normalizes_quiet_zero_findings_exit_code():
+    result = ExecutionResult.failure(
+        tool="subhunt",
+        capability="subdomain_discovery",
+        error="Command exited with status 1.",
+    )
+    result.metadata.update(
+        {
+            "exit_code": 1,
+            "command": [
+                "subhunt",
+                "-d",
+                "example.com",
+                "--bruteforce",
+                "/tmp/subdomains.txt",
+                "--quiet",
+            ],
+        }
+    )
+
+    normalized = SubhuntTool.normalize_result(result)
+
+    assert normalized.success is True
+    assert normalized.metadata["subhunt_exit_code_normalized"] is True
+    assert normalized.metadata["subhunt_original_exit_code"] == 1
+    assert normalized.metadata["subhunt_completion_detected"] is True
+    assert "Command exited with status 1." not in normalized.errors
+
+
+def test_subhunt_does_not_normalize_quiet_exit_code_with_error_output():
+    result = ExecutionResult.failure(
+        tool="subhunt",
+        capability="subdomain_discovery",
+        error="Command exited with status 1.",
+    )
+    result.metadata.update(
+        {
+            "exit_code": 1,
+            "command": [
+                "subhunt",
+                "-d",
+                "example.com",
+                "--bruteforce",
+                "/tmp/subdomains.txt",
+                "--quiet",
+            ],
+        }
+    )
+    result.stderr = "DNS resolver failure"
+
+    normalized = SubhuntTool.normalize_result(result)
+
+    assert normalized.success is False
+    assert normalized.metadata.get("subhunt_exit_code_normalized") is not True
+
+
 def test_subhunt_collector_removes_plus_marker_and_creates_subdomain_finding():
     collector = SubhuntCollector()
 

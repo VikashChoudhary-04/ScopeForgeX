@@ -1,15 +1,37 @@
 from pathlib import Path
 
 
-def test_resolver_prefers_go_binary_over_path(monkeypatch):
+def test_resolver_prefers_go_binary_over_path(
+    monkeypatch,
+    tmp_path,
+):
     from scopeforgex.executable import resolve_executable
 
+    go_bin = tmp_path / "go" / "bin"
+    go_bin.mkdir(
+        parents=True,
+    )
+
+    expected = go_bin / "httpx"
+    expected.write_text(
+        "#!/bin/sh\n",
+    )
+    expected.chmod(
+        0o755,
+    )
+
+    monkeypatch.setenv(
+        "HOME",
+        str(tmp_path),
+    )
     monkeypatch.setenv(
         "PATH",
         "/does/not/exist",
     )
-
-    expected = Path.home() / "go" / "bin" / "httpx"
+    monkeypatch.delenv(
+        "SUDO_USER",
+        raising=False,
+    )
 
     assert resolve_executable("httpx") == str(expected)
 

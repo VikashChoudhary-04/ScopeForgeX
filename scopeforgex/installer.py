@@ -48,6 +48,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from scopeforgex.executable import resolve_executable
 from scopeforgex.toolcheck import is_tool_installed
 from scopeforgex.ui import err, info, ok, stage, warn
 
@@ -57,28 +58,29 @@ from scopeforgex.ui import err, info, ok, stage, warn
 ###############################################################################
 
 
-REQUIRED_TOOLS = [
-    "amass",
-    "subhunt",
-    "nmap",
-    "dig",
-    "httpx",
-    "katana",
-    "ffuf",
-    "whatweb",
-    "kiterunner",
-    "jsluice",
-    "wapiti",
-    "nikto",
-    "testssl.sh",
-    "sqlmap",
-    "dalfox",
-    "jwt_tool",
-    "sstimap",
-    "hydra",
-    "hashcat",
-]
+TOOL_EXECUTABLES = {
+    "amass": "amass",
+    "subhunt": "subhunt",
+    "nmap": "nmap",
+    "dig": "dig",
+    "httpx": "httpx",
+    "katana": "katana",
+    "ffuf": "ffuf",
+    "whatweb": "whatweb",
+    "kiterunner": "kr",
+    "jsluice": "jsluice",
+    "wapiti": "wapiti",
+    "nikto": "nikto",
+    "testssl.sh": "testssl.sh",
+    "sqlmap": "sqlmap",
+    "dalfox": "dalfox",
+    "jwt_tool": "jwt_tool",
+    "sstimap": "sstimap",
+    "hydra": "hydra",
+    "hashcat": "hashcat",
+}
 
+REQUIRED_TOOLS = tuple(TOOL_EXECUTABLES)
 
 APT_PACKAGES = [
     "amass",
@@ -93,6 +95,7 @@ APT_PACKAGES = [
     "hydra",
     "hashcat",
     "wapiti",
+    "seclists",
 ]
 
 
@@ -150,23 +153,29 @@ SOURCE_TOOLS_DIR = (
 
 def run(
     command: str,
-) -> None:
+) -> bool:
     """
-    Execute a shell command and display it.
-
-    Installer commands are generated internally from fixed repository/package
-    constants rather than untrusted user input.
+    Execute a shell command and return whether it succeeded.
     """
 
     info(
         f"$ {command}"
     )
 
-    subprocess.run(
+    completed = subprocess.run(
         command,
         shell=True,
         check=False,
     )
+
+    if completed.returncode != 0:
+        err(
+            f"Command failed with exit code {completed.returncode}: "
+            f"{command}"
+        )
+        return False
+
+    return True
 
 
 def detect_pkg_manager() -> str | None:
@@ -180,6 +189,61 @@ def detect_pkg_manager() -> str | None:
         return "apt"
 
     return None
+
+
+def resolve_tool_executable(tool_name: str) -> str:
+    """
+    Return the actual executable name for a logical ScopeForgeX tool.
+    """
+    try:
+        return TOOL_EXECUTABLES[tool_name]
+    except KeyError as exc:
+        raise KeyError(
+            f"Unknown ScopeForgeX tool: {tool_name}"
+        ) from exc
+
+
+def installed_tool_path(tool_name: str) -> str | None:
+    """
+    Resolve the canonical executable path for a logical ScopeForgeX tool.
+    """
+    return resolve_executable(
+        resolve_tool_executable(tool_name)
+    )
+
+
+def verify_required_tools() -> tuple[list[str], dict[str, str]]:
+    """
+    Verify every canonical logical tool.
+    """
+    missing: list[str] = []
+    resolved: dict[str, str] = {}
+
+    for tool_name in REQUIRED_TOOLS:
+        path = installed_tool_path(tool_name)
+        if path is None:
+            missing.append(tool_name)
+        else:
+            resolved[tool_name] = path
+
+    return missing, resolved
+
+
+def verify_wordlists() -> list[str]:
+    """
+    Verify the default wordlists required by the profiles.
+    """
+    from scopeforgex.wordlists import (
+        find_default_subdomain_wordlist,
+        find_default_web_fuzz_wordlist,
+    )
+
+    missing: list[str] = []
+    if find_default_subdomain_wordlist() is None:
+        missing.append("subdomain wordlist")
+    if find_default_web_fuzz_wordlist() is None:
+        missing.append("web-content wordlist")
+    return missing
 
 
 def go_bin_path() -> Path:
@@ -287,7 +351,7 @@ def install_symlink(
 ###############################################################################
 
 
-def install_apt_packages() -> None:
+def install_apt_packages() -> bool:
     """
     Install all canonical APT-backed dependencies.
     """
@@ -296,15 +360,14 @@ def install_apt_packages() -> None:
         "Installing APT packages..."
     )
 
-    run(
+    if not run(
         "sudo apt update -y"
-    )
+    ):
+        return False
 
-    run(
+    return run(
         "sudo apt install -y "
-        + " ".join(
-            APT_PACKAGES
-        )
+        + " ".join(APT_PACKAGES)
     )
 
 
@@ -589,12 +652,13 @@ def install_kiterunner() -> None:
 ###############################################################################
 
 
-def install_jwt_tool() -> None:
+def install_jwt_tool() -> bool:
     """
     Install JWT Tool from its upstream repository.
 
-    JWT Tool is a Python script, so ScopeForgeX exposes it through the
-    canonical `jwt_tool` command.
+    JWT Tool is a Python application. ScopeForgeX keeps its Python
+    dependencies isolated in a dedicated virtual environment so the
+    installer does not modify Kali's system Python environment.
     """
 
     stage(
@@ -617,19 +681,21 @@ def install_jwt_tool() -> None:
             "JWT Tool repository already exists. Pulling latest changes..."
         )
 
-        run(
+        if not run(
             f"cd '{repo_dir}' && git pull"
-        )
+        ):
+            return False
 
     else:
         info(
             "Cloning JWT Tool repository..."
         )
 
-        run(
+        if not run(
             f"cd '{SOURCE_TOOLS_DIR}' && "
             f"git clone '{JWT_TOOL_REPO}' jwt_tool"
-        )
+        ):
+            return False
 
     script = (
         repo_dir
@@ -640,37 +706,70 @@ def install_jwt_tool() -> None:
         err(
             f"JWT Tool script not found: {script}"
         )
-        return
-
-    info(
-        "Installing JWT Tool Python dependencies..."
-    )
+        return False
 
     requirements = (
         repo_dir
         / "requirements.txt"
     )
 
+    venv_dir = (
+        repo_dir
+        / ".venv"
+    )
+
+    venv_python = (
+        venv_dir
+        / "bin"
+        / "python"
+    )
+
+    info(
+        "Preparing isolated JWT Tool Python environment..."
+    )
+
+    if not venv_python.exists():
+        if not run(
+            f"python3 -m venv '{venv_dir}'"
+        ):
+            err(
+                "Failed to create JWT Tool virtual environment."
+            )
+            return False
+
     if requirements.exists():
-        run(
-            f"python3 -m pip install "
-            f"-r '{requirements}'"
-        )
-    else:
-        run(
-            "python3 -m pip install "
-            "termcolor cprint pycryptodomex requests"
+        info(
+            "Installing JWT Tool Python dependencies into its virtual "
+            "environment..."
         )
 
+        if not run(
+            f"'{venv_python}' -m pip install "
+            f"-r '{requirements}'"
+        ):
+            err(
+                "JWT Tool Python dependency installation failed."
+            )
+            return False
+
+    else:
+        if not run(
+            f"'{venv_python}' -m pip install "
+            "termcolor cprint pycryptodomex requests ratelimit"
+        ):
+            err(
+                "JWT Tool fallback dependency installation failed."
+            )
+            return False
+
     wrapper = (
-        SOURCE_TOOLS_DIR
-        / "jwt_tool"
+        repo_dir
         / "jwt_tool"
     )
 
     wrapper.write_text(
         "#!/bin/sh\n"
-        f'exec python3 "{script}" "$@"\n',
+        f'exec "{venv_python}" "{script}" "$@"\n',
         encoding="utf-8",
     )
 
@@ -683,20 +782,42 @@ def install_jwt_tool() -> None:
         "jwt_tool",
     )
 
+    installed_path = installed_tool_path("jwt_tool")
+
+    if installed_path is None:
+        err(
+            "JWT Tool wrapper is not visible in PATH after installation."
+        )
+        return False
+
+    if not run(
+        f"'{installed_path}' --help "
+        "> /dev/null"
+    ):
+        err(
+            "JWT Tool was installed but the canonical jwt_tool command "
+            "failed runtime validation."
+        )
+        return False
+
     if is_tool_installed(
         "jwt_tool"
     ):
         ok(
-            "JWT Tool installed successfully."
+            "JWT Tool installed successfully with an isolated Python "
+            "environment."
         )
-    else:
-        warn(
-            "JWT Tool is not currently visible in PATH."
-        )
+        return True
+
+    warn(
+        "JWT Tool is not currently visible in PATH."
+    )
+    return False
 
 
 ###############################################################################
 # Main Installation
+
 ###############################################################################
 
 
@@ -737,6 +858,7 @@ def install_tools() -> None:
         "sudo apt install -y "
         "python3 "
         "python3-pip "
+        "python3-venv "
         "golang "
         "git "
         "build-essential "
@@ -758,39 +880,56 @@ def install_tools() -> None:
     install_jwt_tool()
 
     info(
-        "Verifying canonical 19-tool installation..."
+        f"Verifying canonical {len(REQUIRED_TOOLS)}-tool installation..."
     )
 
-    missing = [
-        tool
-        for tool in REQUIRED_TOOLS
-        if not is_tool_installed(
-            tool
-        )
-    ]
+    missing, resolved = verify_required_tools()
 
-    if not missing:
+    for tool_name in REQUIRED_TOOLS:
+        executable = resolve_tool_executable(tool_name)
+        path = resolved.get(tool_name)
+        if path:
+            ok(
+                f"{tool_name} -> {executable} -> {path}"
+            )
+        else:
+            warn(
+                f"{tool_name} -> {executable} -> MISSING"
+            )
+
+    missing_wordlists = verify_wordlists()
+
+    if not missing and not missing_wordlists:
         ok(
-            "All 20 canonical ScopeForgeX tools "
-            "are installed and detected."
+            f"All {len(REQUIRED_TOOLS)} canonical ScopeForgeX tools "
+            "and required wordlists are installed and detected."
         )
         return
 
-    err(
-        "Some canonical ScopeForgeX tools are still missing:"
-    )
-
-    for tool in missing:
-        warn(
-            f"- {tool}"
+    if missing:
+        err(
+            f"{len(missing)} of {len(REQUIRED_TOOLS)} canonical "
+            "ScopeForgeX tools are still missing:"
         )
+        for tool in missing:
+            warn(
+                f"- {tool} (executable: {resolve_tool_executable(tool)})"
+            )
+
+    if missing_wordlists:
+        err(
+            "Required wordlists are missing:"
+        )
+        for wordlist in missing_wordlists:
+            warn(
+                f"- {wordlist}"
+            )
 
     check_path_for_go_bin()
     check_path_for_cargo_bin()
-
     warn(
         "Run the installer again after correcting the "
-        "missing dependencies or PATH entries."
+        "missing dependencies, wordlists, or PATH entries."
     )
 
 
@@ -800,9 +939,14 @@ def install_tools() -> None:
 
 
 __all__ = [
+    "TOOL_EXECUTABLES",
     "REQUIRED_TOOLS",
     "APT_PACKAGES",
     "GO_TOOLS",
+    "resolve_tool_executable",
+    "installed_tool_path",
+    "verify_required_tools",
+    "verify_wordlists",
     "install_tools",
     "install_go_tools",
     "install_dalfox",

@@ -911,10 +911,7 @@ class KiterunnerTool(
                     "Local Kiterunner KiteBuilder route corpus."
                 ),
                 option_type="path",
-                default=(
-                    "/home/kali/tools/kiterunner/"
-                    "wordlists/routes-small.kite"
-                ),
+                default="/home/kali/tools/kiterunner/wordlists/routes-small.kite",
                 safe=True,
                 aggressive=False,
             ),
@@ -966,10 +963,7 @@ class KiterunnerTool(
 
         wordlist = self.get_option(
             "wordlist",
-            (
-                "/home/kali/tools/kiterunner/"
-                "wordlists/routes-small.kite"
-            ),
+            "/home/kali/tools/kiterunner/wordlists/routes-small.kite",
         )
 
         if wordlist is not None:

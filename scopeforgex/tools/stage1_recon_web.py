@@ -88,10 +88,10 @@ class SubhuntTool(
     Subhunt itself expects a hostname/domain, so the adapter normalizes the
     target before constructing the command.
 
-    Subhunt v1.1.0 may return exit code 1 after a completed scan, including
-    the valid zero-findings case. ``normalize_result()`` handles that
-    tool-specific execution contract when Subhunt reports that its scan
-    actually completed.
+    Subhunt v1.3.0 returns exit code 1 when a scan completes without
+    findings. Because ScopeForgeX deliberately uses ``--quiet`` for
+    automation, the adapter must not depend on an interactive completion
+    marker such as ``Scan Finished``.
     """
 
     definition = ToolDefinition(
@@ -389,13 +389,14 @@ class SubhuntTool(
         """
         Normalize Subhunt's completed-scan exit status.
 
-        Subhunt v1.1.0 can return exit code 1 after a completed scan,
-        including the zero-findings case.
+        Subhunt v1.3.0 uses exit code 1 for a completed scan with no
+        findings. ScopeForgeX always invokes Subhunt with ``--quiet``, so
+        completion must not depend on the interactive ``Scan Finished``
+        marker used by older output behavior.
 
-        ToolExecutor invokes this hook after centralized process execution.
-
-        Only exit code 1 accompanied by the explicit ``Scan Finished`` marker
-        is normalized. Other non-zero results remain failures.
+        Exit code 1 is normalized only when the generated quiet command
+        completed without tool error output. Other non-zero results remain
+        failures.
         """
 
         exit_code = result.metadata.get(
@@ -447,7 +448,24 @@ class SubhuntTool(
             )
         )
 
-        if "Scan Finished" not in normalized_output:
+        command = result.metadata.get(
+            "command",
+            []
+        )
+
+        if not isinstance(command, (list, tuple)):
+            command = []
+
+        has_quiet_mode = "--quiet" in command
+
+        # Subhunt v1.3.0 documents exit code 1 for a completed scan with
+        # no findings. ScopeForgeX always supplies --quiet, so an empty
+        # result with no tool error output represents a valid zero-result
+        # assessment rather than an execution failure.
+        if (
+            not has_quiet_mode
+            or normalized_output.strip()
+        ):
             return result
 
         result.success = True
