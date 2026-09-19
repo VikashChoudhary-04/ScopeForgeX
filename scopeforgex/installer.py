@@ -488,11 +488,14 @@ def install_subhunt_from_git() -> None:
 
     if repo_dir.exists():
         warn(
-            "Subhunt repository already exists. Pulling latest changes..."
+            "Subhunt repository already exists. Refreshing from canonical remote..."
         )
 
         run(
-            f"cd '{repo_dir}' && git pull"
+            f"cd '{repo_dir}' && "
+            "git fetch origin && "
+            "git checkout main && "
+            "git reset --hard origin/main"
         )
 
     else:
@@ -502,7 +505,7 @@ def install_subhunt_from_git() -> None:
 
         run(
             f"cd '{SOURCE_TOOLS_DIR}' && "
-            f"git clone '{SUBHUNT_REPO}'"
+            f"git clone --branch main '{SUBHUNT_REPO}'"
         )
 
     build_path = (

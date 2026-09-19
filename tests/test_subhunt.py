@@ -138,6 +138,32 @@ def test_subhunt_normalizes_quiet_zero_findings_exit_code():
     assert "Command exited with status 1." not in normalized.errors
 
 
+def test_subhunt_normalizes_quiet_zero_findings_with_string_command():
+    result = ExecutionResult.failure(
+        tool="subhunt",
+        capability="subdomain_discovery",
+        error="Command exited with status 1.",
+    )
+    result.metadata.update(
+        {
+            "exit_code": 1,
+            "command": (
+                "subhunt -d example.com "
+                "--bruteforce /tmp/subdomains.txt "
+                "--quiet"
+            ),
+        }
+    )
+
+    normalized = SubhuntTool.normalize_result(result)
+
+    assert normalized.success is True
+    assert normalized.metadata["subhunt_exit_code_normalized"] is True
+    assert normalized.metadata["subhunt_original_exit_code"] == 1
+    assert normalized.metadata["subhunt_completion_detected"] is True
+    assert "Command exited with status 1." not in normalized.errors
+
+
 def test_subhunt_does_not_normalize_quiet_exit_code_with_error_output():
     result = ExecutionResult.failure(
         tool="subhunt",

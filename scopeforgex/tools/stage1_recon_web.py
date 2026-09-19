@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+import shlex
 from typing import Any
 from urllib.parse import urlparse
 
@@ -492,6 +493,84 @@ class SubhuntTool(
             ),
         ]
 
+        command = result.metadata.get(
+            "command"
+        )
+
+        if isinstance(command, str):
+            try:
+                command_parts = shlex.split(command)
+            except ValueError:
+                command_parts = command.split()
+        elif isinstance(command, (list, tuple)):
+            command_parts = list(command)
+        else:
+            command_parts = []
+
+        quiet_mode = "--quiet" in command_parts
+
+        if not quiet_mode:
+            return result
+
+        stdout = str(
+            getattr(
+                result,
+                "stdout",
+                "",
+            )
+            or ""
+        ).strip()
+
+        stderr = str(
+            getattr(
+                result,
+                "stderr",
+                "",
+            )
+            or ""
+        ).strip()
+
+        runner_status_error = "Command exited with status 1."
+
+        errors = [
+            str(error).strip()
+            for error in getattr(
+                result,
+                "errors",
+                [],
+            )
+            if str(error).strip()
+        ]
+
+        genuine_errors = [
+            error
+            for error in errors
+            if error != runner_status_error
+        ]
+
+        if (
+            not stdout
+            and not stderr
+            and not genuine_errors
+            and not result.metadata.get(
+                "timed_out",
+                False,
+            )
+        ):
+            result.success = True
+            result.errors = []
+            result.metadata[
+                "subhunt_exit_code_normalized"
+            ] = True
+            result.metadata[
+                "subhunt_original_exit_code"
+            ] = 1
+            result.metadata[
+                "subhunt_completion_detected"
+            ] = True
+
+            return result
+
         outfile = result.metadata.get(
             "outfile"
         )
@@ -515,34 +594,17 @@ class SubhuntTool(
             )
         )
 
-        command = result.metadata.get(
-            "command",
-            []
-        )
-
-        if not isinstance(command, (list, tuple)):
-            command = []
-
-        has_quiet_mode = "--quiet" in command
-
-        # Subhunt v1.3.0 documents exit code 1 for a completed scan with
-        # no findings. ScopeForgeX always supplies --quiet, so an empty
-        # result with no tool error output represents a valid zero-result
-        # assessment rather than an execution failure.
-        if (
-            not has_quiet_mode
-            or normalized_output.strip()
-        ):
+        # Any remaining output means the exit code cannot be treated as a
+        # clean zero-finding completion. Preserve the original failure.
+        if normalized_output.strip():
             return result
 
         result.success = True
-
         result.errors = [
             error
             for error in result.errors
             if error != "Command exited with status 1."
         ]
-
         result.metadata.update(
             {
                 "subhunt_exit_code_normalized": True,
@@ -552,6 +614,7 @@ class SubhuntTool(
         )
 
         return result
+
 
     def run(
         self,
