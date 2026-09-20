@@ -165,7 +165,7 @@ The project is designed to make tool execution **structured, observable, reprodu
 
 ---
 
-# 🏗️ Architecture
+## 🏗️ Architecture
 
 ScopeForgeX follows a layered pipeline in which tools produce execution results, collectors transform those results into structured observations, and the finding pipeline produces canonical security findings.
 
@@ -229,7 +229,7 @@ ScopeForgeX follows a layered pipeline in which tools produce execution results,
 
 ---
 
-## Execution Contract
+### Execution Contract
 
 The canonical tool flow is:
 
@@ -273,7 +273,7 @@ The architecture deliberately separates:
 
 ---
 
-# 🔄 Assessment Workflow
+## 🔄 Assessment Workflow
 
 ScopeForgeX organizes assessment activity into seven logical stages.
 
@@ -301,7 +301,7 @@ reporting/
 
 ---
 
-# 🎛️ Execution Profiles
+## 🎛️ Execution Profiles
 
 ScopeForgeX currently provides three execution profiles.
 
@@ -328,11 +328,11 @@ python3 -m scopeforgex \
 
 ---
 
-# 🧰 Supported Tools
+## 🧰 Supported Tools
 
 The current integrated tool set contains 19 security utilities.
 
-## Reconnaissance
+### Reconnaissance
 
 | Tool | Purpose |
 |---|---|
@@ -341,7 +341,7 @@ The current integrated tool set contains 19 security utilities.
 | **Nmap** | Host and service discovery |
 | **dig** | DNS interrogation |
 
-## Web Enumeration
+### Web Enumeration
 
 | Tool | Purpose |
 |---|---|
@@ -352,7 +352,7 @@ The current integrated tool set contains 19 security utilities.
 | **Kiterunner** | API route and endpoint discovery |
 | **jsluice** | JavaScript analysis and endpoint extraction |
 
-## Vulnerability Assessment
+### Vulnerability Assessment
 
 | Tool | Purpose |
 |---|---|
@@ -360,25 +360,25 @@ The current integrated tool set contains 19 security utilities.
 | **Nikto** | Web server security checks |
 | **testssl.sh** | TLS/SSL configuration assessment |
 
-## Validation / Exploitation
+### Validation / Exploitation
 
 | Tool | Purpose |
 |---|---|
 | **sqlmap** | SQL injection assessment and validation |
 | **Dalfox** | XSS assessment |
 | **SSTImap** | Server-side template injection assessment |
+| **JWT Tool** | JSON Web Token analysis |
 
-## Credential Assessment
+### Credential Assessment
 
 | Tool | Purpose |
 |---|---|
 | **Hydra** | Network authentication assessment |
 | **Hashcat** | Password hash assessment |
-| **JWT Tool** | JSON Web Token analysis |
 
 ---
 
-# 🎯 Target-Aware Execution
+## 🎯 Target-Aware Execution
 
 Not every security tool is appropriate for every target.
 
@@ -402,7 +402,7 @@ FAILED   → tool was selected but execution failed
 
 ---
 
-# 🔗 Subhunt Integration
+## 🔗 Subhunt Integration
 
 ScopeForgeX integrates **Subhunt** as a focused reconnaissance component.
 
@@ -438,7 +438,7 @@ subhunt \
 
 ---
 
-# 🕷️ Wapiti Vulnerability Assessment
+## 🕷️ Wapiti Vulnerability Assessment
 
 Wapiti is the current web vulnerability assessment engine integrated into the Stage 3 vulnerability workflow.
 
@@ -458,7 +458,7 @@ Wapiti output is converted into ScopeForgeX observations and then passed through
 
 ---
 
-# 🧠 Vulnerability Intelligence
+## 🧠 Vulnerability Intelligence
 
 The intelligence subsystem contains:
 
@@ -483,7 +483,7 @@ CVE summaries include findings with CVE identifiers regardless of finding severi
 
 ---
 
-# 📊 Reporting
+## 📊 Reporting
 
 ScopeForgeX produces multiple report representations from the same assessment state.
 
@@ -527,7 +527,7 @@ reporting/
 
 ---
 
-# 🔒 Evidence Safety
+## 🔒 Evidence Safety
 
 ScopeForgeX distinguishes between:
 
@@ -562,35 +562,35 @@ Raw execution stdout/stderr remains available internally for debugging and execu
 
 ---
 
-# 🚀 Quick Start
+## 🚀 Quick Start
 
-## Clone
+### Clone
 
 ```bash
 git clone https://github.com/VikashChoudhary-04/ScopeForgeX.git
 cd ScopeForgeX
 ```
 
-## Virtual environment
+### Virtual environment
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-## Python dependencies
+### Python dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Verify CLI
+### Verify CLI
 
 ```bash
 python3 -m scopeforgex --help
 ```
 
-## Authorized assessment
+### Authorized assessment
 
 ```bash
 python3 -m scopeforgex \
@@ -601,7 +601,7 @@ python3 -m scopeforgex \
 
 ---
 
-# 📦 Installation
+## 📦 Installation
 
 The ScopeForgeX installer covers the canonical external security-tool dependencies.
 
@@ -644,9 +644,9 @@ seclists
 
 ---
 
-# 💻 Usage
+## 💻 Usage
 
-## Interactive dashboard
+### Interactive dashboard
 
 ```bash
 python3 -m scopeforgex
@@ -663,7 +663,7 @@ View Last Run
 Exit
 ```
 
-## FAST
+### FAST
 
 ```bash
 python3 -m scopeforgex \
@@ -672,7 +672,7 @@ python3 -m scopeforgex \
   --authorized
 ```
 
-## STANDARD
+### STANDARD
 
 ```bash
 python3 -m scopeforgex \
@@ -681,7 +681,7 @@ python3 -m scopeforgex \
   --authorized
 ```
 
-## FULL
+### FULL
 
 ```bash
 python3 -m scopeforgex \
@@ -692,7 +692,7 @@ python3 -m scopeforgex \
 
 ---
 
-# 🧪 Local Juice Shop Example
+## 🧪 Local Juice Shop Example
 
 Start OWASP Juice Shop:
 
@@ -749,7 +749,7 @@ Kiterunner reached the configured **600-second tool timeout** during this refere
 
 ---
 
-# 📈 Benchmark
+## 📈 Benchmark
 
 Benchmark material is retained under:
 
@@ -818,7 +818,7 @@ for methodology and captured evidence.
 
 ---
 
-# ⏱️ Runtime and Timeouts
+## ⏱️ Runtime and Timeouts
 
 Timeout configuration flows through:
 
@@ -844,7 +844,7 @@ Timeouts are represented explicitly in execution results and reporting.
 
 ---
 
-# 🧪 Testing
+## 🧪 Testing
 
 Run the full suite:
 
@@ -878,7 +878,7 @@ Regenerate the test result after future source changes rather than treating the 
 
 ---
 
-# 📁 Repository Structure
+## 📁 Repository Structure
 
 ```text
 ScopeForgeX/
@@ -945,7 +945,7 @@ Generated cache directories, runtime outputs, and individual benchmark stdout/st
 
 ---
 
-# 🧠 Design Philosophy
+## 🧠 Design Philosophy
 
 ### 1. Tool adapters are not findings
 
@@ -997,7 +997,7 @@ ScopeForgeX is an orchestration framework, not a replacement for the underlying 
 
 ---
 
-# ⚠️ Current Limitations
+## ⚠️ Current Limitations
 
 ### External tools remain dependencies
 
@@ -1035,7 +1035,7 @@ Some generated artifacts reflect earlier project states and should not be interp
 
 ---
 
-# 🛣️ Roadmap
+## 🛣️ Roadmap
 
 Potential future work includes:
 
@@ -1054,7 +1054,7 @@ New functionality should preserve the canonical execution, evidence, finding, an
 
 ---
 
-# ⚖️ Legal & Ethical Use
+## ⚖️ Legal & Ethical Use
 
 ScopeForgeX is intended **only for authorized security testing**.
 
@@ -1072,7 +1072,7 @@ The user of the framework is responsible for ensuring that every assessment comp
 
 ---
 
-# 📄 License
+## 📄 License
 
 ScopeForgeX is released under the MIT License.
 
