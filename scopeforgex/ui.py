@@ -1014,10 +1014,10 @@ def banner():
     lines = [
         "╭──────────────────────────────────────────────────────────────────────╮",
         "│                                                                      │",
-        "│  S C O P E F O R G E X                                              │",
-        "│  Security Assessment & Workflow Orchestration                       │",
+        "│  S C O P E F O R G E X                                               │",
+        "│  Security Assessment & Workflow Orchestration                        │",
         "│                                                                      │",
-        "│  CLI  •  Security Automation  •  Evidence-Driven Assessment         │",
+        "│  CLI  •  Security Automation  •  Evidence-Driven Assessment          │",
         "│                                                                      │",
         "╰──────────────────────────────────────────────────────────────────────╯",
     ]
