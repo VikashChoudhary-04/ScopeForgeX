@@ -102,45 +102,45 @@ A stage-based **cybersecurity workflow orchestration framework** for authorized 
 
 ## ✨ Why ScopeForgeX?
 
-Security tools are powerful individually, but a real assessment requires more than launching commands.
+- Security tools are powerful individually, but a real assessment requires more than launching commands.
 
-ScopeForgeX provides an orchestration layer around security tooling so that an assessment can move through a consistent pipeline:
+- ScopeForgeX provides an orchestration layer around security tooling so that an assessment can move through a consistent pipeline:
 
-```text
-Target
-  │
-  ▼
-Scope & Authorization
-  │
-  ▼
-Reconnaissance
-  │
-  ▼
-Enumeration
-  │
-  ▼
-Vulnerability Assessment
-  │
-  ▼
-Validation / Exploitation
-  │
-  ▼
-Credential Assessment
-  │
-  ▼
-Finding Normalization
-  │
-  ▼
-Correlation & Deduplication
-  │
-  ▼
-Vulnerability Intelligence
-  │
-  ▼
-Reporting & Cleanup
-```
+  ```text
+  Target
+   │
+   ▼
+  Scope & Authorization
+   │
+   ▼
+  Reconnaissance
+   │
+   ▼
+  Enumeration
+   │
+   ▼
+  Vulnerability Assessment
+   │
+   ▼
+  Validation / Exploitation
+   │
+   ▼
+  Credential Assessment
+   │
+   ▼
+  Finding Normalization
+   │
+   ▼
+  Correlation & Deduplication
+   │
+   ▼
+  Vulnerability Intelligence
+   │
+   ▼
+  Reporting & Cleanup
+  ```
 
-The project is designed to make tool execution **structured, observable, reproducible, and evidence-driven** rather than treating individual command-line tools as isolated scripts.
+- The project is designed to make tool execution **structured, observable, reproducible, and evidence-driven** rather than treating individual command-line tools as isolated scripts.
 
 ---
 
@@ -167,7 +167,7 @@ The project is designed to make tool execution **structured, observable, reprodu
 
 ## 🏗️ Architecture
 
-ScopeForgeX follows a layered pipeline in which tools produce execution results, collectors transform those results into structured observations, and the finding pipeline produces canonical security findings.
+- ScopeForgeX follows a layered pipeline in which tools produce execution results, collectors transform those results into structured observations, and the finding pipeline produces canonical security findings.
 
 ```text
 ┌───────────────────────────────────────────────┐
@@ -217,7 +217,7 @@ ScopeForgeX follows a layered pipeline in which tools produce execution results,
                         ▼
 ┌───────────────────────────────────────────────┐
 │          Vulnerability Intelligence           │
-│              NVD + KEV enrichment             │
+│          CPE / NVD / CVE / KEV enrichment     │
 └───────────────────────┬───────────────────────┘
                         │
                         ▼
@@ -231,596 +231,530 @@ ScopeForgeX follows a layered pipeline in which tools produce execution results,
 
 ### Execution Contract
 
-The canonical tool flow is:
+- The canonical tool flow is:
 
-```text
-Tool Adapter
-     │
-     ▼
-ExecutionResult
-     │
-     ▼
-Raw Evidence
-     │
-     ▼
-Collector
-     │
-     ▼
-Structured Observations
-     │
-     ▼
-Finding Normalizer
-     │
-     ▼
-Finding
-     │
-     ▼
-Correlation / Deduplication
-     │
-     ▼
-Report
-```
+  ```text
+  Tool Adapter
+      │
+      ▼
+  ExecutionResult
+      │
+      ▼
+  Raw Evidence
+      │
+      ▼
+  Collector
+      │
+      ▼
+  Structured Observations
+      │
+      ▼
+  Finding Normalizer
+      │
+      ▼
+  Finding
+      │
+      ▼
+  Correlation / Deduplication
+      │
+      ▼
+  Report
+  ```
 
-The architecture deliberately separates:
+- The architecture deliberately separates:
 
-- command execution
-- raw execution evidence
-- evidence interpretation
-- finding creation
-- finding correlation
-- vulnerability enrichment
-- publication
+  - command execution
+  - raw execution evidence
+  - evidence interpretation
+  - finding creation
+  - finding correlation
+  - vulnerability enrichment
+  - publication
 
----
+## Assessment Workflow
 
-## 🔄 Assessment Workflow
+- ScopeForgeX follows a structured seven-stage assessment lifecycle:
 
-ScopeForgeX organizes assessment activity into seven logical stages.
+  ```text
+  0. Scope & Authorization
+          ↓
+  1. Reconnaissance
+          ↓
+  2. Enumeration
+          ↓
+  3. Vulnerability Assessment
+          ↓
+  4. Vulnerability Validation
+          ↓
+  5. Post Exploitation
+          ↓
+  6. Reporting & Cleanup
+  ```
 
-| Stage | Purpose |
-|---|---|
-| **0 — Scope & Authorization** | Validate target scope and authorization requirements |
-| **1 — Reconnaissance** | Discover domains, hosts, services, and web targets |
-| **2 — Enumeration** | Enumerate services, URLs, technologies, routes, and application surfaces |
-| **3 — Vulnerability Assessment** | Identify potential vulnerabilities and security weaknesses |
-| **4 — Validation / Exploitation** | Validate selected vulnerabilities where the configured workflow permits |
-| **5 — Credential Assessment** | Perform credential-related assessment using configured tools |
-| **6 — Reporting & Cleanup** | Normalize, correlate, sanitize, publish, and finalize assessment artifacts |
+### Stage 0 — Scope & Authorization
 
-The active orchestration layer is centered around:
+- Defines the target and authorization state before assessment execution.
+- Prevents execution without explicit authorization.
+- Establishes the assessment context used by the workflow.
 
-```text
-scopeforgex/workflow.py
-scopeforgex/registry/
-scopeforgex/tools/
-scopeforgex/collectors/
-scopeforgex/findings/
-scopeforgex/intelligence/
-reporting/
-```
+### Stage 1 — Reconnaissance
 
----
+- Discovers domains, subdomains, DNS information, HTTP services, technologies, and URLs.
+- Performs passive and active reconnaissance according to the selected execution profile.
+- Uses target-aware logic to avoid inappropriate tools for IP-only targets.
 
-## 🎛️ Execution Profiles
+### Stage 2 — Enumeration
 
-ScopeForgeX currently provides three execution profiles.
+- Identifies open ports, services, routes, endpoints, and additional attack-surface information.
+- Correlates results from multiple enumeration tools.
+- Produces structured observations for downstream analysis.
 
-| Profile | Configured Tools | Intended Use |
-|---|---:|---|
-| **FAST** | 3 | Rapid assessment and quick feedback |
-| **STANDARD** | 13 | General-purpose security assessment |
-| **FULL** | 17 | Broader assessment coverage |
+### Stage 3 — Vulnerability Assessment
 
-Profiles are defined in:
+- Performs vulnerability-oriented security testing against discovered attack surfaces.
+- Uses Wapiti, Nikto, and testssl.sh where applicable.
+- Converts tool output into structured security observations.
 
-```text
-scopeforgex/config/profiles.yaml
-```
+### Stage 4 — Vulnerability Validation
 
-Example:
+- Provides validation-oriented security tooling for identified vulnerabilities.
+- Supports controlled validation rather than treating scanner output as automatically confirmed exploitation.
+- Preserves execution evidence for reporting and analysis.
 
-```bash
-python3 -m scopeforgex \
-  --profile standard \
-  --target https://example.com \
-  --authorized
-```
+### Stage 5 — Post Exploitation
 
----
+- Provides controlled credential-assessment capabilities.
+- Supports authorized password and credential testing workflows.
+- Uses Hydra and Hashcat according to the selected profile and target context.
 
-## 🧰 Supported Tools
+### Stage 6 — Reporting & Cleanup
 
-The current integrated tool set contains 19 security utilities.
-
-### Reconnaissance
-
-| Tool | Purpose |
-|---|---|
-| **Amass** | Domain and attack-surface reconnaissance |
-| **Subhunt** | DNS subdomain and HTTP virtual-host enumeration |
-| **Nmap** | Host and service discovery |
-| **dig** | DNS interrogation |
-
-### Web Enumeration
-
-| Tool | Purpose |
-|---|---|
-| **Katana** | Web crawling and endpoint discovery |
-| **httpx** | HTTP probing and service identification |
-| **ffuf** | Content and endpoint discovery |
-| **WhatWeb** | Web technology identification |
-| **Kiterunner** | API route and endpoint discovery |
-| **jsluice** | JavaScript analysis and endpoint extraction |
-
-### Vulnerability Assessment
-
-| Tool | Purpose |
-|---|---|
-| **Wapiti** | Web application vulnerability assessment |
-| **Nikto** | Web server security checks |
-| **testssl.sh** | TLS/SSL configuration assessment |
-
-### Validation / Exploitation
-
-| Tool | Purpose |
-|---|---|
-| **sqlmap** | SQL injection assessment and validation |
-| **Dalfox** | XSS assessment |
-| **SSTImap** | Server-side template injection assessment |
-| **JWT Tool** | JSON Web Token analysis |
-
-### Credential Assessment
-
-| Tool | Purpose |
-|---|---|
-| **Hydra** | Network authentication assessment |
-| **Hashcat** | Password hash assessment |
+- Correlates and normalizes collected security observations.
+- Generates structured findings and security reports.
+- Performs evidence sanitization before publication.
+- Produces JSON and human-readable reporting artifacts.
+- Includes CVE and KEV intelligence where applicable.
+- Preserves raw execution evidence internally while preventing sensitive raw HTTP material from leaking into published reports.
 
 ---
 
-## 🎯 Target-Aware Execution
-
-Not every security tool is appropriate for every target.
-
-ScopeForgeX therefore applies target-aware conditions before execution.
-
-Examples include:
-
-- domain reconnaissance tools require an applicable domain target
-- IP literals are not treated as domain reconnaissance targets
-- HTTPS-only tooling can be skipped for plain HTTP targets
-- URL-oriented tools receive URL targets
-- hostname-oriented tools receive normalized hostnames
-- tools that do not apply to a target are represented as **SKIPPED**
-- execution failures remain **FAILED** rather than being silently converted to success
-
-```text
-SUCCESS  → tool executed successfully
-SKIPPED  → tool was intentionally not applicable
-FAILED   → tool was selected but execution failed
-```
-
----
-
-## 🔗 Subhunt Integration
-
-ScopeForgeX integrates **Subhunt** as a focused reconnaissance component.
-
-Subhunt supports:
-
-- DNS subdomain enumeration
-- HTTP virtual-host enumeration
-- DNS-over-HTTPS resolution
-- resolver failover
-- wildcard-aware DNS handling
-- HTTP baseline fingerprinting
-- catch-all filtering
-- evidence-rich HTTP results
-- quiet output
-- JSON output
-- deterministic result processing
-
-ScopeForgeX integration:
-
-```text
-scopeforgex/tools/stage1_recon_web.py
-scopeforgex/collectors/subhunt.py
-```
-
-Example standalone HTTP usage:
-
-```bash
-subhunt \
-  -u http://localhost:3000 \
-  --bruteforce /usr/share/wordlists/seclists/Discovery/DNS/subdomains-top1million-5000.txt \
-  --threads 50
-```
-
----
-
-## 🕷️ Wapiti Vulnerability Assessment
-
-Wapiti is the current web vulnerability assessment engine integrated into the Stage 3 vulnerability workflow.
-
-Adapter:
-
-```text
-scopeforgex/tools/stage3_vuln.py
-```
-
-Collector:
-
-```text
-scopeforgex/collectors/wapiti.py
-```
-
-Wapiti output is converted into ScopeForgeX observations and then passed through the normal finding pipeline.
-
----
-
-## 🧠 Vulnerability Intelligence
-
-The intelligence subsystem contains:
-
-```text
-scopeforgex/intelligence/
-├── engine.py
-├── models.py
-├── nvd.py
-└── kev.py
-```
-
-The pipeline can associate identified software with:
-
-- CPE information
-- CVEs
-- NVD vulnerability information
-- Known Exploited Vulnerabilities (KEV) information
-
-Software assessments are retained across vulnerability-intelligence analysis calls and deduplicated using their assessment identity.
-
-CVE summaries include findings with CVE identifiers regardless of finding severity.
-
----
-
-## 📊 Reporting
-
-ScopeForgeX produces multiple report representations from the same assessment state.
-
-Typical generated artifacts include:
-
-```text
-professional.md
-professional.html
-findings.md
-findings.html
-report.json
-```
-
-The JSON report provides machine-readable assessment data including:
-
-- target
-- profile
-- run identifier
-- execution duration
-- host statistics
-- URL statistics
-- tool execution results
-- stage status
-- findings
-- severity counts
-- CVE information
-- KEV information
-- generated artifacts
-- evidence references
-
-Reporting code:
-
-```text
-reporting/
-├── findings.py
-├── json_exporter.py
-├── models.py
-├── report_generator.py
-└── severity.py
-```
-
----
-
-## 🔒 Evidence Safety
-
-ScopeForgeX distinguishes between:
-
-```text
-Raw execution evidence
-        ↓
-Internal analysis evidence
-        ↓
-Structured observations
-        ↓
-Canonical findings
-        ↓
-Published report evidence
-```
-
-Raw HTTP payloads are prevented from propagating into published vulnerability intelligence and reports.
-
-Publication-facing evidence removes fields such as:
-
-```text
-body
-raw_body
-raw_header
-raw_headers
-request
-raw_request
-response
-raw_response
-```
-
-Raw execution stdout/stderr remains available internally for debugging and execution analysis.
-
----
-
-## 🚀 Quick Start
-
-### Clone
-
-```bash
-git clone https://github.com/VikashChoudhary-04/ScopeForgeX.git
-cd ScopeForgeX
-```
-
-### Virtual environment
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-### Python dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### Verify CLI
-
-```bash
-python3 -m scopeforgex --help
-```
-
-### Authorized assessment
-
-```bash
-python3 -m scopeforgex \
-  --profile standard \
-  --target https://example.com \
-  --authorized
-```
-
----
-
-## 📦 Installation
-
-The ScopeForgeX installer covers the canonical external security-tool dependencies.
-
-Current integrated toolchain:
-
-```text
-amass
-subhunt
-nmap
-dig
-httpx
-katana
-ffuf
-whatweb
-kiterunner
-jsluice
-wapiti
-nikto
-testssl.sh
-sqlmap
-dalfox
-jwt_tool
-sstimap
-hydra
-hashcat
-```
-
-Supporting packages include:
-
-```text
-python3
-python3-pip
-python3-venv
-golang
-git
-build-essential
-cargo
-seclists
-```
-
----
-
-## 💻 Usage
-
-### Interactive dashboard
-
-```bash
-python3 -m scopeforgex
-```
-
-Available actions include:
-
-```text
-Run FAST Profile
-Run STANDARD Profile
-Run FULL Profile
-Install Tools
-View Last Run
-Exit
-```
+## Execution Profiles
+
+- ScopeForgeX provides three execution profiles:
+
+| Profile | Purpose | Selected Tools |
+|---|---|---:|
+| `FAST` | Lightweight assessment | 3 |
+| `STANDARD` | Balanced assessment | 13 |
+| `FULL` | Comprehensive assessment | 17 |
 
 ### FAST
 
-```bash
-python3 -m scopeforgex \
-  --profile fast \
-  --target https://example.com \
-  --authorized
-```
+- Designed for rapid initial assessment.
+- Uses a minimal toolset to reduce execution time.
+- Suitable for quick reconnaissance and attack-surface discovery.
 
 ### STANDARD
 
-```bash
-python3 -m scopeforgex \
-  --profile standard \
-  --target https://example.com \
-  --authorized
-```
+- Default balanced assessment profile.
+- Combines reconnaissance, enumeration, vulnerability assessment, and supporting security intelligence.
+- Designed to provide useful coverage without the complete runtime of the FULL profile.
 
 ### FULL
 
+- Maximum supported assessment coverage.
+- Enables additional active reconnaissance, vulnerability, validation, and credential-assessment capabilities.
+- Intended for deeper authorized assessments.
+
+### Profile Selection
+
 ```bash
-python3 -m scopeforgex \
-  --profile full \
-  --target https://example.com \
-  --authorized
+scopeforgex --profile fast --target <target> --authorized
+scopeforgex --profile standard --target <target> --authorized
+scopeforgex --profile full --target <target> --authorized
 ```
 
 ---
 
-## 🧪 Local Juice Shop Example
+## Supported Tools
 
-Start OWASP Juice Shop:
+- ScopeForgeX currently integrates **19 security tools** across its assessment lifecycle.
 
-```bash
-sudo docker run -d \
-  --name juice-shop \
-  -p 3000:3000 \
-  bkimminich/juice-shop
-```
+| Tool | Primary Capability | Stage |
+|---|---|---|
+| Amass | Domain reconnaissance | Reconnaissance |
+| Subhunt | Subdomain & virtual-host enumeration | Reconnaissance |
+| Nmap | Port & service enumeration | Enumeration |
+| dig | DNS enumeration | Enumeration |
+| httpx | HTTP service discovery & probing | Enumeration |
+| Katana | Web crawling & URL discovery | Enumeration |
+| ffuf | Content & endpoint discovery | Enumeration |
+| WhatWeb | Technology identification | Enumeration |
+| Kiterunner | API route discovery | Enumeration |
+| jsluice | JavaScript analysis & endpoint extraction | Enumeration |
+| Wapiti | Web vulnerability assessment | Vulnerability Assessment |
+| Nikto | Web server security assessment | Vulnerability Assessment |
+| testssl.sh | TLS/SSL security assessment | Vulnerability Assessment |
+| sqlmap | SQL injection validation | Vulnerability Validation |
+| Dalfox | XSS testing & validation | Vulnerability Validation |
+| jwt_tool | JWT security testing | Vulnerability Validation |
+| SSTImap | Server-side template injection testing | Vulnerability Validation |
+| Hydra | Online credential testing | Post Exploitation |
+| Hashcat | Offline password recovery | Post Exploitation |
 
-If the container already exists:
-
-```bash
-sudo docker start juice-shop
-```
-
-Verify:
-
-```bash
-curl -I http://localhost:3000/
-```
-
-Run:
-
-```bash
-python3 -m scopeforgex \
-  --profile standard \
-  --target http://localhost:3000 \
-  --authorized
-```
-
-A documented STANDARD reference run recorded:
-
-| Metric | Result |
-|---|---:|
-| Target | `http://localhost:3000` |
-| Profile | STANDARD |
-| Selected tools | 13 |
-| Successful tools | 11 |
-| Failed tools | 1 |
-| Skipped tools | 2 |
-| Findings | 1 |
-| Informational findings | 1 |
-| CVEs | 0 |
-| KEV findings | 0 |
-| URLs discovered | 15 |
-| Alive hosts | 1 |
-| Final hosts | 1 |
-| Duration | 1253.78 seconds |
-
-The documented run identified Express `4.22.1` as software inventory information and produced an informational software-identity finding.
-
-Kiterunner reached the configured **600-second tool timeout** during this reference run. ScopeForgeX preserved that execution state as a tool failure.
+> Tool availability and execution are controlled by the selected profile and target-aware conditions.
 
 ---
 
-## 📈 Benchmark
+## Target-Aware Execution
 
-Benchmark material is retained under:
+- ScopeForgeX does not blindly execute every integrated tool against every target.
 
-```text
-benchmark/
-benchmark_scopeforgex/
-```
+- Tool execution can depend on:
 
-A STANDARD-profile benchmark was performed against:
+  - Target type.
+  - Target protocol.
+  - Target hostname.
+  - IP address versus domain.
+  - Selected execution profile.
+  - Tool-specific requirements.
+  - Explicit authorization state.
 
-```text
-https://warrantyindia.com/
-```
+- For example, **Amass** is conditionally executed for applicable domain targets and skipped for targets where domain reconnaissance is not appropriate.
 
-ScopeForgeX reference execution:
-
-```text
-Duration: 1060.6487560272217 seconds
-Logical tools: 13
-Dig queries: 7
-```
-
-Four valid independent baseline runs recorded:
-
-```text
-1060.7696018240003 s
-984.8302501480002 s
-1060.8447160859996 s
-994.6224477469987 s
-```
-
-Mean valid baseline:
-
-```text
-1025.2667539512497 s
-```
-
-Measured absolute difference:
-
-```text
-35.38200207597197 s
-```
-
-Measured relative overhead:
-
-```text
-3.4510045253700232 %
-```
-
-Approximately:
-
-```text
-3.45 %
-```
-
-One baseline attempt was excluded because the Nikto process terminated with a SIGPIPE-related return code.
-
-See:
-
-```text
-benchmark/README.md
-benchmark_scopeforgex/README.md
-```
-
-for methodology and captured evidence.
+- This prevents unnecessary tool execution and keeps the assessment workflow aligned with the target.
 
 ---
 
-## ⏱️ Runtime and Timeouts
+## Subhunt Integration
 
-Timeout configuration flows through:
+- ScopeForgeX integrates **Subhunt** as its dedicated subdomain and virtual-host enumeration capability.
+
+- Subhunt provides:
+
+  - DNS-based subdomain enumeration.
+  - HTTP virtual-host enumeration.
+  - DNS-over-HTTPS resolver failover.
+  - Wildcard-aware DNS handling.
+  - HTTP baseline fingerprinting.
+  - Catch-all filtering.
+  - Structured evidence-rich findings.
+  - Quiet and JSON output modes.
+
+- ScopeForgeX consumes Subhunt's execution output through a dedicated adapter and collector rather than treating its raw output as a final finding.
+
+### Subhunt Execution Flow
+
+```text
+Target
+  ↓
+Subhunt Adapter
+  ↓
+Subhunt Execution
+  ↓
+ExecutionResult
+  ↓
+Subhunt Collector
+  ↓
+Structured Observations
+  ↓
+Finding Normalization
+  ↓
+Correlation / Reporting
+```
+
+---
+
+## Wapiti Integration
+
+- Wapiti is ScopeForgeX's active web vulnerability assessment engine.
+
+- It is integrated through:
+
+  - `scopeforgex/tools/stage3_vuln.py`
+  - `scopeforgex/collectors/wapiti.py`
+
+- The integration converts Wapiti output into ScopeForgeX's structured observation model while preserving the original execution evidence internally.
+
+- Wapiti replaced the previous Nuclei integration in the active ScopeForgeX source and workflow.
+
+---
+
+## Vulnerability Intelligence
+
+- ScopeForgeX enriches software and vulnerability observations with security intelligence where applicable.
+
+- The intelligence pipeline can incorporate:
+
+  ```text
+  Software Detection
+         ↓
+  CPE Identification
+         ↓
+  CVE Lookup
+         ↓
+  NVD Enrichment
+         ↓
+  KEV Correlation
+         ↓
+  Finding / Report
+  ```
+
+- Software assessments retain:
+
+  - Software name.
+  - Version.
+  - Vendor.
+  - CPE.
+  - Confidence.
+  - Applicable CVEs.
+  - KEV status.
+  - Supporting evidence.
+
+- CVE information is incorporated into findings without automatically changing finding severity based on confidence.
+
+---
+
+## Reporting
+
+- ScopeForgeX generates structured assessment artifacts containing information such as:
+
+  - Target.
+  - Profile.
+  - Run ID.
+  - Execution duration.
+  - Tool execution status.
+  - Discovered hosts.
+  - Discovered URLs.
+  - Software assessments.
+  - Findings.
+  - Severity distribution.
+  - CVE information.
+  - KEV information.
+  - Stage execution status.
+  - Warnings and errors.
+  - Generated report files.
+
+- The reporting pipeline separates:
+
+  - Internal execution evidence.
+  - Structured observations.
+  - Normalized findings.
+  - Published report data.
+
+- This allows detailed execution evidence to remain available for analysis without unnecessarily exposing raw HTTP payloads in published reports.
+
+## Evidence Safety
+
+- ScopeForgeX follows an evidence-driven assessment model.
+
+- The framework separates raw tool execution data from structured security findings:
+
+  ```text
+  Tool Execution
+        ↓
+  Raw Evidence
+        ↓
+  Collector
+        ↓
+  Structured Observations
+        ↓
+  Finding Normalization
+        ↓
+  Correlation / Deduplication
+        ↓
+  Published Report
+  ```
+
+### Raw Execution Evidence
+
+- Raw execution evidence is retained internally to support:
+
+  - Troubleshooting.
+  - Validation.
+  - Reproducibility.
+  - Evidence review.
+  - Security assessment analysis.
+
+- Execution results can contain:
+
+  - Standard output.
+  - Standard error.
+  - Exit codes.
+  - Execution metadata.
+  - Command information.
+  - Tool-specific evidence.
+
+### Published Evidence
+
+- Published reports use sanitized evidence rather than blindly exposing raw tool output.
+
+- The publication layer removes or prevents propagation of sensitive raw HTTP material such as:
+
+  - Raw HTTP request bodies.
+  - Raw HTTP response bodies.
+  - Raw headers.
+  - Raw requests.
+  - Raw responses.
+
+- This ensures that detailed execution evidence can remain available internally without unnecessarily leaking raw HTTP payloads into published reports.
+
+### Evidence Contract
+
+- ScopeForgeX maintains an explicit contract between:
+
+  ```text
+  Execution Evidence
+          ↓
+  Collected Observations
+          ↓
+  Normalized Findings
+          ↓
+  Published Report
+  ```
+
+- This prevents tool-specific output formats from becoming the public reporting model.
+
+---
+
+## Quick Start
+
+### 1. Clone the Repository
+
+```bash
+git clone git@github.com:VikashChoudhary-04/ScopeForgeX.git
+cd ScopeForgeX
+```
+
+### 2. Install Dependencies
+
+- Run the canonical installer:
+
+  ```bash
+  sudo bash install.sh
+  ```
+
+- The installer provisions the required system packages, language runtimes, security tools, source-based tools, and supporting dependencies used by ScopeForgeX.
+
+### 3. Verify the Installation
+
+- Check the CLI:
+
+  ```bash
+  scopeforgex --help
+  ```
+
+- Check the installed security tools:
+
+  ```bash
+  scopeforgex --install-check
+  ```
+
+### 4. Run an Authorized Assessment
+
+```bash
+scopeforgex --profile standard --target <target> --authorized
+```
+
+- Replace `<target>` with an explicitly authorized assessment target.
+
+---
+
+## Installation
+
+- ScopeForgeX is designed for Linux-based security assessment environments.
+
+- The canonical installation workflow provisions dependencies for the integrated toolchain.
+
+### Base Dependencies
+
+- The installation process includes dependencies such as:
+
+  - Python 3.
+  - Python package tooling.
+  - Python virtual-environment support.
+  - Go.
+  - Rust/Cargo.
+  - Git.
+  - Build tools.
+
+### Security Tools
+
+- The installer provisions the integrated security toolchain, including:
+
+  - Amass.
+  - Nmap.
+  - dig.
+  - ffuf.
+  - WhatWeb.
+  - Nikto.
+  - testssl.sh.
+  - SQLmap.
+  - SSTImap.
+  - Hydra.
+  - Hashcat.
+  - Wapiti.
+  - SecLists.
+
+- Additional tools are installed through Go, Cargo, or source-based installation where required.
+
+### Source-Based Tools
+
+- Some integrations are installed from their source repositories, including:
+
+  - Kiterunner.
+  - jwt_tool.
+  - Subhunt.
+
+- The installation workflow also configures the required runtime environments and executable paths for these integrations.
+
+---
+
+## Usage
+
+- ScopeForgeX can be executed through its CLI entry point.
+
+### FAST Profile
+
+```bash
+scopeforgex --profile fast --target <target> --authorized
+```
+
+### STANDARD Profile
+
+```bash
+scopeforgex --profile standard --target <target> --authorized
+```
+
+### FULL Profile
+
+```bash
+scopeforgex --profile full --target <target> --authorized
+```
+
+### Python Module Invocation
+
+- The framework can also be invoked directly as a Python module:
+
+```bash
+python3 -m scopeforgex --profile standard --target <target> --authorized
+```
+
+### Authorization Requirement
+
+- ScopeForgeX is intended for authorized security assessments only.
+
+- The `--authorized` flag explicitly confirms that the supplied target is within an authorized assessment scope.
+
+- Do not use ScopeForgeX against systems you do not own or have explicit permission to test.
+
+---
+
+## Runtime and Timeout Handling
+
+- ScopeForgeX provides profile-controlled execution timeouts.
+
+- The timeout configuration flows through the workflow execution stack:
 
 ```text
 profiles.yaml
@@ -829,263 +763,504 @@ WorkflowEngine
       ↓
 ToolExecutor
       ↓
-ToolContext["tool_timeout"]
+ToolContext
       ↓
 Tool Adapter
       ↓
-run_command()
+Command Execution
 ```
 
-The profile timeout provides the default.
+- The configured profile timeout becomes the default tool execution timeout.
 
-An explicit tool-level timeout can override the profile/default value.
+- Individual tools can override the default when required.
 
-Timeouts are represented explicitly in execution results and reporting.
+- This allows long-running security tools to operate within controlled execution boundaries without changing the global workflow configuration.
 
 ---
 
-## 🧪 Testing
+## Local Juice Shop Example
 
-Run the full suite:
+- ScopeForgeX can be tested against intentionally vulnerable applications running in a local environment.
+
+- The project was validated against OWASP Juice Shop running locally at:
+
+  ```text
+  http://localhost:3000
+  ```
+
+### Start Juice Shop
+
+- Ensure the application is available before starting the assessment.
+
+Verify connectivity:
+
+  ```bash
+  curl -I http://localhost:3000
+  ```
+
+- Expected response:
+
+  ```text
+  HTTP/1.1 200 OK
+  ```
+
+### Run STANDARD Assessment
 
 ```bash
-pytest -q
+scopeforgex --profile standard --target http://localhost:3000 --authorized
 ```
 
-Compile the project:
+- The workflow performs the applicable stages and executes the tools enabled by the STANDARD profile.
 
-```bash
-python3 -m compileall scopeforgex reporting tests
-```
+### Reference Run
 
-Run selected integration tests:
+- A documented STANDARD reference run against the local Juice Shop instance used:
 
-```bash
-pytest -q \
-  tests/test_subhunt.py \
-  tests/test_wapiti.py \
-  tests/test_kiterunner_tool.py \
+  ```text
+  Target:   http://localhost:3000
+  Profile:  STANDARD
+  Run ID:   20260920_045858_194_f3cd4857
+  ```
+
+- The reference execution selected 13 logical tools.
+
+- Target-aware execution skipped tools that were not applicable to the local target.
+
+- The resulting assessment produced structured reporting artifacts including:
+
+  - Tool execution status.
+  - Discovered URLs.
+  - Host information.
+  - Software identification.
+  - Security findings.
+  - CVE information.
+  - Stage status.
+  - Execution metadata.
+
+### Example Finding
+
+- The reference run identified the Express framework:
+
+  ```text
+  Software / Framework Identified: express 4.22.1
+  ```
+
+- The finding was classified as:
+
+  ```text
+  Severity:    Informational
+  Confidence:  High
+  Status:      Open
+  Category:    software_identity
+  ```
+
+- The assessment also generated a software assessment for Express 4.22.1 with its associated CPE and vulnerability-intelligence lookup status.
+
+---
+
+## Generated Reports
+
+- Assessment runs generate structured output under the `outputs/` directory.
+
+- A typical run produces artifacts for:
+
+  - Assessment metadata.
+  - Findings.
+  - JSON reporting.
+  - Human-readable reporting.
+  - Execution information.
+  - Stage results.
+
+- The generated report provides a consolidated view of the assessment while preserving the underlying execution evidence separately.
+
+## Benchmark
+
+- ScopeForgeX includes benchmark evidence against a real web application target to measure workflow overhead independently from the underlying security tools.
+
+### STANDARD Profile Benchmark
+
+- Benchmark target:
+
+  ```text
+  https://warrantyindia.com/
+  ```
+
+- The ScopeForgeX reference run used:
+
+  ```text
+  Reference Run:
+  1060.6487560272217 seconds
+  ```
+
+- An independent Python baseline was executed five times.
+
+- Four runs were valid:
+
+  ```text
+  1060.7696018240003 s
+  984.8302501480002 s
+  1060.8447160859996 s
+  994.6224477469987 s
+  ```
+
+- One run was excluded because Nikto terminated with a SIGPIPE condition.
+
+### Benchmark Results
+
+| Metric | Result |
+|---|---:|
+| ScopeForgeX reference | 1060.6488 s |
+| Baseline mean | 1025.2668 s |
+| Baseline minimum | 984.8303 s |
+| Baseline maximum | 1060.8447 s |
+| Absolute difference | 35.3820 s |
+| Relative overhead | ~3.45% |
+
+- The measured ScopeForgeX overhead was approximately **3.45%** relative to the valid independent baseline mean.
+
+- The benchmark is intended as engineering evidence of orchestration overhead rather than as a general claim about assessment speed across all environments or targets.
+
+---
+
+## Testing
+
+- ScopeForgeX uses automated regression testing to validate the framework's architecture, integrations, reporting contracts, and execution behavior.
+
+- Run the complete test suite with:
+
+  ```bash
+  pytest -q
+  ```
+
+- Compile-check the Python source tree with:
+
+  ```bash
+  python3 -m compileall scopeforgex
+  ```
+
+- Check Git whitespace errors with:
+
+  ```bash
+  git diff --check
+  ```
+
+### Test Coverage Areas
+
+- The test suite covers areas including:
+
+  - Tool adapters.
+  - Tool execution.
+  - Execution result handling.
+  - Profile selection.
+  - Conditional tool execution.
+  - Subhunt integration.
+  - Wapiti integration.
+  - Kiterunner integration.
+  - Executable resolution.
+  - Collector behavior.
+  - Structured observations.
+  - Finding normalization.
+  - Correlation and deduplication.
+  - Software assessment lifecycle.
+  - CVE reporting.
+  - Report generation.
+  - JSON export.
+  - Evidence sanitization.
+  - Stage 6 reporting.
+  - Regression behavior.
+
+### Integration Validation
+
+- Tool-specific tests are maintained alongside the framework components they validate.
+
+- Examples include:
+
+  ```text
+  tests/test_subhunt.py
+  tests/test_wapiti.py
+  tests/test_kiterunner_tool.py
   tests/test_executable_resolution.py
-```
+  tests/test_software_assessment.py
+  tests/test_stage6_report_projection.py
+  tests/test_regression_baseline.py
+  ```
 
-Previously validated regression baseline:
-
-```text
-267 passed
-```
-
-Regenerate the test result after future source changes rather than treating the historical count as a permanent guarantee.
+- The project also uses focused regression tests for previously identified behavioral issues to prevent regressions during architectural changes.
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
-```text
-ScopeForgeX/
-├── benchmark/
-│   ├── README.md
-│   └── baseline_*/
-│
-├── benchmark_scopeforgex/
-│   ├── README.md
-│   └── baseline/
-│
-├── docs/
-│   └── screenshots/
-│       ├── dashboard.png
-│       ├── recon-stage.png
-│       ├── report-json.png
-│       ├── report-summary.png
-│       └── vulnerability-stage.png
-│
-├── examples/
-│   └── juice-shop-fast-profile/
-│
-├── reporting/
-│   ├── findings.py
-│   ├── json_exporter.py
-│   ├── models.py
-│   ├── report_generator.py
-│   └── severity.py
-│
-├── scopeforgex/
-│   ├── analysis/
-│   ├── analyzers/
-│   ├── collectors/
-│   ├── config/
-│   ├── evidence/
-│   ├── findings/
-│   ├── intelligence/
-│   ├── models/
-│   ├── registry/
-│   ├── runtime/
-│   ├── stages/
-│   ├── tools/
-│   ├── cli.py
-│   ├── dashboard.py
-│   ├── executable.py
-│   ├── installer.py
-│   ├── runner.py
-│   ├── toolcheck.py
-│   ├── ui.py
-│   └── workflow.py
-│
-├── tests/
-│   ├── conftest.py
-│   ├── test_*.py
-│   └── ...
-│
-├── LICENSE
-├── README.md
-├── pyproject.toml
-└── requirements.txt
-```
+- The repository follows a modular architecture separating workflow orchestration, tool integrations, collectors, reporting, configuration, and tests.
 
-Generated cache directories, runtime outputs, and individual benchmark stdout/stderr artifacts are intentionally omitted from the documentation tree.
+  ```text
+  ScopeForgeX/
+  ├── scopeforgex/
+  │   ├── cli.py
+  │   ├── dashboard.py
+  │   ├── ui.py
+  │   ├── workflow.py
+  │   ├── runner.py
+  │   ├── executor.py
+  │   ├── context.py
+  │   │
+  │   ├── config/
+  │   │   └── profiles.yaml  
+  │   │
+  │   ├── tools/
+  │   │   ├── base.py
+  │   │   ├── stage1_recon_web.py
+  │   │   ├── stage1_recon_network.py
+  │   │   ├── stage2_enum.py
+  │   │   ├── stage3_vuln.py
+  │   │   ├── stage4_validation.py
+  │   │   └── stage5_credential.py
+  │   │
+  │   ├── collectors/
+  │   │   ├── base.py
+  │   │   ├── subhunt.py
+  │   │   └── wapiti.py
+  │   │
+  │   ├── stages/
+  │   │   ├── stage0_scope.py
+  │   │   ├── stage6_report_cleanup.py
+  │   │   └── shared.py
+  │   │
+  │   └── reporting/
+  │       └── ...
+  │
+  ├── tests/
+  │   ├── ...
+  │   └── ...
+  │
+  ├── docs/
+  │   └── screenshots/
+  │
+  ├── outputs/
+  │   └── ...  
+  │  
+  ├── install.sh
+  ├── README.md
+  └── LICENSE
+  ```
 
----
+- The exact repository contents may evolve as the framework develops, but the architecture maintains clear separation between:
 
-## 🧠 Design Philosophy
-
-### 1. Tool adapters are not findings
-
-A tool executes commands.
-
-A collector interprets output.
-
-A normalizer creates findings.
-
-These responsibilities remain separate.
-
-### 2. Execution state remains truthful
-
-```text
-SUCCESS  → tool executed successfully
-SKIPPED  → tool was intentionally not applicable
-FAILED   → selected tool execution failed
-```
-
-### 3. Evidence comes before conclusions
-
-```text
-Raw evidence
-    ↓
-Observation
-    ↓
-Finding
-    ↓
-Correlation
-    ↓
-Report
-```
-
-### 4. Reporting remains independent
-
-Tool adapters do not directly generate final reports.
-
-The reporting layer consumes structured assessment state and can produce:
-
-```text
-Markdown
-HTML
-JSON
-```
-
-### 5. Security tooling remains composable
-
-ScopeForgeX is an orchestration framework, not a replacement for the underlying security tools.
+  - CLI and user interaction.
+  - Workflow orchestration.
+  - Tool adapters.
+  - Evidence collection.
+  - Structured findings.
+  - Reporting.
+  - Configuration.
+  - Automated testing.
 
 ---
 
-## ⚠️ Current Limitations
+## Design Philosophy
 
-### External tools remain dependencies
+- ScopeForgeX is built around a simple architectural principle:
 
-Results depend partly on:
+  > **One capability → one primary tool → structured finding → evidence → correlation → report.**
 
-- tool availability
-- configuration
-- wordlists
-- network connectivity
-- target behavior
-- target response time
-- external vulnerability-data availability
+- The framework is intentionally designed as a **CLI-based security assessment orchestrator**, not as a fully autonomous penetration-testing system.
 
-### Tool execution can be slow
+### Modular Tool Integration
 
-Some security tools intentionally perform extensive enumeration or testing.
+- Each security capability is implemented through a dedicated tool integration.
 
-### Target behavior affects results
+- This keeps tool-specific command construction and execution behavior isolated from the workflow engine.
 
-Dynamic applications, rate limiting, WAFs, authentication, unstable endpoints, and network conditions can affect tool output.
+### Structured Evidence
 
-### FULL is broader
+- Tool output is not treated as a final report.
 
-The FULL profile executes a broader configured tool set and can therefore take substantially longer than FAST or STANDARD.
+- Instead:
 
-### Historical example artifacts
+  ```text
+  Tool Output
+      ↓
+  ExecutionResult
+      ↓
+  Collector
+      ↓
+  Observation
+      ↓
+  Finding
+  ```
 
-The repository contains older generated example material under:
+- This allows different tools to produce normalized security data without forcing the reporting layer to understand every tool's native output format.
 
-```text
-examples/juice-shop-fast-profile/
-```
+### Evidence-Driven Reporting
 
-Some generated artifacts reflect earlier project states and should not be interpreted as the current active tool integration.
+- Findings are expected to retain supporting evidence and provenance.
 
----
+- This provides traceability between:
 
-## 🛣️ Roadmap
+  - The tool that produced the evidence.
+  - The detection method.
+  - The target.
+  - The observation.
+  - The normalized finding.
+  - The final report.
 
-Potential future work includes:
+### Separation of Concerns
 
-- expanded API-security workflow coverage
-- additional structured collectors
-- improved cross-tool evidence correlation
-- richer authentication-aware workflows
-- improved report customization
-- expanded benchmark methodology
-- additional target-type-specific execution rules
-- broader regression fixtures
-- improved assessment artifact management
-- continued evidence-publication hardening
+- ScopeForgeX separates:
 
-New functionality should preserve the canonical execution, evidence, finding, and reporting contracts.
+  - Scope validation.
+  - Tool execution.
+  - Evidence collection.
+  - Finding normalization.
+  - Correlation.
+  - Vulnerability intelligence.
+  - Reporting.
+  - Cleanup.
 
----
+- This makes individual components easier to test, replace, and extend.
 
-## ⚖️ Legal & Ethical Use
+### Explicit Authorization
 
-ScopeForgeX is intended **only for authorized security testing**.
+- ScopeForgeX is designed for authorized security testing.
 
-Use it only against:
-
-- systems you own
-- systems where you have explicit authorization
-- intentionally vulnerable training environments
-- laboratory infrastructure
-- approved penetration-testing engagements
-
-Do not use ScopeForgeX to access, disrupt, scan, exploit, brute-force, or enumerate systems without authorization.
-
-The user of the framework is responsible for ensuring that every assessment complies with applicable laws, regulations, contracts, and engagement rules.
+- The framework does not attempt to remove the responsibility of the operator to define and verify assessment scope.
 
 ---
 
-## 📄 License
+## Architectural Principles
 
-ScopeForgeX is released under the MIT License.
+- The framework follows several core principles:
 
-See [`LICENSE`](LICENSE) for the complete license text.
+### 1. Canonical Execution Model
+
+- Tool execution flows through a common execution contract instead of allowing every integration to define its own result format.
+
+### 2. Tool Adapter Isolation
+
+- Tool-specific command construction remains inside the corresponding adapter.
+
+### 3. Structured Observations
+
+- Collectors transform tool output into structured observations before findings are generated.
+
+### 4. Finding Normalization
+
+- Findings use a consistent representation regardless of which tool detected the underlying issue.
+
+### 5. Correlation and Deduplication
+
+- Multiple observations referring to the same security condition can be correlated before reporting.
+
+### 6. Evidence Preservation
+
+- Execution evidence remains available for investigation and troubleshooting while published evidence is sanitized.
+
+### 7. Profile-Driven Execution
+
+- FAST, STANDARD, and FULL profiles control the breadth of the assessment.
+
+### 8. Target-Aware Execution
+
+- Tools are executed only when their capabilities are applicable to the target and assessment context.
+
+## Limitations
+
+- ScopeForgeX is an orchestration framework and does not attempt to replace the expertise of a professional penetration tester.
+
+- Important limitations include:
+
+  - Tool results depend on the capabilities and configuration of the underlying security tools.
+  - Assessment quality depends on target accessibility, network conditions, authentication state, and tool configuration.
+  - Automated findings may require manual validation.
+  - Not every vulnerability class can be reliably identified through automated assessment.
+  - Exploitation and post-exploitation activities require appropriate operator judgment and authorization.
+  - Runtime can vary significantly depending on target behavior and tool execution time.
+  - External vulnerability intelligence depends on the availability and accuracy of external vulnerability databases.
+  - Target-aware execution can intentionally skip tools when their capabilities are not applicable to the target.
+
+- ScopeForgeX should therefore be treated as an assessment orchestration and evidence-management framework rather than a replacement for manual security analysis.
+
+---
+
+## Roadmap
+
+- Potential future improvements include:
+
+  - Expanded API security assessment capabilities.
+  - Additional vulnerability validation workflows.
+  - Improved authentication-aware testing.
+  - Expanded post-exploitation workflows.
+  - Additional security intelligence integrations.
+  - More advanced finding correlation.
+  - Expanded report formats.
+  - Improved execution scheduling and concurrency.
+  - Additional tool adapters and collectors.
+  - Expanded regression and integration coverage.
+  - More detailed assessment metrics and benchmarking.
+
+- The roadmap is intentionally focused on extending the existing architecture without compromising the framework's structured execution and evidence model.
+
+---
+
+## Legal & Ethical Use
+
+- ScopeForgeX is intended **only for authorized security assessments**.
+
+- Use the framework only when you have explicit permission to assess the target system, application, network, or infrastructure.
+
+- Do not use ScopeForgeX to:
+
+  - Access systems without authorization.
+  - Attack third-party infrastructure.
+  - Perform unauthorized vulnerability scanning.
+  - Attempt unauthorized credential attacks.
+  - Exploit systems without permission.
+  - Disrupt services or infrastructure.
+  - Access, modify, or exfiltrate data without authorization.
+
+- The operator is responsible for:
+
+  - Defining the assessment scope.
+  - Obtaining appropriate authorization.
+  - Following applicable laws and regulations.
+  - Respecting rules of engagement.
+  - Handling discovered security information responsibly.
+  - Limiting testing to authorized targets.
+
+- The `--authorized` flag is an explicit operator confirmation and does not itself grant permission to test a target.
+
+---
+
+## License
+
+- ScopeForgeX is released under the MIT License.
+
+- See the [`LICENSE`](LICENSE) file for the complete license text.
+
+---
+
+## Project
+
+- **ScopeForgeX** is an offensive security assessment automation framework focused on:
+
+  - Structured security workflows.
+  - CLI-based execution.
+  - Modular security-tool integration.
+  - Evidence-driven findings.
+  - Vulnerability intelligence.
+  - Correlation and deduplication.
+  - Security assessment reporting.
+
+- The project is designed to make authorized security assessments more structured, repeatable, and evidence-driven without attempting to fully automate the judgment of a penetration tester.
 
 ---
 
 <div align="center">
 
+**Built for authorized security testing and security engineering.**
+
 **ScopeForgeX**
 
-Security Assessment & Workflow Orchestration
-
-Built for structured, evidence-driven, authorized security assessment workflows.
+*Security Assessment & Workflow Orchestration*
 
 </div>
